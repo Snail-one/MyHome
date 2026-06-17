@@ -6,6 +6,7 @@
 
 - 账号密码登录，使用服务端 httpOnly session 保持登录状态
 - 链接新增、编辑、删除和拖拽排序
+- 自定义搜索引擎，支持 `{query}` 搜索词模板
 - 布局列数和编辑模式持久化保存
 - 背景图片支持上传文件或填写图片链接
 - SQLite 保存用户设置和链接数据
@@ -62,6 +63,7 @@ http://localhost:3000
 
 - SQLite 数据库：默认 `data/my-home.sqlite`
 - 背景图片文件：默认 `uploads/backgrounds/`
+- 自定义搜索引擎保存在 SQLite 中
 - 数据库不会保存图片二进制或 base64，只保存背景图片路径或外部图片 URL
 
 ## 目录结构

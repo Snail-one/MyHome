@@ -16,11 +16,12 @@
 - API 均要求登录，除了 `POST /api/login` 和 `GET /api/me`。
 - `POST /api/login` 默认 15 分钟内失败 5 次后返回 429，并带 `Retry-After`。
 - 链接 URL 只允许 `http://` 和 `https://`。
+- 自定义搜索引擎 URL 只允许 `http://` 和 `https://`。
 - 背景 URL 只允许 `http://`、`https://` 或 `/uploads/backgrounds/` 路径。
 - 上传背景限制为 JPG、PNG、WebP、GIF，大小上限 5MB。
 - 上传文件使用随机文件名，不信任原始文件名。
 - 静态文件不直接暴露项目根目录，只显式提供页面、样式、脚本和 uploads。
-- CSP 限制默认资源来源，并允许同源 API 访问。
+- CSP 限制默认资源来源，图片允许 `blob:` 用于本地上传预览。
 
 ## 部署注意
 

@@ -42,7 +42,7 @@
     --container-padding-y: clamp(32px, 6vh, 56px);
     --container-padding-bottom: clamp(72px, 12vh, 80px);
     --nav-gap: clamp(12px, 2.5vw, 20px);
-    --nav-card-width: 150px;
+    --nav-card-width: 120px;
     --layout-max-cols: 6;
     --search-margin-bottom: clamp(24px, 4vh, 48px);
     --section-margin: clamp(16px, 3vh, 32px);
@@ -448,11 +448,13 @@ body::before {
     overflow-y: auto;
 }
 
-.link-form .form-group {
+.link-form .form-group,
+.search-engine-form .form-group {
     margin-bottom: 16px;
 }
 
-.link-form label {
+.link-form label,
+.search-engine-form label {
     display: block;
     font-size: 13px;
     font-weight: 500;
@@ -461,7 +463,9 @@ body::before {
 }
 
 .link-form input[type="text"],
-.link-form input[type="url"] {
+.link-form input[type="url"],
+.search-engine-form input[type="text"],
+.search-engine-form input[type="url"] {
     width: 100%;
     padding: 12px 14px;
     background: rgba(255, 255, 255, 0.06);
@@ -472,11 +476,13 @@ body::before {
     transition: border-color var(--transition-fast);
 }
 
-.link-form input::placeholder {
+.link-form input::placeholder,
+.search-engine-form input::placeholder {
     color: var(--text-tertiary);
 }
 
-.link-form input:focus {
+.link-form input:focus,
+.search-engine-form input:focus {
     outline: none;
     border-color: rgba(255, 255, 255, 0.3);
 }
@@ -615,11 +621,95 @@ body::before {
     border-top: 1px solid var(--glass-border);
 }
 
-.layout-settings-section h3 {
+.layout-settings-section h3,
+.search-engine-settings-section h3 {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-secondary);
     margin-bottom: 16px;
+}
+
+.search-engine-settings-section {
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--glass-border);
+}
+
+.engine-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.engine-list-empty {
+    padding: 12px 0;
+    color: var(--text-tertiary);
+    font-size: 13px;
+}
+
+.engine-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+}
+
+.engine-list-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    flex-shrink: 0;
+    object-fit: contain;
+}
+
+.engine-list-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.engine-list-name {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.engine-list-url {
+    margin-top: 2px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.engine-list-delete {
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 80, 80, 0.18);
+    border: 1px solid rgba(255, 80, 80, 0.24);
+    border-radius: var(--radius-sm);
+    color: #fecaca;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.engine-list-delete:hover {
+    background: rgba(255, 80, 80, 0.32);
+    transform: scale(1.04);
+}
+
+.engine-list-delete svg {
+    width: 16px;
+    height: 16px;
 }
 
 .layout-options {
@@ -816,7 +906,17 @@ body::before {
     flex-shrink: 0;
 }
 
-.engine-btn:hover .icon {
+.engine-btn .engine-favicon {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    object-fit: contain;
+    flex-shrink: 0;
+    transition: transform var(--transition-normal);
+}
+
+.engine-btn:hover .icon,
+.engine-btn:hover .engine-favicon {
     transform: scale(1.1);
 }
 

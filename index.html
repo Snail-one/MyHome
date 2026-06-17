@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ✅ Content Security Policy 防止 XSS 攻击 -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' http: https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' http: https: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https:">
     <title>个人导航首页</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -191,17 +191,27 @@
                     <h3>布局设置</h3>
                     <div class="layout-options">
                         <label class="layout-option-label">每行显示数量：</label>
-                        <div class="layout-buttons">
-                            <button type="button" class="layout-btn" data-columns="0" title="自动">自动</button>
-                            <button type="button" class="layout-btn" data-columns="1" title="1列">1</button>
-                            <button type="button" class="layout-btn" data-columns="2" title="2列">2</button>
-                            <button type="button" class="layout-btn" data-columns="3" title="3列">3</button>
-                            <button type="button" class="layout-btn" data-columns="4" title="4列">4</button>
-                            <button type="button" class="layout-btn" data-columns="5" title="5列">5</button>
-                            <button type="button" class="layout-btn" data-columns="6" title="6列">6</button>
-                        </div>
-                        <p class="form-hint">选择导航卡片每行显示的数量（最多6个）</p>
+                        <div class="layout-buttons" id="layout-buttons"></div>
+                        <p class="form-hint" id="layout-options-hint">根据当前窗口显示可用列数</p>
                     </div>
+                </div>
+                <div class="search-engine-settings-section">
+                    <h3>搜索引擎</h3>
+                    <form class="search-engine-form" id="search-engine-form">
+                        <div class="form-group">
+                            <label for="engine-name">显示名称</label>
+                            <input type="text" id="engine-name" name="name" placeholder="例如：知乎" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="engine-url-template">搜索地址</label>
+                            <input type="text" id="engine-url-template" name="urlTemplate" placeholder="https://www.zhihu.com/search?q={query}" required>
+                        </div>
+                        <p class="form-hint">使用 {query} 作为关键词位置。</p>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">添加搜索引擎</button>
+                        </div>
+                    </form>
+                    <div class="engine-list" id="search-engine-list"></div>
                 </div>
             </div>
         </div>

@@ -71,6 +71,19 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_nav_links_user_sort ON nav_links(user_id, sort_order, id);
+
+  CREATE TABLE IF NOT EXISTS search_engines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    url_template TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_search_engines_user_sort ON search_engines(user_id, sort_order, id);
 `);
 
 function ensureAdminUser() {
@@ -141,6 +154,12 @@ function getSettings() {
 function getLinks() {
   return db.prepare(
     'SELECT id, title, url FROM nav_links WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
+  ).all(USER_ID);
+}
+
+function getSearchEngines() {
+  return db.prepare(
+    'SELECT id, name, url_template AS urlTemplate FROM search_engines WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
   ).all(USER_ID);
 }
 
@@ -241,6 +260,44 @@ function validateLinkPayload(req, res) {
   }
 
   return { title, url };
+}
+
+function normalizeSearchEngineName(name) {
+  if (typeof name !== 'string') return '';
+  return name.trim().slice(0, 40);
+}
+
+function normalizeSearchUrlTemplate(urlTemplate) {
+  if (typeof urlTemplate !== 'string') return '';
+  return urlTemplate.trim().slice(0, 1000);
+}
+
+function isValidSearchUrlTemplate(urlTemplate) {
+  if (!urlTemplate) return false;
+  try {
+    const sampleUrl = urlTemplate.replaceAll('{query}', 'test');
+    const parsedUrl = new URL(sampleUrl);
+    return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateSearchEnginePayload(req, res) {
+  const name = normalizeSearchEngineName(req.body.name);
+  const urlTemplate = normalizeSearchUrlTemplate(req.body.urlTemplate);
+
+  if (!name) {
+    res.status(400).json({ error: '请填写搜索引擎名称' });
+    return null;
+  }
+
+  if (!isValidSearchUrlTemplate(urlTemplate)) {
+    res.status(400).json({ error: '搜索地址必须是 http 或 https URL' });
+    return null;
+  }
+
+  return { name, urlTemplate };
 }
 
 function deleteLocalBackground(backgroundUrl) {
@@ -394,6 +451,53 @@ app.put('/api/settings', requireAuth, (req, res) => {
   }
 
   res.json({ settings: getSettings() });
+});
+
+app.get('/api/search-engines', requireAuth, (req, res) => {
+  res.json({ engines: getSearchEngines() });
+});
+
+app.post('/api/search-engines', requireAuth, (req, res) => {
+  const payload = validateSearchEnginePayload(req, res);
+  if (!payload) return;
+
+  const row = db.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM search_engines WHERE user_id = ?'
+  ).get(USER_ID);
+
+  db.prepare(
+    'INSERT INTO search_engines (user_id, name, url_template, sort_order) VALUES (?, ?, ?, ?)'
+  ).run(USER_ID, payload.name, payload.urlTemplate, row.next_order);
+
+  res.status(201).json({ engines: getSearchEngines() });
+});
+
+app.put('/api/search-engines/:id', requireAuth, (req, res) => {
+  const payload = validateSearchEnginePayload(req, res);
+  if (!payload) return;
+
+  const result = db.prepare(`
+    UPDATE search_engines
+    SET name = ?, url_template = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ? AND id = ?
+  `).run(payload.name, payload.urlTemplate, USER_ID, req.params.id);
+
+  if (Number(result.changes) === 0) {
+    res.status(404).json({ error: '搜索引擎不存在' });
+    return;
+  }
+
+  res.json({ engines: getSearchEngines() });
+});
+
+app.delete('/api/search-engines/:id', requireAuth, (req, res) => {
+  const result = db.prepare('DELETE FROM search_engines WHERE user_id = ? AND id = ?').run(USER_ID, req.params.id);
+  if (Number(result.changes) === 0) {
+    res.status(404).json({ error: '搜索引擎不存在' });
+    return;
+  }
+
+  res.json({ engines: getSearchEngines() });
 });
 
 app.get('/api/links', requireAuth, (req, res) => {

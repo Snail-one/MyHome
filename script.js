@@ -1,5 +1,5 @@
 // ==================== 搜索引擎配置 ====================
-const searchEngines = {
+const defaultSearchEngines = {
     google: {
         name: 'Google',
         url: 'https://www.google.com/search?q=',
@@ -22,6 +22,8 @@ const searchEngines = {
     }
 };
 
+let searchEngines = { ...defaultSearchEngines };
+
 const DEFAULT_SETTINGS = {
     layoutColumns: 0,
     editMode: false,
@@ -31,6 +33,7 @@ const DEFAULT_SETTINGS = {
 const appState = {
     user: null,
     links: [],
+    customSearchEngines: [],
     settings: { ...DEFAULT_SETTINGS }
 };
 
@@ -42,11 +45,12 @@ let draggedIndex = null;
 let isDragging = false;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
+let layoutResizeTimer = null;
 
 // ==================== DOM 元素 ====================
 const searchInput = document.querySelector('.search-input');
 const searchBox = document.querySelector('.search-box');
-const engineButtons = document.querySelectorAll('.engine-btn');
+const searchEngineSwitcher = document.querySelector('.search-engine-switcher');
 const engineIndicator = document.querySelector('.current-engine');
 const searchEngineIndicator = document.querySelector('.search-engine-indicator');
 const loginForm = document.getElementById('login-form');
@@ -95,12 +99,17 @@ async function apiRequest(path, options = {}) {
 }
 
 async function loadAppData() {
-    const [linksData, settingsData] = await Promise.all([
+    const [linksData, settingsData, searchEnginesData] = await Promise.all([
         apiRequest('/api/links'),
-        apiRequest('/api/settings')
+        apiRequest('/api/settings'),
+        apiRequest('/api/search-engines')
     ]);
 
     appState.links = Array.isArray(linksData.links) ? linksData.links : [];
+    appState.customSearchEngines = Array.isArray(searchEnginesData.engines) ? searchEnginesData.engines : [];
+    rebuildSearchEngines();
+    renderSearchEngineButtons();
+    renderSearchEngineList();
     applySettings(settingsData.settings || DEFAULT_SETTINGS);
     renderNavCards();
 }
@@ -118,7 +127,11 @@ function showLoggedOut(message = '') {
     const authScreen = document.getElementById('auth-screen');
     appState.user = null;
     appState.links = [];
+    appState.customSearchEngines = [];
     appState.settings = { ...DEFAULT_SETTINGS };
+    currentEngine = 'google';
+    rebuildSearchEngines();
+    renderSearchEngineButtons();
     document.body.classList.remove('auth-pending', 'logged-in');
     document.body.classList.add('logged-out');
     authScreen?.setAttribute('aria-hidden', 'false');
@@ -194,8 +207,10 @@ async function restoreSession() {
 
 // ==================== 搜索 ====================
 function bindSearchEvents() {
-    engineButtons.forEach(btn => {
-        btn.addEventListener('click', () => switchSearchEngine(btn.dataset.engine));
+    searchEngineSwitcher.addEventListener('click', (event) => {
+        const btn = event.target.closest('.engine-btn');
+        if (!btn) return;
+        switchSearchEngine(btn.dataset.engine);
     });
 
     searchEngineIndicator.addEventListener('click', performSearch);
@@ -211,6 +226,69 @@ function bindSearchEvents() {
     searchInput.addEventListener('blur', () => {
         searchBox.classList.remove('focused');
     });
+}
+
+function getEngineButtons() {
+    return document.querySelectorAll('.engine-btn');
+}
+
+function getCustomEngineKey(engine) {
+    return `custom-${engine.id}`;
+}
+
+function rebuildSearchEngines() {
+    searchEngines = { ...defaultSearchEngines };
+    appState.customSearchEngines.forEach(engine => {
+        searchEngines[getCustomEngineKey(engine)] = {
+            name: engine.name,
+            urlTemplate: engine.urlTemplate,
+            placeholder: `搜索 ${engine.name}...`
+        };
+    });
+}
+
+function getSearchTemplateDomain(urlTemplate) {
+    if (!urlTemplate) return null;
+    return getDomainFromUrl(urlTemplate.replaceAll('{query}', 'test'));
+}
+
+function renderSearchEngineButtons() {
+    searchEngineSwitcher.querySelectorAll('.custom-engine-btn').forEach(btn => btn.remove());
+
+    appState.customSearchEngines.forEach(engine => {
+        const key = getCustomEngineKey(engine);
+        const domain = getSearchTemplateDomain(engine.urlTemplate);
+        const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32` : '';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'engine-btn custom-engine-btn';
+        btn.dataset.engine = key;
+        btn.innerHTML = `
+            ${faviconUrl
+                ? `<img src="${faviconUrl}" alt="" class="engine-favicon">`
+                : '<span class="engine-favicon" aria-hidden="true"></span>'
+            }
+            <span>${escapeHtml(engine.name)}</span>
+        `;
+        searchEngineSwitcher.appendChild(btn);
+    });
+
+    if (!searchEngines[currentEngine]) currentEngine = 'google';
+    updateSearchEngine(currentEngine);
+}
+
+function buildSearchUrl(engineConfig, query) {
+    const encodedQuery = encodeURIComponent(query);
+    if (engineConfig.urlTemplate) {
+        if (engineConfig.urlTemplate.includes('{query}')) {
+            return engineConfig.urlTemplate.replaceAll('{query}', encodedQuery);
+        }
+
+        const separator = engineConfig.urlTemplate.includes('?') ? '&' : '?';
+        return `${engineConfig.urlTemplate}${separator}q=${encodedQuery}`;
+    }
+
+    return engineConfig.url + encodedQuery;
 }
 
 function switchSearchEngine(engine) {
@@ -233,7 +311,7 @@ function updateSearchEngine(engine) {
     searchInput.placeholder = engineConfig.placeholder;
     engineIndicator.textContent = engineConfig.name;
 
-    engineButtons.forEach(btn => {
+    getEngineButtons().forEach(btn => {
         if (btn.dataset.engine === engine) {
             btn.classList.add('active');
             btn.style.animation = 'pulse 0.3s ease';
@@ -257,7 +335,7 @@ function performSearch() {
     }
 
     const engineConfig = searchEngines[currentEngine];
-    window.open(engineConfig.url + encodeURIComponent(query), '_blank');
+    window.open(buildSearchUrl(engineConfig, query), '_blank');
 }
 
 // ==================== 快捷键支持 ====================
@@ -512,10 +590,8 @@ function openManageModal(editIndex) {
         document.querySelector('.link-form .btn-primary').textContent = '添加链接';
     }
 
-    document.querySelectorAll('.layout-btn').forEach(btn => {
-        const btnCols = parseInt(btn.dataset.columns, 10);
-        btn.classList.toggle('active', btnCols === layoutColumns);
-    });
+    renderLayoutButtons();
+    renderSearchEngineList();
 }
 
 function closeManageModal() {
@@ -534,6 +610,36 @@ function openModal(modalId) {
     if (!modal) return;
     modal.setAttribute('aria-hidden', 'false');
     modal.classList.add('modal-open');
+}
+
+function renderSearchEngineList() {
+    const list = document.getElementById('search-engine-list');
+    if (!list) return;
+
+    if (!appState.customSearchEngines.length) {
+        list.innerHTML = '<div class="engine-list-empty">暂无自定义搜索引擎</div>';
+        return;
+    }
+
+    list.innerHTML = appState.customSearchEngines.map(engine => {
+        const domain = getSearchTemplateDomain(engine.urlTemplate);
+        const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32` : '';
+        return `
+            <div class="engine-list-item">
+                ${faviconUrl
+                    ? `<img src="${faviconUrl}" alt="" class="engine-list-icon">`
+                    : '<span class="engine-list-icon" aria-hidden="true"></span>'
+                }
+                <div class="engine-list-info">
+                    <div class="engine-list-name">${escapeHtml(engine.name)}</div>
+                    <div class="engine-list-url">${escapeHtml(engine.urlTemplate)}</div>
+                </div>
+                <button type="button" class="engine-list-delete" data-id="${engine.id}" title="删除搜索引擎">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
+                </button>
+            </div>
+        `;
+    }).join('');
 }
 
 async function toggleEditMode() {
@@ -576,6 +682,57 @@ function editLink(index) {
     openManageModal(index);
 }
 
+function parseCssPixelValue(value, fallback = 0) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getMaxAvailableLayoutColumns() {
+    if (window.matchMedia('(max-width: 768px)').matches) return 1;
+
+    const container = document.getElementById('nav-links-container');
+    const rootStyles = getComputedStyle(document.documentElement);
+    const containerStyles = container ? getComputedStyle(container) : null;
+    const configuredMax = Number.parseInt(rootStyles.getPropertyValue('--layout-max-cols'), 10) || 6;
+    const cardWidth = parseCssPixelValue(rootStyles.getPropertyValue('--nav-card-width'), 120);
+    const gap = parseCssPixelValue(containerStyles?.columnGap || rootStyles.getPropertyValue('--nav-gap'), 16);
+    const measuredWidth = container?.getBoundingClientRect().width || 0;
+    const fallbackWidth = Math.min(window.innerWidth * 0.94, 1400);
+    const availableWidth = measuredWidth || fallbackWidth;
+    const columns = Math.floor((availableWidth + gap) / (cardWidth + gap));
+    const linkCount = Math.max(1, appState.links.length);
+
+    return Math.max(1, Math.min(configuredMax, columns, linkCount));
+}
+
+function updateLayoutButtonState() {
+    document.querySelectorAll('.layout-btn').forEach(btn => {
+        const btnCols = parseInt(btn.dataset.columns, 10);
+        btn.classList.toggle('active', btnCols === layoutColumns);
+    });
+}
+
+function renderLayoutButtons() {
+    const layoutButtons = document.getElementById('layout-buttons');
+    const hint = document.getElementById('layout-options-hint');
+    if (!layoutButtons) return;
+
+    const maxColumns = getMaxAvailableLayoutColumns();
+    const buttons = ['<button type="button" class="layout-btn" data-columns="0" title="自动">自动</button>'];
+
+    for (let columns = 1; columns <= maxColumns; columns += 1) {
+        buttons.push(`<button type="button" class="layout-btn" data-columns="${columns}" title="${columns}列">${columns}</button>`);
+    }
+
+    layoutButtons.innerHTML = buttons.join('');
+    if (hint) {
+        hint.textContent = layoutColumns > maxColumns
+            ? `当前窗口最多 ${maxColumns} 列，已保存 ${layoutColumns} 列会在窗口足够宽时生效`
+            : `当前窗口最多 ${maxColumns} 列`;
+    }
+    updateLayoutButtonState();
+}
+
 function applyLayoutColumns(columns) {
     layoutColumns = columns;
     appState.settings.layoutColumns = columns;
@@ -591,10 +748,7 @@ function applyLayoutColumns(columns) {
         container.classList.add('layout-fixed');
     }
 
-    document.querySelectorAll('.layout-btn').forEach(btn => {
-        const btnCols = parseInt(btn.dataset.columns, 10);
-        btn.classList.toggle('active', btnCols === columns);
-    });
+    updateLayoutButtonState();
 }
 
 async function setLayoutColumns(columns) {
@@ -613,6 +767,9 @@ function bindMenuManagement() {
     const manageBtn = document.querySelector('.manage-menu-btn');
     const editModeBtn = document.getElementById('edit-mode-btn');
     const form = document.getElementById('link-form');
+    const searchEngineForm = document.getElementById('search-engine-form');
+    const searchEngineList = document.getElementById('search-engine-list');
+    const layoutButtons = document.getElementById('layout-buttons');
     const cancelBtn = document.getElementById('link-form-cancel');
 
     manageBtn.addEventListener('click', () => openManageModal());
@@ -650,11 +807,63 @@ function bindMenuManagement() {
         }
     });
 
-    document.querySelectorAll('.layout-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const columns = parseInt(btn.dataset.columns, 10);
-            setLayoutColumns(columns);
-        });
+    layoutButtons.addEventListener('click', (event) => {
+        const btn = event.target.closest('.layout-btn');
+        if (!btn) return;
+
+        const columns = parseInt(btn.dataset.columns, 10);
+        setLayoutColumns(columns);
+    });
+
+    searchEngineForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const submitBtn = searchEngineForm.querySelector('.btn-primary');
+        const name = document.getElementById('engine-name').value.trim();
+        const urlTemplate = document.getElementById('engine-url-template').value.trim();
+
+        if (!name || !urlTemplate) return;
+        submitBtn.disabled = true;
+
+        try {
+            const data = await apiRequest('/api/search-engines', {
+                method: 'POST',
+                body: { name, urlTemplate }
+            });
+            appState.customSearchEngines = data.engines || [];
+            rebuildSearchEngines();
+            renderSearchEngineButtons();
+            renderSearchEngineList();
+            searchEngineForm.reset();
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            submitBtn.disabled = false;
+        }
+    });
+
+    searchEngineList.addEventListener('click', async (event) => {
+        const deleteBtn = event.target.closest('.engine-list-delete');
+        if (!deleteBtn) return;
+
+        const engine = appState.customSearchEngines.find(item => String(item.id) === deleteBtn.dataset.id);
+        if (!engine) return;
+        if (!confirm(`确定要删除搜索引擎「${engine.name}」吗？`)) return;
+
+        deleteBtn.disabled = true;
+
+        try {
+            const data = await apiRequest(`/api/search-engines/${engine.id}`, { method: 'DELETE' });
+            const deletedEngineKey = getCustomEngineKey(engine);
+            appState.customSearchEngines = data.engines || [];
+            if (currentEngine === deletedEngineKey) currentEngine = 'google';
+            rebuildSearchEngines();
+            renderSearchEngineButtons();
+            renderSearchEngineList();
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            deleteBtn.disabled = false;
+        }
     });
 
     document.getElementById('nav-links-container').addEventListener('click', (event) => {
@@ -884,12 +1093,22 @@ function injectAnimationStyles() {
     document.head.appendChild(style);
 }
 
+function bindLayoutResize() {
+    window.addEventListener('resize', () => {
+        clearTimeout(layoutResizeTimer);
+        layoutResizeTimer = setTimeout(() => {
+            renderLayoutButtons();
+        }, 120);
+    });
+}
+
 function init() {
     injectAnimationStyles();
     updateSearchEngine(currentEngine);
     bindAuth();
     bindSearchEvents();
     bindMenuManagement();
+    bindLayoutResize();
     bindBackgroundModal();
     restoreSession();
 }
