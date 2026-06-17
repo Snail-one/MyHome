@@ -628,11 +628,22 @@ body::before {
 }
 
 .layout-settings-section h3,
+.icon-cache-section h3,
 .search-engine-settings-section h3 {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-secondary);
     margin-bottom: 16px;
+}
+
+.icon-cache-section {
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--glass-border);
+}
+
+.icon-cache-actions {
+    margin-bottom: 0;
 }
 
 .search-engine-settings-section {
@@ -694,18 +705,39 @@ body::before {
     white-space: nowrap;
 }
 
+.engine-list-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.engine-list-edit,
 .engine-list-delete {
     width: 30px;
     height: 30px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 80, 80, 0.18);
-    border: 1px solid rgba(255, 80, 80, 0.24);
     border-radius: var(--radius-sm);
-    color: #fecaca;
     cursor: pointer;
     transition: all var(--transition-fast);
+}
+
+.engine-list-edit {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: var(--text-primary);
+}
+
+.engine-list-delete {
+    background: rgba(255, 80, 80, 0.18);
+    border: 1px solid rgba(255, 80, 80, 0.24);
+    color: #fecaca;
+}
+
+.engine-list-edit:hover {
+    background: rgba(102, 126, 234, 0.34);
+    transform: scale(1.04);
 }
 
 .engine-list-delete:hover {
@@ -713,6 +745,7 @@ body::before {
     transform: scale(1.04);
 }
 
+.engine-list-edit svg,
 .engine-list-delete svg {
     width: 16px;
     height: 16px;

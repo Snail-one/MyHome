@@ -14,6 +14,7 @@ const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, 'data');
 const UPLOADS_DIR = path.join(ROOT_DIR, 'uploads');
 const BACKGROUNDS_DIR = path.join(UPLOADS_DIR, 'backgrounds');
+const ICON_CACHE_DIR = path.join(DATA_DIR, 'icon-cache');
 const DATABASE_PATH = path.resolve(ROOT_DIR, process.env.DATABASE_PATH || './data/my-home.sqlite');
 const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -21,12 +22,37 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const MAX_BACKGROUND_SIZE = 10 * 1024 * 1024;
+const MAX_ICON_SIZE = 1024 * 1024;
+const ICON_FETCH_TIMEOUT_MS = 5000;
+const ICON_HTML_SAMPLE_SIZE = 128 * 1024;
 const LOGIN_MAX_FAILED_ATTEMPTS = parseIntegerEnv(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 5, 1);
 const LOGIN_WINDOW_MS = parseIntegerEnv(process.env.LOGIN_WINDOW_MS, 15 * 60 * 1000, 1000);
 const LOGIN_LOCKOUT_MS = parseIntegerEnv(process.env.LOGIN_LOCKOUT_MS, 15 * 60 * 1000, 1000);
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const USER_ID = 1;
 const loginAttempts = new Map();
+const DEFAULT_SEARCH_ENGINES = [
+  {
+    engineKey: 'google',
+    name: 'Google',
+    urlTemplate: 'https://www.google.com/search?q={query}'
+  },
+  {
+    engineKey: 'youtube',
+    name: 'YouTube',
+    urlTemplate: 'https://www.youtube.com/results?search_query={query}'
+  },
+  {
+    engineKey: 'github',
+    name: 'GitHub',
+    urlTemplate: 'https://github.com/search?q={query}'
+  },
+  {
+    engineKey: 'bilibili',
+    name: '哔哩哔哩',
+    urlTemplate: 'https://search.bilibili.com/all?keyword={query}'
+  }
+];
 
 if (!ADMIN_USERNAME || !ADMIN_PASSWORD || !SESSION_SECRET) {
   console.error('Missing required environment variables: ADMIN_USERNAME, ADMIN_PASSWORD, SESSION_SECRET');
@@ -37,6 +63,7 @@ if (!ADMIN_USERNAME || !ADMIN_PASSWORD || !SESSION_SECRET) {
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.dirname(DATABASE_PATH), { recursive: true });
 fs.mkdirSync(BACKGROUNDS_DIR, { recursive: true });
+fs.mkdirSync(ICON_CACHE_DIR, { recursive: true });
 
 const db = new DatabaseSync(DATABASE_PATH);
 db.exec('PRAGMA foreign_keys = ON');
@@ -75,6 +102,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS search_engines (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
+    engine_key TEXT,
     name TEXT NOT NULL,
     url_template TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -85,6 +113,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_search_engines_user_sort ON search_engines(user_id, sort_order, id);
 `);
+
+function ensureSearchEngineSchema() {
+  const columns = db.prepare('PRAGMA table_info(search_engines)').all();
+  const hasEngineKey = columns.some((column) => column.name === 'engine_key');
+  if (!hasEngineKey) {
+    db.exec('ALTER TABLE search_engines ADD COLUMN engine_key TEXT');
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_search_engines_user_key
+    ON search_engines(user_id, engine_key)
+    WHERE engine_key IS NOT NULL
+  `);
+}
 
 function ensureAdminUser() {
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(USER_ID);
@@ -105,7 +147,83 @@ function ensureAdminUser() {
   db.prepare('INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)').run(USER_ID);
 }
 
+function ensureDefaultSearchEngines() {
+  const existingByKey = db.prepare('SELECT id FROM search_engines WHERE user_id = ? AND engine_key = ?');
+  const existingByName = db.prepare(`
+    SELECT id
+    FROM search_engines
+    WHERE user_id = ? AND engine_key IS NULL AND lower(name) = lower(?)
+    ORDER BY sort_order ASC, id ASC
+    LIMIT 1
+  `);
+  const existingByTemplate = db.prepare(`
+    SELECT id
+    FROM search_engines
+    WHERE user_id = ? AND engine_key IS NULL AND url_template = ?
+    ORDER BY sort_order ASC, id ASC
+    LIMIT 1
+  `);
+  const assignKey = db.prepare(`
+    UPDATE search_engines
+    SET engine_key = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ? AND id = ?
+  `);
+  const insertEngine = db.prepare(`
+    INSERT INTO search_engines (user_id, engine_key, name, url_template, sort_order)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const updateDefaultSort = db.prepare(`
+    UPDATE search_engines
+    SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ? AND engine_key = ?
+  `);
+  const customRows = db.prepare(`
+    SELECT id
+    FROM search_engines
+    WHERE user_id = ? AND engine_key IS NULL
+    ORDER BY sort_order ASC, id ASC
+  `);
+  const updateCustomSort = db.prepare(`
+    UPDATE search_engines
+    SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ? AND id = ?
+  `);
+  const maxSortRow = db.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) AS max_sort_order FROM search_engines WHERE user_id = ?'
+  ).get(USER_ID);
+  let nextSortOrder = Number(maxSortRow.max_sort_order) + 1;
+
+  DEFAULT_SEARCH_ENGINES.forEach((engine) => {
+    if (existingByKey.get(USER_ID, engine.engineKey)) return;
+
+    const existingNameRow = existingByName.get(USER_ID, engine.name);
+    if (existingNameRow) {
+      assignKey.run(engine.engineKey, USER_ID, existingNameRow.id);
+      return;
+    }
+
+    const existingTemplateRow = existingByTemplate.get(USER_ID, engine.urlTemplate);
+    if (existingTemplateRow) {
+      assignKey.run(engine.engineKey, USER_ID, existingTemplateRow.id);
+      return;
+    }
+
+    insertEngine.run(USER_ID, engine.engineKey, engine.name, engine.urlTemplate, nextSortOrder);
+    nextSortOrder += 1;
+  });
+
+  DEFAULT_SEARCH_ENGINES.forEach((engine, index) => {
+    updateDefaultSort.run(index, USER_ID, engine.engineKey);
+  });
+
+  customRows.all(USER_ID).forEach((row, index) => {
+    updateCustomSort.run(DEFAULT_SEARCH_ENGINES.length + index, USER_ID, row.id);
+  });
+}
+
+ensureSearchEngineSchema();
 ensureAdminUser();
+ensureDefaultSearchEngines();
 
 function normalizeTitle(title) {
   if (typeof title !== 'string') return '';
@@ -159,7 +277,7 @@ function getLinks() {
 
 function getSearchEngines() {
   return db.prepare(
-    'SELECT id, name, url_template AS urlTemplate FROM search_engines WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
+    'SELECT id, engine_key AS engineKey, name, url_template AS urlTemplate FROM search_engines WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
   ).all(USER_ID);
 }
 
@@ -312,6 +430,323 @@ function deleteLocalBackground(backgroundUrl) {
       console.warn('Failed to delete old background:', error.message);
     }
   });
+}
+
+const iconContentTypeByExtension = new Map([
+  ['.ico', 'image/x-icon'],
+  ['.png', 'image/png'],
+  ['.svg', 'image/svg+xml'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.webp', 'image/webp'],
+  ['.gif', 'image/gif']
+]);
+
+const iconExtensionByContentType = new Map([
+  ['image/x-icon', '.ico'],
+  ['image/vnd.microsoft.icon', '.ico'],
+  ['image/png', '.png'],
+  ['image/svg+xml', '.svg'],
+  ['image/jpeg', '.jpg'],
+  ['image/webp', '.webp'],
+  ['image/gif', '.gif']
+]);
+
+function normalizeIconTargetUrl(value) {
+  const normalized = normalizeUrl(value);
+  if (!normalized) return null;
+
+  try {
+    const parsedUrl = new URL(normalized.startsWith('http') ? normalized : `https://${normalized}`);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
+    return parsedUrl.href;
+  } catch {
+    return null;
+  }
+}
+
+function getIconCacheKey(targetUrl) {
+  return crypto.createHash('sha256').update(targetUrl).digest('hex').slice(0, 48);
+}
+
+function getIconContentType(extension) {
+  return iconContentTypeByExtension.get(extension) || 'image/x-icon';
+}
+
+function getIconExtensionFromUrl(candidateUrl) {
+  try {
+    const extension = path.extname(new URL(candidateUrl).pathname).toLowerCase();
+    return iconContentTypeByExtension.has(extension) ? extension : '';
+  } catch {
+    return '';
+  }
+}
+
+function getIconExtension(contentType, candidateUrl, buffer) {
+  const normalizedContentType = (contentType || '').split(';')[0].trim().toLowerCase();
+  const extensionFromType = iconExtensionByContentType.get(normalizedContentType);
+  if (extensionFromType) return extensionFromType;
+
+  const extensionFromUrl = getIconExtensionFromUrl(candidateUrl);
+  if (extensionFromUrl) return extensionFromUrl;
+
+  const sample = buffer.subarray(0, 128).toString('utf8').trimStart().toLowerCase();
+  if (sample.startsWith('<svg')) return '.svg';
+
+  return '.ico';
+}
+
+function isSupportedIconResponse(contentType, candidateUrl, buffer) {
+  const normalizedContentType = (contentType || '').split(';')[0].trim().toLowerCase();
+  if (normalizedContentType.startsWith('image/')) return true;
+
+  const extensionFromUrl = getIconExtensionFromUrl(candidateUrl);
+  if (extensionFromUrl && ['application/octet-stream', 'binary/octet-stream', ''].includes(normalizedContentType)) {
+    return true;
+  }
+
+  const sample = buffer.subarray(0, 128).toString('utf8').trimStart().toLowerCase();
+  return sample.startsWith('<svg');
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ICON_FETCH_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      redirect: 'follow',
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readResponseBuffer(response, maxBytes, allowTruncate = false) {
+  const contentLength = Number.parseInt(response.headers.get('content-length') || '', 10);
+  if (!allowTruncate && Number.isInteger(contentLength) && contentLength > maxBytes) {
+    throw new Error('Icon response is too large');
+  }
+
+  if (!response.body?.getReader) {
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    if (buffer.length > maxBytes) {
+      if (allowTruncate) return buffer.subarray(0, maxBytes);
+      throw new Error('Icon response is too large');
+    }
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = Buffer.from(value);
+    if (totalBytes + chunk.length > maxBytes) {
+      if (allowTruncate) {
+        chunks.push(chunk.subarray(0, maxBytes - totalBytes));
+        await reader.cancel().catch(() => {});
+        break;
+      }
+      throw new Error('Icon response is too large');
+    }
+    totalBytes += chunk.length;
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function getHtmlAttribute(tag, name) {
+  const match = tag.match(new RegExp(`\\s${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+  return match ? (match[2] || match[3] || match[4] || '').trim() : '';
+}
+
+function toHttpUrl(value, baseUrl) {
+  try {
+    const parsedUrl = new URL(value, baseUrl);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
+    return parsedUrl.href;
+  } catch {
+    return null;
+  }
+}
+
+function extractIconLinksFromHtml(html, pageUrl) {
+  const candidates = [];
+
+  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = match[0];
+    const rel = getHtmlAttribute(tag, 'rel').toLowerCase();
+    const href = getHtmlAttribute(tag, 'href');
+    if (!rel || !href || !rel.includes('icon')) continue;
+
+    const iconUrl = toHttpUrl(href, pageUrl);
+    if (iconUrl) candidates.push(iconUrl);
+  }
+
+  return candidates;
+}
+
+function getConventionalIconCandidates(parsedUrl) {
+  const rootIconPaths = [
+    '/favicon.ico',
+    '/favicon.png',
+    '/favicon.svg',
+    '/favicon-32x32.png',
+    '/favicon-16x16.png',
+    '/apple-touch-icon.png',
+    '/apple-touch-icon-precomposed.png',
+    '/images/favicon.ico',
+    '/images/favicon.png',
+    '/static/favicon.ico',
+    '/assets/favicon.ico',
+    '/front-static/favicon.ico'
+  ];
+  const nestedIconNames = ['favicon.ico', 'favicon.png', 'favicon.svg', 'apple-touch-icon.png'];
+  const pathSegments = parsedUrl.pathname.split('/').filter(Boolean).slice(0, 3);
+  const pathPrefixes = [];
+  let currentPrefix = '';
+
+  for (const segment of pathSegments) {
+    currentPrefix += `/${segment}`;
+    pathPrefixes.unshift(currentPrefix);
+  }
+
+  const candidates = [];
+
+  rootIconPaths.forEach((iconPath) => {
+    candidates.push(`${parsedUrl.origin}${iconPath}`);
+  });
+  pathPrefixes.forEach((prefix) => {
+    nestedIconNames.forEach((iconName) => {
+      candidates.push(`${parsedUrl.origin}${prefix}/${iconName}`);
+    });
+  });
+
+  return candidates;
+}
+
+function uniqueHttpUrls(urls) {
+  const seen = new Set();
+  return urls.filter((url) => {
+    const httpUrl = toHttpUrl(url);
+    if (!httpUrl || seen.has(httpUrl)) return false;
+    seen.add(httpUrl);
+    return true;
+  });
+}
+
+async function discoverIconCandidates(parsedUrl) {
+  const candidates = [];
+
+  try {
+    const response = await fetchWithTimeout(parsedUrl.href, {
+      headers: {
+        Accept: 'text/html,application/xhtml+xml'
+      }
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (response.ok && (!contentType || contentType.includes('text/html') || contentType.includes('application/xhtml+xml'))) {
+      const html = (await readResponseBuffer(response, ICON_HTML_SAMPLE_SIZE, true)).toString('utf8');
+      candidates.push(...extractIconLinksFromHtml(html, parsedUrl.href));
+    }
+  } catch {
+    // Conventional favicon paths below still cover most services.
+  }
+
+  candidates.push(...getConventionalIconCandidates(parsedUrl));
+  return uniqueHttpUrls(candidates);
+}
+
+async function fetchIconCandidate(candidateUrl) {
+  const response = await fetchWithTimeout(candidateUrl, {
+    headers: {
+      Accept: 'image/avif,image/webp,image/svg+xml,image/png,image/*,*/*;q=0.8'
+    }
+  });
+
+  if (!response.ok) return null;
+
+  const buffer = await readResponseBuffer(response, MAX_ICON_SIZE);
+  if (!buffer.length) return null;
+
+  const contentType = response.headers.get('content-type') || '';
+  if (!isSupportedIconResponse(contentType, candidateUrl, buffer)) return null;
+
+  const extension = getIconExtension(contentType, candidateUrl, buffer);
+  return {
+    buffer,
+    extension,
+    contentType: getIconContentType(extension)
+  };
+}
+
+async function findCachedIcon(cacheKey) {
+  const missFilePath = path.join(ICON_CACHE_DIR, `${cacheKey}.miss`);
+  try {
+    await fs.promises.access(missFilePath);
+    return { miss: true };
+  } catch {
+    // Continue with image lookup.
+  }
+
+  const entries = await fs.promises.readdir(ICON_CACHE_DIR, { withFileTypes: true }).catch(() => []);
+  const cachedEntry = entries.find((entry) => (
+    entry.isFile() &&
+    entry.name.startsWith(`${cacheKey}.`) &&
+    iconContentTypeByExtension.has(path.extname(entry.name).toLowerCase())
+  ));
+
+  if (!cachedEntry) return null;
+
+  const extension = path.extname(cachedEntry.name).toLowerCase();
+  return {
+    filePath: path.join(ICON_CACHE_DIR, cachedEntry.name),
+    contentType: getIconContentType(extension)
+  };
+}
+
+async function markIconCacheMiss(cacheKey) {
+  await fs.promises.writeFile(path.join(ICON_CACHE_DIR, `${cacheKey}.miss`), new Date().toISOString());
+}
+
+async function cacheIconForUrl(targetUrl, cacheKey) {
+  const parsedUrl = new URL(targetUrl);
+  const candidates = await discoverIconCandidates(parsedUrl);
+
+  for (const candidateUrl of candidates) {
+    try {
+      const icon = await fetchIconCandidate(candidateUrl);
+      if (!icon) continue;
+
+      const filePath = path.join(ICON_CACHE_DIR, `${cacheKey}${icon.extension}`);
+      await fs.promises.writeFile(filePath, icon.buffer);
+      return {
+        filePath,
+        contentType: icon.contentType
+      };
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  await markIconCacheMiss(cacheKey);
+  return null;
+}
+
+function sendCachedIcon(res, cachedIcon) {
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.type(cachedIcon.contentType);
+  res.sendFile(cachedIcon.filePath);
 }
 
 const app = express();
@@ -491,6 +926,17 @@ app.put('/api/search-engines/:id', requireAuth, (req, res) => {
 });
 
 app.delete('/api/search-engines/:id', requireAuth, (req, res) => {
+  const engine = db.prepare('SELECT engine_key FROM search_engines WHERE user_id = ? AND id = ?').get(USER_ID, req.params.id);
+  if (!engine) {
+    res.status(404).json({ error: '搜索引擎不存在' });
+    return;
+  }
+
+  if (engine.engine_key) {
+    res.status(400).json({ error: '默认搜索引擎不能删除，可以编辑名称和搜索地址' });
+    return;
+  }
+
   const result = db.prepare('DELETE FROM search_engines WHERE user_id = ? AND id = ?').run(USER_ID, req.params.id);
   if (Number(result.changes) === 0) {
     res.status(404).json({ error: '搜索引擎不存在' });
@@ -563,6 +1009,51 @@ app.delete('/api/links/:id', requireAuth, (req, res) => {
     return;
   }
   res.json({ links: getLinks() });
+});
+
+app.get('/api/icon', requireAuth, async (req, res) => {
+  const targetUrl = normalizeIconTargetUrl(req.query.url);
+  if (!targetUrl) {
+    res.status(400).end();
+    return;
+  }
+
+  const cacheKey = getIconCacheKey(targetUrl);
+
+  try {
+    const cachedIcon = await findCachedIcon(cacheKey);
+    if (cachedIcon?.miss) {
+      res.status(404).end();
+      return;
+    }
+
+    if (cachedIcon) {
+      sendCachedIcon(res, cachedIcon);
+      return;
+    }
+
+    const downloadedIcon = await cacheIconForUrl(targetUrl, cacheKey);
+    if (!downloadedIcon) {
+      res.status(404).end();
+      return;
+    }
+
+    sendCachedIcon(res, downloadedIcon);
+  } catch (error) {
+    console.warn('Failed to load icon:', error.message);
+    res.status(404).end();
+  }
+});
+
+app.post('/api/icon-cache/refresh', requireAuth, async (req, res) => {
+  try {
+    await fs.promises.rm(ICON_CACHE_DIR, { recursive: true, force: true });
+    await fs.promises.mkdir(ICON_CACHE_DIR, { recursive: true });
+    res.json({ ok: true });
+  } catch (error) {
+    console.warn('Failed to refresh icon cache:', error.message);
+    res.status(500).json({ error: '刷新图标缓存失败' });
+  }
 });
 
 const allowedImageTypes = new Map([

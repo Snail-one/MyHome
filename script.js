@@ -2,22 +2,22 @@
 const defaultSearchEngines = {
     google: {
         name: 'Google',
-        url: 'https://www.google.com/search?q=',
+        urlTemplate: 'https://www.google.com/search?q={query}',
         placeholder: '搜索 Google...'
     },
     youtube: {
         name: 'YouTube',
-        url: 'https://www.youtube.com/results?search_query=',
+        urlTemplate: 'https://www.youtube.com/results?search_query={query}',
         placeholder: '在 YouTube 搜索...'
     },
     github: {
         name: 'GitHub',
-        url: 'https://github.com/search?q=',
+        urlTemplate: 'https://github.com/search?q={query}',
         placeholder: '搜索 GitHub...'
     },
     bilibili: {
         name: '哔哩哔哩',
-        url: 'https://search.bilibili.com/all?keyword=',
+        urlTemplate: 'https://search.bilibili.com/all?keyword={query}',
         placeholder: '在 B 站搜索...'
     }
 };
@@ -29,11 +29,12 @@ const DEFAULT_SETTINGS = {
     editMode: false,
     backgroundUrl: ''
 };
+const LOCAL_ICON_CACHE_STORAGE_KEY = 'my-home-local-icon-cache-v1';
 
 const appState = {
     user: null,
     links: [],
-    customSearchEngines: [],
+    searchEngineRecords: [],
     settings: { ...DEFAULT_SETTINGS }
 };
 
@@ -46,6 +47,8 @@ let isDragging = false;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let layoutResizeTimer = null;
+let iconCacheVersion = Date.now();
+let localIconCache = loadLocalIconCache();
 
 // ==================== DOM 元素 ====================
 const searchInput = document.querySelector('.search-input');
@@ -106,7 +109,7 @@ async function loadAppData() {
     ]);
 
     appState.links = Array.isArray(linksData.links) ? linksData.links : [];
-    appState.customSearchEngines = Array.isArray(searchEnginesData.engines) ? searchEnginesData.engines : [];
+    appState.searchEngineRecords = Array.isArray(searchEnginesData.engines) ? searchEnginesData.engines : [];
     rebuildSearchEngines();
     renderSearchEngineButtons();
     renderSearchEngineList();
@@ -127,7 +130,7 @@ function showLoggedOut(message = '') {
     const authScreen = document.getElementById('auth-screen');
     appState.user = null;
     appState.links = [];
-    appState.customSearchEngines = [];
+    appState.searchEngineRecords = [];
     appState.settings = { ...DEFAULT_SETTINGS };
     currentEngine = 'google';
     rebuildSearchEngines();
@@ -233,19 +236,36 @@ function getEngineButtons() {
     return document.querySelectorAll('.engine-btn');
 }
 
-function getCustomEngineKey(engine) {
-    return `custom-${engine.id}`;
+function getEngineKey(engine) {
+    return engine.engineKey || `custom-${engine.id}`;
+}
+
+function getFallbackSearchEngineRecords() {
+    return Object.entries(defaultSearchEngines).map(([engineKey, config]) => ({
+        id: engineKey,
+        engineKey,
+        name: config.name,
+        urlTemplate: config.urlTemplate
+    }));
+}
+
+function getRenderableSearchEngines() {
+    return appState.searchEngineRecords.length ? appState.searchEngineRecords : getFallbackSearchEngineRecords();
 }
 
 function rebuildSearchEngines() {
-    searchEngines = { ...defaultSearchEngines };
-    appState.customSearchEngines.forEach(engine => {
-        searchEngines[getCustomEngineKey(engine)] = {
+    searchEngines = {};
+    getRenderableSearchEngines().forEach(engine => {
+        searchEngines[getEngineKey(engine)] = {
             name: engine.name,
             urlTemplate: engine.urlTemplate,
             placeholder: `搜索 ${engine.name}...`
         };
     });
+
+    if (!Object.keys(searchEngines).length) {
+        searchEngines = { ...defaultSearchEngines };
+    }
 }
 
 function getSearchTemplateDomain(urlTemplate) {
@@ -254,15 +274,15 @@ function getSearchTemplateDomain(urlTemplate) {
 }
 
 function renderSearchEngineButtons() {
-    searchEngineSwitcher.querySelectorAll('.custom-engine-btn').forEach(btn => btn.remove());
+    searchEngineSwitcher.innerHTML = '';
 
-    appState.customSearchEngines.forEach(engine => {
-        const key = getCustomEngineKey(engine);
+    getRenderableSearchEngines().forEach(engine => {
+        const key = getEngineKey(engine);
         const domain = getSearchTemplateDomain(engine.urlTemplate);
         const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32` : '';
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'engine-btn custom-engine-btn';
+        btn.className = 'engine-btn';
         btn.dataset.engine = key;
         btn.innerHTML = `
             ${faviconUrl
@@ -274,7 +294,9 @@ function renderSearchEngineButtons() {
         searchEngineSwitcher.appendChild(btn);
     });
 
-    if (!searchEngines[currentEngine]) currentEngine = 'google';
+    if (!searchEngines[currentEngine]) {
+        currentEngine = searchEngines.google ? 'google' : Object.keys(searchEngines)[0];
+    }
     updateSearchEngine(currentEngine);
 }
 
@@ -289,7 +311,7 @@ function buildSearchUrl(engineConfig, query) {
         return `${engineConfig.urlTemplate}${separator}q=${encodedQuery}`;
     }
 
-    return engineConfig.url + encodedQuery;
+    return engineConfig.url ? engineConfig.url + encodedQuery : '#';
 }
 
 function switchSearchEngine(engine) {
@@ -403,33 +425,136 @@ function getParsedHttpUrl(url) {
     }
 }
 
-function getFaviconCandidates(url, size = 64) {
+function getCachedFaviconUrl(url) {
+    const parsedUrl = getParsedHttpUrl(url);
+    if (!parsedUrl) return null;
+    return `/api/icon?url=${encodeURIComponent(parsedUrl.href)}&v=${iconCacheVersion}`;
+}
+
+function loadLocalIconCache() {
+    try {
+        const cached = JSON.parse(localStorage.getItem(LOCAL_ICON_CACHE_STORAGE_KEY) || '{}');
+        return cached && typeof cached === 'object' ? cached : {};
+    } catch {
+        return {};
+    }
+}
+
+function saveLocalIconCache() {
+    try {
+        const entries = Object.entries(localIconCache)
+            .sort(([, left], [, right]) => (right.savedAt || 0) - (left.savedAt || 0))
+            .slice(0, 200);
+        localIconCache = Object.fromEntries(entries);
+        localStorage.setItem(LOCAL_ICON_CACHE_STORAGE_KEY, JSON.stringify(localIconCache));
+    } catch {
+        // localStorage can be unavailable or full; icons still work without this cache.
+    }
+}
+
+function clearLocalIconCache() {
+    localIconCache = {};
+    try {
+        localStorage.removeItem(LOCAL_ICON_CACHE_STORAGE_KEY);
+    } catch {
+        // Ignore localStorage failures.
+    }
+}
+
+function getLocalIconCacheKey(url) {
+    const parsedUrl = getParsedHttpUrl(url);
+    return parsedUrl ? parsedUrl.href : null;
+}
+
+function getLocalCachedFaviconUrl(url) {
+    const cacheKey = getLocalIconCacheKey(url);
+    return cacheKey ? localIconCache[cacheKey]?.iconUrl || null : null;
+}
+
+function setLocalCachedFaviconUrl(targetUrl, iconUrl) {
+    if (!targetUrl || !iconUrl) return;
+    localIconCache[targetUrl] = {
+        iconUrl,
+        savedAt: Date.now()
+    };
+    saveLocalIconCache();
+}
+
+function removeLocalCachedFaviconUrl(targetUrl) {
+    if (!targetUrl || !localIconCache[targetUrl]) return;
+    delete localIconCache[targetUrl];
+    saveLocalIconCache();
+}
+
+function getLocalFaviconCandidates(url) {
     const parsedUrl = getParsedHttpUrl(url);
     if (!parsedUrl) return [];
 
-    const domain = parsedUrl.hostname;
-    const origin = parsedUrl.origin;
-    return [
-        `${origin}/favicon.ico`,
-        `${origin}/favicon.png`,
-        `${origin}/favicon.svg`,
-        `${origin}/apple-touch-icon.png`,
-        `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size}`,
-        `https://icons.duckduckgo.com/ip3/${encodeURIComponent(domain)}.ico`
+    const rootIconPaths = [
+        '/favicon.ico',
+        '/favicon.png',
+        '/favicon.svg',
+        '/favicon-32x32.png',
+        '/favicon-16x16.png',
+        '/apple-touch-icon.png',
+        '/apple-touch-icon-precomposed.png',
+        '/images/favicon.ico',
+        '/images/favicon.png',
+        '/static/favicon.ico',
+        '/assets/favicon.ico',
+        '/front-static/favicon.ico'
     ];
+    const nestedIconNames = ['favicon.ico', 'favicon.png', 'favicon.svg', 'apple-touch-icon.png'];
+    const pathSegments = parsedUrl.pathname.split('/').filter(Boolean).slice(0, 3);
+    const pathPrefixes = [];
+    let currentPrefix = '';
+
+    for (const segment of pathSegments) {
+        currentPrefix += `/${segment}`;
+        pathPrefixes.unshift(currentPrefix);
+    }
+
+    const candidates = [];
+    rootIconPaths.forEach(iconPath => {
+        candidates.push(`${parsedUrl.origin}${iconPath}`);
+    });
+    pathPrefixes.forEach(prefix => {
+        nestedIconNames.forEach(iconName => {
+            candidates.push(`${parsedUrl.origin}${prefix}/${iconName}`);
+        });
+    });
+
+    const cachedIconUrl = getLocalCachedFaviconUrl(parsedUrl.href);
+    if (cachedIconUrl) candidates.unshift(cachedIconUrl);
+
+    return [...new Set(candidates)];
+}
+
+function handleFaviconLoad(event) {
+    const img = event.currentTarget;
+    if (img.iconSource === 'local') {
+        setLocalCachedFaviconUrl(img.iconTargetUrl, img.iconCurrentUrl || img.getAttribute('src'));
+    }
 }
 
 function handleFaviconError(event) {
     const img = event.currentTarget;
-    const candidates = img.faviconCandidates || [];
-    const nextIndex = (img.faviconIndex || 0) + 1;
+    const candidates = img.localFaviconCandidates || [];
+    let nextIndex = (img.localFaviconIndex ?? -1) + 1;
 
-    if (nextIndex < candidates.length) {
-        img.faviconIndex = nextIndex;
-        img.src = candidates[nextIndex];
+    while (nextIndex < candidates.length) {
+        const nextUrl = candidates[nextIndex];
+        nextIndex += 1;
+        if (!nextUrl || nextUrl === img.iconCurrentUrl) continue;
+
+        img.localFaviconIndex = nextIndex - 1;
+        img.iconSource = 'local';
+        img.iconCurrentUrl = nextUrl;
+        img.src = nextUrl;
         return;
     }
 
+    removeLocalCachedFaviconUrl(img.iconTargetUrl);
     img.style.display = 'none';
     if (img.nextElementSibling) img.nextElementSibling.style.display = 'block';
 }
@@ -449,7 +574,11 @@ function getEffectiveUrl(link) {
 function createNavCardElement(link, index, options = {}) {
     const { noAnimation = false } = options;
     const href = getEffectiveUrl(link);
-    const faviconCandidates = getFaviconCandidates(link.url);
+    const localCachedFaviconUrl = getLocalCachedFaviconUrl(link.url);
+    const serverFaviconUrl = getCachedFaviconUrl(link.url);
+    const faviconUrl = localCachedFaviconUrl || serverFaviconUrl;
+    const localFaviconCandidates = getLocalFaviconCandidates(link.url);
+    const iconTargetUrl = getLocalIconCacheKey(link.url);
     const fallbackFavicon = '<svg class="nav-favicon-fallback" style="display:none" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
 
     const card = document.createElement('div');
@@ -463,8 +592,8 @@ function createNavCardElement(link, index, options = {}) {
     card.innerHTML = `
         <a href="${href}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" draggable="true">
             <div class="nav-icon">
-                ${faviconCandidates.length
-                    ? `<img src="${escapeAttribute(faviconCandidates[0])}" alt="" class="nav-favicon">${fallbackFavicon}`
+                ${faviconUrl
+                    ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="nav-favicon">${fallbackFavicon}`
                     : fallbackFavicon.replace('style="display:none"', '')
                 }
             </div>
@@ -481,8 +610,14 @@ function createNavCardElement(link, index, options = {}) {
 
     const faviconImg = card.querySelector('.nav-favicon');
     if (faviconImg) {
-        faviconImg.faviconCandidates = faviconCandidates;
-        faviconImg.faviconIndex = 0;
+        faviconImg.iconTargetUrl = iconTargetUrl;
+        faviconImg.iconSource = localCachedFaviconUrl ? 'local' : 'server';
+        faviconImg.iconCurrentUrl = faviconUrl;
+        faviconImg.localFaviconCandidates = localFaviconCandidates;
+        faviconImg.localFaviconIndex = localCachedFaviconUrl
+            ? localFaviconCandidates.indexOf(localCachedFaviconUrl)
+            : -1;
+        faviconImg.addEventListener('load', handleFaviconLoad);
         faviconImg.addEventListener('error', handleFaviconError);
     }
 
@@ -704,18 +839,45 @@ function openModal(modalId) {
     modal.classList.add('modal-open');
 }
 
+function resetSearchEngineForm() {
+    const form = document.getElementById('search-engine-form');
+    const submitBtn = document.getElementById('search-engine-submit');
+    const cancelBtn = document.getElementById('search-engine-form-cancel');
+    if (!form) return;
+
+    form.reset();
+    delete form.dataset.editId;
+    if (submitBtn) submitBtn.textContent = '添加搜索引擎';
+    if (cancelBtn) cancelBtn.hidden = true;
+}
+
+function editSearchEngine(engine) {
+    const form = document.getElementById('search-engine-form');
+    const submitBtn = document.getElementById('search-engine-submit');
+    const cancelBtn = document.getElementById('search-engine-form-cancel');
+    if (!form) return;
+
+    document.getElementById('engine-name').value = engine.name || '';
+    document.getElementById('engine-url-template').value = engine.urlTemplate || '';
+    form.dataset.editId = engine.id;
+    if (submitBtn) submitBtn.textContent = '更新搜索引擎';
+    if (cancelBtn) cancelBtn.hidden = false;
+    document.getElementById('engine-name')?.focus();
+}
+
 function renderSearchEngineList() {
     const list = document.getElementById('search-engine-list');
     if (!list) return;
 
-    if (!appState.customSearchEngines.length) {
-        list.innerHTML = '<div class="engine-list-empty">暂无自定义搜索引擎</div>';
+    if (!appState.searchEngineRecords.length) {
+        list.innerHTML = '<div class="engine-list-empty">暂无搜索引擎</div>';
         return;
     }
 
-    list.innerHTML = appState.customSearchEngines.map(engine => {
+    list.innerHTML = appState.searchEngineRecords.map(engine => {
         const domain = getSearchTemplateDomain(engine.urlTemplate);
         const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32` : '';
+        const isDefault = Boolean(engine.engineKey);
         return `
             <div class="engine-list-item">
                 ${faviconUrl
@@ -726,9 +888,16 @@ function renderSearchEngineList() {
                     <div class="engine-list-name">${escapeHtml(engine.name)}</div>
                     <div class="engine-list-url">${escapeHtml(engine.urlTemplate)}</div>
                 </div>
-                <button type="button" class="engine-list-delete" data-id="${engine.id}" title="删除搜索引擎">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
-                </button>
+                <div class="engine-list-actions">
+                    <button type="button" class="engine-list-edit" data-id="${engine.id}" title="编辑搜索引擎">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    ${isDefault ? '' : `
+                        <button type="button" class="engine-list-delete" data-id="${engine.id}" title="删除搜索引擎">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
+                        </button>
+                    `}
+                </div>
             </div>
         `;
     }).join('');
@@ -856,6 +1025,29 @@ async function setLayoutColumns(columns) {
     }
 }
 
+async function refreshIconCache() {
+    const refreshBtn = document.getElementById('icon-refresh-btn');
+    const previousText = refreshBtn?.textContent || '刷新图标';
+    if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '刷新中...';
+    }
+
+    try {
+        await apiRequest('/api/icon-cache/refresh', { method: 'POST' });
+        clearLocalIconCache();
+        iconCacheVersion = Date.now();
+        renderNavCards();
+    } catch (error) {
+        alert(error.message);
+    } finally {
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = previousText;
+        }
+    }
+}
+
 function bindMenuManagement() {
     const manageBtn = document.querySelector('.manage-menu-btn');
     const editModeBtn = document.getElementById('edit-mode-btn');
@@ -863,11 +1055,15 @@ function bindMenuManagement() {
     const searchEngineForm = document.getElementById('search-engine-form');
     const searchEngineList = document.getElementById('search-engine-list');
     const layoutButtons = document.getElementById('layout-buttons');
+    const iconRefreshBtn = document.getElementById('icon-refresh-btn');
     const cancelBtn = document.getElementById('link-form-cancel');
+    const searchEngineCancelBtn = document.getElementById('search-engine-form-cancel');
 
     manageBtn.addEventListener('click', () => openManageModal());
     if (editModeBtn) editModeBtn.addEventListener('click', toggleEditMode);
+    if (iconRefreshBtn) iconRefreshBtn.addEventListener('click', refreshIconCache);
     cancelBtn.addEventListener('click', closeLinkModal);
+    if (searchEngineCancelBtn) searchEngineCancelBtn.addEventListener('click', resetSearchEngineForm);
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -913,20 +1109,21 @@ function bindMenuManagement() {
         const submitBtn = searchEngineForm.querySelector('.btn-primary');
         const name = document.getElementById('engine-name').value.trim();
         const urlTemplate = document.getElementById('engine-url-template').value.trim();
+        const editId = searchEngineForm.dataset.editId;
 
         if (!name || !urlTemplate) return;
         submitBtn.disabled = true;
 
         try {
-            const data = await apiRequest('/api/search-engines', {
-                method: 'POST',
+            const data = await apiRequest(editId ? `/api/search-engines/${editId}` : '/api/search-engines', {
+                method: editId ? 'PUT' : 'POST',
                 body: { name, urlTemplate }
             });
-            appState.customSearchEngines = data.engines || [];
+            appState.searchEngineRecords = data.engines || [];
             rebuildSearchEngines();
             renderSearchEngineButtons();
             renderSearchEngineList();
-            searchEngineForm.reset();
+            resetSearchEngineForm();
         } catch (error) {
             alert(error.message);
         } finally {
@@ -935,23 +1132,36 @@ function bindMenuManagement() {
     });
 
     searchEngineList.addEventListener('click', async (event) => {
+        const editBtn = event.target.closest('.engine-list-edit');
         const deleteBtn = event.target.closest('.engine-list-delete');
-        if (!deleteBtn) return;
+        if (!editBtn && !deleteBtn) return;
 
-        const engine = appState.customSearchEngines.find(item => String(item.id) === deleteBtn.dataset.id);
+        const actionBtn = editBtn || deleteBtn;
+        const engine = appState.searchEngineRecords.find(item => String(item.id) === actionBtn.dataset.id);
         if (!engine) return;
+
+        if (editBtn) {
+            editSearchEngine(engine);
+            return;
+        }
+
         if (!confirm(`确定要删除搜索引擎「${engine.name}」吗？`)) return;
 
         deleteBtn.disabled = true;
 
         try {
             const data = await apiRequest(`/api/search-engines/${engine.id}`, { method: 'DELETE' });
-            const deletedEngineKey = getCustomEngineKey(engine);
-            appState.customSearchEngines = data.engines || [];
-            if (currentEngine === deletedEngineKey) currentEngine = 'google';
+            const deletedEngineKey = getEngineKey(engine);
+            appState.searchEngineRecords = data.engines || [];
+            if (currentEngine === deletedEngineKey) {
+                currentEngine = appState.searchEngineRecords.some(item => item.engineKey === 'google')
+                    ? 'google'
+                    : getEngineKey(appState.searchEngineRecords[0] || getFallbackSearchEngineRecords()[0]);
+            }
             rebuildSearchEngines();
             renderSearchEngineButtons();
             renderSearchEngineList();
+            resetSearchEngineForm();
         } catch (error) {
             alert(error.message);
         } finally {
