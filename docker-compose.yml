@@ -1,0 +1,19 @@
+services:
+  my-home:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_PATH: /app/data/my-home.sqlite
+    volumes:
+      - my-home-data:/app/data
+      - my-home-uploads:/app/uploads
+    restart: unless-stopped
+
+volumes:
+  my-home-data:
+  my-home-uploads:

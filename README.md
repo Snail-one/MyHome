@@ -59,6 +59,62 @@ npm start
 http://localhost:3000
 ```
 
+## 容器运行
+
+项目已经可以直接打包成 Docker 镜像。推荐用 `docker compose` 启动，这样 `data/` 和 `uploads/` 会自动持久化到卷里。
+
+1. 准备环境变量
+
+```bash
+cp .env.example .env
+```
+
+按需修改 `.env`，至少保证这几个值可用：
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=换成你的强密码
+SESSION_SECRET=换成一串足够长的随机字符串
+```
+
+2. 构建并启动
+
+```bash
+docker compose up -d --build
+```
+
+3. 访问服务
+
+```text
+http://localhost:3000
+```
+
+4. 查看日志
+
+```bash
+docker compose logs -f
+```
+
+如果你想只构建镜像，不启动容器：
+
+```bash
+docker build -t my-home:latest .
+```
+
+然后手动运行：
+
+```bash
+docker run -d \
+	--name my-home \
+	--env-file .env \
+	-e HOST=0.0.0.0 \
+	-e DATABASE_PATH=/app/data/my-home.sqlite \
+	-p 3000:3000 \
+	-v my-home-data:/app/data \
+	-v my-home-uploads:/app/uploads \
+	my-home:latest
+```
+
 ## 数据保存位置
 
 - SQLite 数据库：默认 `data/my-home.sqlite`
@@ -87,3 +143,4 @@ http://localhost:3000
 - 旧版浏览器 `localStorage` 里的链接和背景不会自动迁移。
 - 登录防爆破默认规则：15 分钟内同一 IP + 用户名失败 5 次后锁定 15 分钟。
 - 生产环境请使用 HTTPS，并设置足够强的 `SESSION_SECRET` 和管理员密码。
+- 容器里如果要换端口，只改 `docker-compose.yml` 的端口映射和 `PORT` 环境变量即可。
