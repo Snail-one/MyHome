@@ -448,6 +448,12 @@ body::before {
     overflow-y: auto;
 }
 
+.modal-body > .layout-settings-section:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+
 .link-form .form-group,
 .search-engine-form .form-group {
     margin-bottom: 16px;
@@ -1093,6 +1099,36 @@ body::before {
     overflow: hidden;
 }
 
+.nav-add-card {
+    width: 100%;
+    min-height: 92px;
+    border-style: dashed;
+    font: inherit;
+    cursor: pointer;
+}
+
+.nav-add-icon {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    transition: transform var(--transition-normal), background var(--transition-fast);
+}
+
+.nav-add-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+.nav-add-card:hover .nav-add-icon {
+    transform: scale(1.08);
+    background: rgba(255, 255, 255, 0.16);
+}
+
 /* 拖拽时的样式 */
 .nav-card.drag-over {
     transform: translateY(-4px) scale(1.02);
@@ -1137,7 +1173,6 @@ body::before {
     transform: translateY(0) scale(1);
 }
 
-.nav-card-edit,
 .nav-card-delete {
     width: 28px;
     height: 28px;
@@ -1154,17 +1189,10 @@ body::before {
     transition: all var(--transition-fast);
 }
 
-.nav-card-edit svg,
 .nav-card-delete svg {
     width: 16px;
     height: 16px;
     flex-shrink: 0;
-}
-
-.nav-card-edit:hover {
-    background: rgba(102, 126, 234, 0.6);
-    border-color: rgba(102, 126, 234, 0.8);
-    transform: scale(1.05);
 }
 
 .nav-card-delete:hover {
@@ -1177,6 +1205,7 @@ body::before {
 .edit-mode-active .nav-card {
     border-color: rgba(255, 255, 255, 0.35);
     box-shadow: 0 0 0 1px rgba(102, 126, 234, 0.2);
+    cursor: pointer;
 }
 
 .edit-mode-active .nav-card-wrapper:hover .nav-card {

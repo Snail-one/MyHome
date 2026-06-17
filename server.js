@@ -20,7 +20,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SESSION_SECRET = process.env.SESSION_SECRET;
-const MAX_BACKGROUND_SIZE = 5 * 1024 * 1024;
+const MAX_BACKGROUND_SIZE = 10 * 1024 * 1024;
 const LOGIN_MAX_FAILED_ATTEMPTS = parseIntegerEnv(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 5, 1);
 const LOGIN_WINDOW_MS = parseIntegerEnv(process.env.LOGIN_WINDOW_MS, 15 * 60 * 1000, 1000);
 const LOGIN_LOCKOUT_MS = parseIntegerEnv(process.env.LOGIN_LOCKOUT_MS, 15 * 60 * 1000, 1000);
@@ -596,7 +596,7 @@ const upload = multer({
 app.post('/api/background', requireAuth, (req, res) => {
   upload.single('background')(req, res, (error) => {
     if (error) {
-      const message = error.code === 'LIMIT_FILE_SIZE' ? '图片文件不能超过 5MB' : error.message;
+      const message = error.code === 'LIMIT_FILE_SIZE' ? '图片文件不能超过 10MB' : error.message;
       res.status(400).json({ error: message });
       return;
     }

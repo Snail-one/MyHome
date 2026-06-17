@@ -33,8 +33,8 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             <span class="corner-btn-label">编辑模式</span>
         </button>
-        <button type="button" class="corner-btn manage-menu-btn" title="管理菜单链接">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <button type="button" class="corner-btn manage-menu-btn" title="管理布局和搜索引擎">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
             <span class="corner-btn-label">管理菜单</span>
         </button>
         <button type="button" class="corner-btn background-btn" title="自定义背景">
@@ -113,7 +113,7 @@
         <div class="navigation-links" id="nav-links-container">
             <!-- 空状态提示，无链接时显示 -->
             <div class="nav-empty-state" id="nav-empty-state">
-                <p>暂无链接，点击「管理菜单」添加</p>
+                <p>暂无链接，开启编辑模式后点击 + 添加</p>
             </div>
         </div>
 
@@ -164,12 +164,12 @@
         </div>
     </div>
 
-    <!-- 管理菜单弹窗 -->
-    <div class="modal-overlay" id="manage-modal" aria-hidden="true">
-        <div class="modal">
+    <!-- 添加/编辑网址弹窗 -->
+    <div class="modal-overlay" id="link-modal" aria-hidden="true">
+        <div class="modal modal-sm">
             <div class="modal-header">
-                <h2 class="modal-title">添加链接与布局</h2>
-                <button type="button" class="modal-close" data-close="manage-modal" title="关闭">&times;</button>
+                <h2 class="modal-title" id="link-modal-title">添加网址</h2>
+                <button type="button" class="modal-close" data-close="link-modal" title="关闭">&times;</button>
             </div>
             <div class="modal-body">
                 <form class="link-form" id="link-form">
@@ -183,10 +183,22 @@
                     </div>
                     <p class="form-hint">图标将根据网址自动获取网页 favicon。</p>
                     <div class="form-actions">
-                        <button type="submit" class="btn btn-primary">添加链接</button>
+                        <button type="submit" class="btn btn-primary" id="link-form-submit">添加链接</button>
                         <button type="button" class="btn btn-secondary" id="link-form-cancel">取消</button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 管理菜单弹窗 -->
+    <div class="modal-overlay" id="manage-modal" aria-hidden="true">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">布局与搜索引擎</h2>
+                <button type="button" class="modal-close" data-close="manage-modal" title="关闭">&times;</button>
+            </div>
+            <div class="modal-body">
                 <div class="layout-settings-section">
                     <h3>布局设置</h3>
                     <div class="layout-options">

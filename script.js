@@ -135,6 +135,7 @@ function showLoggedOut(message = '') {
     document.body.classList.remove('auth-pending', 'logged-in');
     document.body.classList.add('logged-out');
     authScreen?.setAttribute('aria-hidden', 'false');
+    closeModal('link-modal');
     closeModal('manage-modal');
     closeModal('background-modal');
     renderNavCards();
@@ -389,16 +390,48 @@ function getDomainFromUrl(url) {
     }
 }
 
-function getFaviconUrl(url, size = 64) {
-    const domain = getDomainFromUrl(url);
-    if (!domain) return null;
-    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size}`;
+function getParsedHttpUrl(url) {
+    if (!url || typeof url !== 'string' || !url.trim()) return null;
+
+    try {
+        const normalizedUrl = url.trim().startsWith('http') ? url.trim() : 'https://' + url.trim();
+        const parsedUrl = new URL(normalizedUrl);
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
+        return parsedUrl;
+    } catch {
+        return null;
+    }
 }
 
-function getFallbackFaviconUrl(url) {
-    const domain = getDomainFromUrl(url);
-    if (!domain) return null;
-    return `https://icons.duckduckgo.com/ip3/${encodeURIComponent(domain)}.ico`;
+function getFaviconCandidates(url, size = 64) {
+    const parsedUrl = getParsedHttpUrl(url);
+    if (!parsedUrl) return [];
+
+    const domain = parsedUrl.hostname;
+    const origin = parsedUrl.origin;
+    return [
+        `${origin}/favicon.ico`,
+        `${origin}/favicon.png`,
+        `${origin}/favicon.svg`,
+        `${origin}/apple-touch-icon.png`,
+        `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size}`,
+        `https://icons.duckduckgo.com/ip3/${encodeURIComponent(domain)}.ico`
+    ];
+}
+
+function handleFaviconError(event) {
+    const img = event.currentTarget;
+    const candidates = img.faviconCandidates || [];
+    const nextIndex = (img.faviconIndex || 0) + 1;
+
+    if (nextIndex < candidates.length) {
+        img.faviconIndex = nextIndex;
+        img.src = candidates[nextIndex];
+        return;
+    }
+
+    img.style.display = 'none';
+    if (img.nextElementSibling) img.nextElementSibling.style.display = 'block';
 }
 
 function getEffectiveUrl(link) {
@@ -416,8 +449,8 @@ function getEffectiveUrl(link) {
 function createNavCardElement(link, index, options = {}) {
     const { noAnimation = false } = options;
     const href = getEffectiveUrl(link);
-    const faviconUrl = getFaviconUrl(link.url);
-    const fallbackUrl = getFallbackFaviconUrl(link.url);
+    const faviconCandidates = getFaviconCandidates(link.url);
+    const fallbackFavicon = '<svg class="nav-favicon-fallback" style="display:none" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
 
     const card = document.createElement('div');
     card.className = 'nav-card-wrapper' + (noAnimation ? ' no-animation' : '');
@@ -430,11 +463,9 @@ function createNavCardElement(link, index, options = {}) {
     card.innerHTML = `
         <a href="${href}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" draggable="true">
             <div class="nav-icon">
-                ${faviconUrl
-                    ? `<img src="${faviconUrl}" alt="" class="nav-favicon"
-                         onerror="if(this.src!==decodeURIComponent('${encodeURIComponent(fallbackUrl || '')}')){this.src='${fallbackUrl || ''}';}else{this.style.display='none';this.nextElementSibling.style.display='block';}">
-                         <svg class="nav-favicon-fallback" style="display:none" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>`
-                    : `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>`
+                ${faviconCandidates.length
+                    ? `<img src="${escapeAttribute(faviconCandidates[0])}" alt="" class="nav-favicon">${fallbackFavicon}`
+                    : fallbackFavicon.replace('style="display:none"', '')
                 }
             </div>
             <div class="nav-info">
@@ -442,14 +473,18 @@ function createNavCardElement(link, index, options = {}) {
             </div>
         </a>
         <div class="nav-card-actions">
-            <button type="button" class="nav-card-edit" data-index="${index}" title="编辑">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
             <button type="button" class="nav-card-delete" data-index="${index}" title="删除">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
             </button>
         </div>
     `;
+
+    const faviconImg = card.querySelector('.nav-favicon');
+    if (faviconImg) {
+        faviconImg.faviconCandidates = faviconCandidates;
+        faviconImg.faviconIndex = 0;
+        faviconImg.addEventListener('error', handleFaviconError);
+    }
 
     const navCard = card.querySelector('.nav-card');
     navCard.addEventListener('dragstart', handleDragStart);
@@ -472,13 +507,54 @@ function createNavCardElement(link, index, options = {}) {
     return card;
 }
 
+function createAddLinkCardElement() {
+    const card = document.createElement('div');
+    card.className = 'nav-card-wrapper nav-add-wrapper';
+    card.innerHTML = `
+        <button type="button" class="nav-card nav-add-card" title="添加网址" aria-label="添加网址">
+            <span class="nav-add-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+            </span>
+        </button>
+    `;
+    return card;
+}
+
+function updateNavEmptyState() {
+    const emptyState = document.getElementById('nav-empty-state');
+    if (!emptyState) return;
+    emptyState.style.display = appState.links.length || editMode ? 'none' : 'block';
+}
+
+function syncAddLinkCard() {
+    const container = document.getElementById('nav-links-container');
+    const emptyState = document.getElementById('nav-empty-state');
+    if (!container || !emptyState) return;
+
+    const existingAddCard = container.querySelector('.nav-add-wrapper');
+    if (!editMode) {
+        existingAddCard?.remove();
+        updateNavEmptyState();
+        return;
+    }
+
+    if (!existingAddCard) {
+        container.insertBefore(createAddLinkCardElement(), emptyState);
+    }
+
+    updateNavEmptyState();
+}
+
 function renderNavCards() {
     const container = document.getElementById('nav-links-container');
     const emptyState = document.getElementById('nav-empty-state');
     const links = getLinks();
 
     container.querySelectorAll('.nav-card-wrapper').forEach(el => el.remove());
-    emptyState.style.display = links.length ? 'none' : 'block';
+    updateNavEmptyState();
 
     links.forEach((link, index) => {
         const card = createNavCardElement(link, index);
@@ -572,11 +648,23 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function escapeAttribute(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;');
+}
+
 // ==================== 菜单管理 ====================
-function openManageModal(editIndex) {
-    const form = document.getElementById('link-form');
-    const links = getLinks();
+function openManageModal() {
     openModal('manage-modal');
+    renderLayoutButtons();
+    renderSearchEngineList();
+}
+
+function openLinkModal(editIndex) {
+    const form = document.getElementById('link-form');
+    const modalTitle = document.getElementById('link-modal-title');
+    const submitBtn = document.getElementById('link-form-submit');
+    const links = getLinks();
+    openModal('link-modal');
     form.reset();
 
     if (typeof editIndex === 'number' && links[editIndex]) {
@@ -584,18 +672,22 @@ function openManageModal(editIndex) {
         document.getElementById('link-title').value = link.title || '';
         document.getElementById('link-url').value = link.url || '';
         form.dataset.editIndex = editIndex;
-        document.querySelector('.link-form .btn-primary').textContent = '更新链接';
+        modalTitle.textContent = '编辑网址';
+        submitBtn.textContent = '更新链接';
     } else {
         delete form.dataset.editIndex;
-        document.querySelector('.link-form .btn-primary').textContent = '添加链接';
+        modalTitle.textContent = '添加网址';
+        submitBtn.textContent = '添加链接';
     }
 
-    renderLayoutButtons();
-    renderSearchEngineList();
+    setTimeout(() => document.getElementById('link-title')?.focus(), 0);
 }
 
-function closeManageModal() {
-    closeModal('manage-modal');
+function closeLinkModal() {
+    const form = document.getElementById('link-form');
+    closeModal('link-modal');
+    form?.reset();
+    if (form) delete form.dataset.editIndex;
 }
 
 function closeModal(modalId) {
@@ -662,6 +754,7 @@ function updateEditModeUI() {
     const editModeBtn = document.getElementById('edit-mode-btn');
     document.body.classList.toggle('edit-mode-active', editMode);
     if (editModeBtn) editModeBtn.classList.toggle('active', editMode);
+    syncAddLinkCard();
 }
 
 async function deleteLink(index) {
@@ -679,7 +772,7 @@ async function deleteLink(index) {
 }
 
 function editLink(index) {
-    openManageModal(index);
+    openLinkModal(index);
 }
 
 function parseCssPixelValue(value, fallback = 0) {
@@ -774,7 +867,7 @@ function bindMenuManagement() {
 
     manageBtn.addEventListener('click', () => openManageModal());
     if (editModeBtn) editModeBtn.addEventListener('click', toggleEditMode);
-    cancelBtn.addEventListener('click', closeManageModal);
+    cancelBtn.addEventListener('click', closeLinkModal);
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -799,7 +892,7 @@ function bindMenuManagement() {
             });
             appState.links = data.links || [];
             renderNavCards();
-            closeManageModal();
+            closeLinkModal();
         } catch (error) {
             alert(error.message);
         } finally {
@@ -867,17 +960,22 @@ function bindMenuManagement() {
     });
 
     document.getElementById('nav-links-container').addEventListener('click', (event) => {
-        const editBtn = event.target.closest('.nav-card-edit');
+        const addBtn = event.target.closest('.nav-add-card');
         const deleteBtn = event.target.closest('.nav-card-delete');
+        const navCard = event.target.closest('.nav-card:not(.nav-add-card)');
 
-        if (editBtn) {
+        if (addBtn) {
             event.preventDefault();
             event.stopPropagation();
-            editLink(parseInt(editBtn.dataset.index, 10));
+            openLinkModal();
         } else if (deleteBtn) {
             event.preventDefault();
             event.stopPropagation();
             deleteLink(parseInt(deleteBtn.dataset.index, 10));
+        } else if (navCard && editMode && !isDragging) {
+            event.preventDefault();
+            event.stopPropagation();
+            editLink(parseInt(navCard.dataset.index, 10));
         }
     });
 
@@ -992,9 +1090,9 @@ function bindBackgroundModal() {
         const file = event.target.files[0];
         if (!file) return;
 
-        const maxFileSize = 5 * 1024 * 1024;
+        const maxFileSize = 10 * 1024 * 1024;
         if (file.size > maxFileSize) {
-            alert('图片文件不能超过 5MB');
+            alert('图片文件不能超过 10MB');
             fileInput.value = '';
             return;
         }
