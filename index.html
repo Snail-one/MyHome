@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- ✅ Content Security Policy 防止 XSS 攻击 -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https:">
+    <title>个人导航首页</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="corner-controls corner-right" aria-label="设置">
+        <button type="button" class="corner-btn edit-mode-btn" id="edit-mode-btn" title="开启/关闭编辑模式">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            <span class="corner-btn-label">编辑模式</span>
+        </button>
+        <button type="button" class="corner-btn manage-menu-btn" title="管理菜单链接">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span class="corner-btn-label">管理菜单</span>
+        </button>
+        <button type="button" class="corner-btn background-btn" title="自定义背景">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span class="corner-btn-label">背景</span>
+        </button>
+    </div>
+
+    <!-- 主容器 -->
+    <div class="container">
+        <!-- 搜索引擎切换区 -->
+        <div class="search-engine-switcher">
+            <button class="engine-btn active" data-engine="google">
+                <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                </svg>
+                <span>Google</span>
+            </button>
+            
+            <button class="engine-btn" data-engine="youtube">
+                <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="2" y="4" width="20" height="16" rx="2.18" ry="2.18" fill="#FF0000"/>
+                    <path d="M9.5 9.5L14.5 12L9.5 14.5Z" fill="white"/>
+                </svg>
+                <span>YouTube</span>
+            </button>
+            
+            <button class="engine-btn" data-engine="github">
+                <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/>
+                </svg>
+                <span>GitHub</span>
+            </button>
+            
+            <button class="engine-btn" data-engine="bilibili">
+                <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="12" r="10" fill="#00A1D6"/>
+                    <text x="12" y="17" text-anchor="middle" fill="white" font-size="11" font-weight="bold">B站</text>
+                </svg>
+                <span>哔哩哔哩</span>
+            </button>
+        </div>
+
+        <!-- 搜索框区域 -->
+        <div class="search-container">
+            <div class="search-box">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input 
+                    type="text" 
+                    class="search-input" 
+                    placeholder="搜索互联网..." 
+                    autocomplete="off"
+                    autofocus
+                >
+                <button class="search-engine-indicator" title="点击搜索">
+                    <span class="current-engine">Google</span>
+                    <svg class="search-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- 导航链接区（由 JS 根据存储的菜单数据动态渲染，图标来自网页 favicon） -->
+        <div class="navigation-links" id="nav-links-container">
+            <!-- 空状态提示，无链接时显示 -->
+            <div class="nav-empty-state" id="nav-empty-state">
+                <p>暂无链接，点击「管理菜单」添加</p>
+            </div>
+        </div>
+
+        <!-- 页脚（可选） -->
+        <footer class="footer">
+            <p>蜗牛个人首页 · 2026-01-25</p>
+        </footer>
+    </div>
+
+    <!-- 自定义背景弹窗 -->
+    <div class="modal-overlay" id="background-modal" aria-hidden="true">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h2 class="modal-title">自定义背景</h2>
+                <button type="button" class="modal-close" data-close="background-modal" title="关闭">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="background-section">
+                    <div class="form-group">
+                        <label for="background-upload">上传图片</label>
+                        <div class="file-upload-wrapper">
+                            <input type="file" id="background-upload" accept="image/*" class="file-input">
+                            <label for="background-upload" class="file-upload-label">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                                <span class="file-upload-text">选择图片文件</span>
+                            </label>
+                            <div class="file-preview" id="background-preview" style="display: none;">
+                                <img id="background-preview-img" alt="预览">
+                                <button type="button" class="file-preview-remove" id="background-preview-remove" title="移除">×</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="background-url">或输入图片地址</label>
+                        <input type="url" id="background-url" placeholder="https://example.com/image.jpg" class="full-width">
+                    </div>
+                    <p class="form-hint">上传本地图片或填写图片链接，留空并应用则恢复默认渐变。</p>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-primary" id="background-apply">应用</button>
+                        <button type="button" class="btn btn-secondary" id="background-reset">恢复默认</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 管理菜单弹窗 -->
+    <div class="modal-overlay" id="manage-modal" aria-hidden="true">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">添加链接与布局</h2>
+                <button type="button" class="modal-close" data-close="manage-modal" title="关闭">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form class="link-form" id="link-form">
+                    <div class="form-group">
+                        <label for="link-title">显示名称</label>
+                        <input type="text" id="link-title" name="title" placeholder="例如：GitHub" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="link-url">链接地址</label>
+                        <input type="url" id="link-url" name="url" placeholder="https://example.com" required>
+                    </div>
+                    <p class="form-hint">图标将根据网址自动获取网页 favicon。</p>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">添加链接</button>
+                        <button type="button" class="btn btn-secondary" id="link-form-cancel">取消</button>
+                    </div>
+                </form>
+                <div class="layout-settings-section">
+                    <h3>布局设置</h3>
+                    <div class="layout-options">
+                        <label class="layout-option-label">每行显示数量：</label>
+                        <div class="layout-buttons">
+                            <button type="button" class="layout-btn" data-columns="0" title="自动">自动</button>
+                            <button type="button" class="layout-btn" data-columns="1" title="1列">1</button>
+                            <button type="button" class="layout-btn" data-columns="2" title="2列">2</button>
+                            <button type="button" class="layout-btn" data-columns="3" title="3列">3</button>
+                            <button type="button" class="layout-btn" data-columns="4" title="4列">4</button>
+                            <button type="button" class="layout-btn" data-columns="5" title="5列">5</button>
+                            <button type="button" class="layout-btn" data-columns="6" title="6列">6</button>
+                        </div>
+                        <p class="form-hint">选择导航卡片每行显示的数量（最多6个）</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
