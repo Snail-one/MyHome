@@ -4,11 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ✅ Content Security Policy 防止 XSS 攻击 -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' http: https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https:">
     <title>个人导航首页</title>
     <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="auth-pending">
+    <div class="auth-screen" id="auth-screen" aria-hidden="true">
+        <form class="auth-card" id="login-form">
+            <div class="auth-card-header">
+                <h1>个人导航登录</h1>
+                <p>请登录后使用</p>
+            </div>
+            <div class="auth-form-group">
+                <label for="login-username">账号</label>
+                <input type="text" id="login-username" name="username" autocomplete="username" required>
+            </div>
+            <div class="auth-form-group">
+                <label for="login-password">密码</label>
+                <input type="password" id="login-password" name="password" autocomplete="current-password" required>
+            </div>
+            <p class="auth-error" id="login-error" role="alert" aria-live="polite"></p>
+            <button type="submit" class="btn btn-primary auth-submit">登录</button>
+        </form>
+    </div>
+
     <div class="corner-controls corner-right" aria-label="设置">
         <button type="button" class="corner-btn edit-mode-btn" id="edit-mode-btn" title="开启/关闭编辑模式">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -21,6 +40,10 @@
         <button type="button" class="corner-btn background-btn" title="自定义背景">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
             <span class="corner-btn-label">背景</span>
+        </button>
+        <button type="button" class="corner-btn logout-btn" id="logout-btn" title="退出登录">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span class="corner-btn-label">退出</span>
         </button>
     </div>
 
@@ -129,9 +152,9 @@
                     </div>
                     <div class="form-group">
                         <label for="background-url">或输入图片地址</label>
-                        <input type="url" id="background-url" placeholder="https://example.com/image.jpg" class="full-width">
+                        <input type="text" id="background-url" placeholder="https://example.com/image.jpg" class="full-width">
                     </div>
-                    <p class="form-hint">上传本地图片或填写图片链接，留空并应用则恢复默认渐变。</p>
+                    <p class="form-hint">上传本地图片会保存为服务器文件；数据库只保存图片路径或链接。</p>
                     <div class="form-actions">
                         <button type="button" class="btn btn-primary" id="background-apply">应用</button>
                         <button type="button" class="btn btn-secondary" id="background-reset">恢复默认</button>

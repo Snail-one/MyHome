@@ -57,6 +57,101 @@ body {
     overflow-x: hidden;
 }
 
+body.auth-pending .container,
+body.auth-pending .corner-controls,
+body.logged-out .container,
+body.logged-out .corner-controls {
+    display: none;
+}
+
+body.logged-in .auth-screen,
+body.auth-pending .auth-screen {
+    display: none;
+}
+
+.auth-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+body.logged-out .auth-screen {
+    display: flex;
+}
+
+.auth-card {
+    width: min(380px, 100%);
+    padding: 28px;
+    background: linear-gradient(165deg, rgba(30, 20, 50, 0.9) 0%, rgba(18, 16, 34, 0.94) 100%);
+    backdrop-filter: blur(28px);
+    -webkit-backdrop-filter: blur(28px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.auth-card-header {
+    margin-bottom: 24px;
+    text-align: center;
+}
+
+.auth-card h1 {
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 8px;
+}
+
+.auth-card p {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.auth-form-group {
+    margin-bottom: 16px;
+}
+
+.auth-form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.auth-form-group input {
+    width: 100%;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 15px;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.auth-form-group input:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.auth-error {
+    min-height: 18px;
+    margin: -2px 0 14px;
+    color: #fecaca !important;
+    text-align: center;
+}
+
+.auth-submit {
+    width: 100%;
+    min-height: 44px;
+}
+
 /* 添加动态背景效果 */
 body::before {
     content: '';
@@ -406,6 +501,11 @@ body::before {
     cursor: pointer;
     transition: all var(--transition-fast);
     border: none;
+}
+
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 .btn-primary {

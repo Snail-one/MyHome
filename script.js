@@ -20,11 +20,28 @@ const searchEngines = {
         url: 'https://search.bilibili.com/all?keyword=',
         placeholder: '在 B 站搜索...'
     }
-    
 };
 
-// 当前选中的搜索引擎
+const DEFAULT_SETTINGS = {
+    layoutColumns: 0,
+    editMode: false,
+    backgroundUrl: ''
+};
+
+const appState = {
+    user: null,
+    links: [],
+    settings: { ...DEFAULT_SETTINGS }
+};
+
 let currentEngine = 'google';
+let layoutColumns = 0;
+let editMode = false;
+let draggedCard = null;
+let draggedIndex = null;
+let isDragging = false;
+let selectedBackgroundFile = null;
+let previewObjectUrl = null;
 
 // ==================== DOM 元素 ====================
 const searchInput = document.querySelector('.search-input');
@@ -32,31 +49,161 @@ const searchBox = document.querySelector('.search-box');
 const engineButtons = document.querySelectorAll('.engine-btn');
 const engineIndicator = document.querySelector('.current-engine');
 const searchEngineIndicator = document.querySelector('.search-engine-indicator');
+const loginForm = document.getElementById('login-form');
+const loginError = document.getElementById('login-error');
+const logoutBtn = document.getElementById('logout-btn');
 
+// ==================== API ====================
+async function apiRequest(path, options = {}) {
+    const fetchOptions = {
+        credentials: 'same-origin',
+        ...options,
+        headers: {
+            ...(options.headers || {})
+        }
+    };
 
-// ==================== 事件绑定 ====================
-function bindEvents() {
-    // 搜索引擎切换按钮
-    engineButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const engine = btn.dataset.engine;
-            switchSearchEngine(engine);
-        });
+    if (
+        fetchOptions.body &&
+        !(fetchOptions.body instanceof FormData) &&
+        typeof fetchOptions.body !== 'string'
+    ) {
+        fetchOptions.headers['Content-Type'] = 'application/json';
+        fetchOptions.body = JSON.stringify(fetchOptions.body);
+    }
+
+    let response;
+    try {
+        response = await fetch(path, fetchOptions);
+    } catch {
+        throw new Error('无法连接到服务器，请确认 Node 服务已启动');
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await response.json() : null;
+
+    if (response.status === 401 && path !== '/api/login') {
+        showLoggedOut('登录已过期，请重新登录');
+        throw new Error(data?.error || '未登录');
+    }
+
+    if (!response.ok) {
+        throw new Error(data?.error || '请求失败');
+    }
+
+    return data;
+}
+
+async function loadAppData() {
+    const [linksData, settingsData] = await Promise.all([
+        apiRequest('/api/links'),
+        apiRequest('/api/settings')
+    ]);
+
+    appState.links = Array.isArray(linksData.links) ? linksData.links : [];
+    applySettings(settingsData.settings || DEFAULT_SETTINGS);
+    renderNavCards();
+}
+
+async function saveSettingsPatch(patch) {
+    const data = await apiRequest('/api/settings', {
+        method: 'PUT',
+        body: patch
     });
+    applySettings(data.settings || DEFAULT_SETTINGS);
+}
 
-    // 搜索引擎指示器点击（执行搜索）
-    searchEngineIndicator.addEventListener('click', () => {
-        performSearch();
-    });
+// ==================== 登录状态 ====================
+function showLoggedOut(message = '') {
+    const authScreen = document.getElementById('auth-screen');
+    appState.user = null;
+    appState.links = [];
+    appState.settings = { ...DEFAULT_SETTINGS };
+    document.body.classList.remove('auth-pending', 'logged-in');
+    document.body.classList.add('logged-out');
+    authScreen?.setAttribute('aria-hidden', 'false');
+    closeModal('manage-modal');
+    closeModal('background-modal');
+    renderNavCards();
+    applySettings(DEFAULT_SETTINGS);
 
-    // 搜索输入框 - Enter 键搜索
-    searchInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            performSearch();
+    if (loginError) loginError.textContent = message;
+    setTimeout(() => document.getElementById('login-username')?.focus(), 0);
+}
+
+function showLoggedIn(user) {
+    const authScreen = document.getElementById('auth-screen');
+    appState.user = user;
+    document.body.classList.remove('auth-pending', 'logged-out');
+    document.body.classList.add('logged-in');
+    authScreen?.setAttribute('aria-hidden', 'true');
+    if (loginError) loginError.textContent = '';
+    setTimeout(() => searchInput?.focus(), 0);
+}
+
+function bindAuth() {
+    loginForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const submitBtn = loginForm.querySelector('button[type="submit"]');
+        const username = document.getElementById('login-username').value.trim();
+        const password = document.getElementById('login-password').value;
+
+        loginError.textContent = '';
+        submitBtn.disabled = true;
+
+        try {
+            const data = await apiRequest('/api/login', {
+                method: 'POST',
+                body: { username, password }
+            });
+            await loadAppData();
+            showLoggedIn(data.user);
+            loginForm.reset();
+        } catch (error) {
+            loginError.textContent = error.message;
+        } finally {
+            submitBtn.disabled = false;
         }
     });
 
-    // 搜索框焦点效果
+    logoutBtn.addEventListener('click', async () => {
+        try {
+            await apiRequest('/api/logout', { method: 'POST' });
+        } catch (error) {
+            console.warn(error.message);
+        } finally {
+            showLoggedOut('');
+        }
+    });
+}
+
+async function restoreSession() {
+    try {
+        const data = await apiRequest('/api/me');
+        if (!data.authenticated) {
+            showLoggedOut('');
+            return;
+        }
+
+        await loadAppData();
+        showLoggedIn(data.user);
+    } catch (error) {
+        showLoggedOut(error.message);
+    }
+}
+
+// ==================== 搜索 ====================
+function bindSearchEvents() {
+    engineButtons.forEach(btn => {
+        btn.addEventListener('click', () => switchSearchEngine(btn.dataset.engine));
+    });
+
+    searchEngineIndicator.addEventListener('click', performSearch);
+
+    searchInput.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter') performSearch();
+    });
+
     searchInput.addEventListener('focus', () => {
         searchBox.classList.add('focused');
     });
@@ -66,7 +213,6 @@ function bindEvents() {
     });
 }
 
-// ==================== 切换搜索引擎 ====================
 function switchSearchEngine(engine) {
     if (!searchEngines[engine]) {
         console.error('未知的搜索引擎:', engine);
@@ -76,28 +222,20 @@ function switchSearchEngine(engine) {
     currentEngine = engine;
     updateSearchEngine(engine);
 
-    // 添加切换动画效果
     searchBox.style.animation = 'none';
     setTimeout(() => {
         searchBox.style.animation = '';
     }, 10);
 }
 
-// ==================== 更新搜索引擎 UI ====================
 function updateSearchEngine(engine) {
     const engineConfig = searchEngines[engine];
-
-    // 更新搜索框占位符
     searchInput.placeholder = engineConfig.placeholder;
-
-    // 更新引擎指示器
     engineIndicator.textContent = engineConfig.name;
 
-    // 更新按钮激活状态
     engineButtons.forEach(btn => {
         if (btn.dataset.engine === engine) {
             btn.classList.add('active');
-            // 添加脉冲动画
             btn.style.animation = 'pulse 0.3s ease';
             setTimeout(() => {
                 btn.style.animation = '';
@@ -108,12 +246,9 @@ function updateSearchEngine(engine) {
     });
 }
 
-// ==================== 执行搜索 ====================
 function performSearch() {
     const query = searchInput.value.trim();
-
     if (!query) {
-        // 如果搜索内容为空，添加抖动效果提示
         searchBox.style.animation = 'shake 0.5s ease';
         setTimeout(() => {
             searchBox.style.animation = '';
@@ -122,144 +257,55 @@ function performSearch() {
     }
 
     const engineConfig = searchEngines[currentEngine];
-    const searchUrl = engineConfig.url + encodeURIComponent(query);
-
-    // 在新窗口打开搜索结果
-    window.open(searchUrl, '_blank');
+    window.open(engineConfig.url + encodeURIComponent(query), '_blank');
 }
 
-// ==================== CSS 动画（通过 JS 动态添加）====================
-// 添加抖动动画样式
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes shake {
-        0%, 100% { transform: translateX(0); }
-        10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
-        20%, 40%, 60%, 80% { transform: translateX(5px); }
-    }
-
-    @keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.05); }
-        100% { transform: scale(1); }
-    }
-`;
-document.head.appendChild(style);
-
 // ==================== 快捷键支持 ====================
-document.addEventListener('keydown', (e) => {
-    // Ctrl/Cmd + K 聚焦搜索框
-    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault();
+document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+        event.preventDefault();
         searchInput.focus();
         searchInput.select();
     }
 
-    // Esc 键清空搜索框
-    if (e.key === 'Escape') {
+    if (event.key === 'Escape') {
         searchInput.value = '';
         searchInput.blur();
     }
 
-    // Ctrl/Cmd + 1 切换到 Google
-    if ((e.ctrlKey || e.metaKey) && e.key === '1') {
-        e.preventDefault();
+    if ((event.ctrlKey || event.metaKey) && event.key === '1') {
+        event.preventDefault();
         switchSearchEngine('google');
     }
 
-    // Ctrl/Cmd + 2 切换到 GitHub
-    if ((e.ctrlKey || e.metaKey) && e.key === '2') {
-        e.preventDefault();
+    if ((event.ctrlKey || event.metaKey) && event.key === '2') {
+        event.preventDefault();
         switchSearchEngine('github');
     }
 
-    // Ctrl/Cmd + 3 切换到哔哩哔哩
-    if ((e.ctrlKey || e.metaKey) && e.key === '3') {
-        e.preventDefault();
+    if ((event.ctrlKey || event.metaKey) && event.key === '3') {
+        event.preventDefault();
         switchSearchEngine('bilibili');
     }
 
-    // Ctrl/Cmd + 4 切换到 YouTube
-    if ((e.ctrlKey || e.metaKey) && e.key === '4') {
-        e.preventDefault();
+    if ((event.ctrlKey || event.metaKey) && event.key === '4') {
+        event.preventDefault();
         switchSearchEngine('youtube');
     }
 });
 
-// ==================== 菜单管理：链接存储 ====================
-const LINKS_STORAGE_KEY = 'nav-menu-links';
-const CUSTOM_BACKGROUND_KEY = 'nav-custom-background';
-const LAYOUT_COLUMNS_KEY = 'nav-layout-columns';
-const EDIT_MODE_KEY = 'nav-edit-mode';
-
-let layoutColumns = parseInt(localStorage.getItem(LAYOUT_COLUMNS_KEY) || '0', 10) || 0; // 0 = auto, 1-6 = fixed
-let editMode = localStorage.getItem(EDIT_MODE_KEY) === 'true'; // 编辑模式状态
-
-// 数据迁移：从旧格式转换为新格式
-function migrateLinksData() {
-    const raw = localStorage.getItem(LINKS_STORAGE_KEY);
-    if (!raw) return;
-
-    try {
-        const links = JSON.parse(raw);
-        if (!Array.isArray(links)) return;
-
-        // 检查是否需要迁移
-        const needsMigration = links.some(link =>
-            link && typeof link === 'object' &&
-            ('urlExternal' in link || 'urlInternal' in link)
-        );
-
-        if (needsMigration) {
-            const migratedLinks = links.map(link => {
-                if (!link || typeof link !== 'object') return null;
-                return {
-                    title: link.title || '未命名',
-                    url: link.url || link.urlExternal || link.urlInternal || ''
-                };
-            }).filter(link => link && link.url);
-
-            saveLinks(migratedLinks);
-            console.log('链接数据已迁移到新格式');
-        }
-    } catch (e) {
-        console.warn('数据迁移失败:', e);
-    }
-}
-
+// ==================== 导航链接 ====================
 function getLinks() {
-    try {
-        const raw = localStorage.getItem(LINKS_STORAGE_KEY);
-        if (!raw) return [];
-        const links = JSON.parse(raw);
-
-        // 验证数据结构
-        if (!Array.isArray(links)) return [];
-
-        return links.filter(link => {
-            if (typeof link !== 'object' || !link) return false;
-            if (typeof link.title !== 'string') return false;
-            if (typeof link.url !== 'string') return false;
-            return true;
-        });
-    } catch {
-        console.warn('Invalid links data in localStorage');
-        return [];
-    }
-}
-
-function saveLinks(links) {
-    localStorage.setItem(LINKS_STORAGE_KEY, JSON.stringify(links));
+    return appState.links;
 }
 
 function getDomainFromUrl(url) {
     if (!url || typeof url !== 'string' || !url.trim()) return null;
     try {
         const normalizedUrl = url.startsWith('http') ? url : 'https://' + url;
-        const u = new URL(normalizedUrl);
-        // 只允许 http/https 协议
-        if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-        return u.hostname;
+        const parsedUrl = new URL(normalizedUrl);
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
+        return parsedUrl.hostname;
     } catch {
         return null;
     }
@@ -271,7 +317,7 @@ function getFaviconUrl(url, size = 64) {
     return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size}`;
 }
 
-function getFallbackFaviconUrl(url, size = 64) {
+function getFallbackFaviconUrl(url) {
     const domain = getDomainFromUrl(url);
     if (!domain) return null;
     return `https://icons.duckduckgo.com/ip3/${encodeURIComponent(domain)}.ico`;
@@ -279,28 +325,16 @@ function getFallbackFaviconUrl(url, size = 64) {
 
 function getEffectiveUrl(link) {
     const url = link.url && link.url.trim();
-
-    // 验证 URL 协议
     try {
-        if (!url) return 'javascript:void(0)'; // 安全的无-op 链接
-        const urlObj = new URL(url.startsWith('http') ? url : 'https://' + url);
-        if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-            return 'javascript:void(0)'; // 禁止非 http/https
-        }
-        return urlObj.href;
+        if (!url) return '#';
+        const parsedUrl = new URL(url.startsWith('http') ? url : 'https://' + url);
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return '#';
+        return parsedUrl.href;
     } catch {
-        return 'javascript:void(0)'; // 无效 URL 则禁用链接
+        return '#';
     }
 }
 
-let draggedCard = null;
-let draggedIndex = null;
-let isDragging = false;
-let dragStartTime = 0;
-
-/**
- * 创建导航卡片元素的辅助函数（消除重复代码）
- */
 function createNavCardElement(link, index, options = {}) {
     const { noAnimation = false } = options;
     const href = getEffectiveUrl(link);
@@ -311,10 +345,8 @@ function createNavCardElement(link, index, options = {}) {
     card.className = 'nav-card-wrapper' + (noAnimation ? ' no-animation' : '');
     card.dataset.index = index;
 
-    // 用 JS 设置交错动画延迟，避免 nth-child 选择器问题
     if (!noAnimation) {
-        const delay = 0.3 + (index * 0.05);
-        card.style.animationDelay = `${delay}s`;
+        card.style.animationDelay = `${0.3 + (index * 0.05)}s`;
     }
 
     card.innerHTML = `
@@ -341,7 +373,6 @@ function createNavCardElement(link, index, options = {}) {
         </div>
     `;
 
-    // 绑定拖拽事件
     const navCard = card.querySelector('.nav-card');
     navCard.addEventListener('dragstart', handleDragStart);
     navCard.addEventListener('dragend', handleDragEnd);
@@ -350,11 +381,8 @@ function createNavCardElement(link, index, options = {}) {
     navCard.addEventListener('dragenter', handleDragEnter);
     navCard.addEventListener('dragleave', handleDragLeave);
 
-    // 绑定涟漪动画重触发事件（确保每次悬停都播放动画）
     navCard.addEventListener('mouseenter', function() {
-        // 通过暂时移除 hover-ripple 类来重置动画
         this.classList.remove('hover-ripple');
-        // 触发重排
         void this.offsetWidth;
         this.classList.add('hover-ripple');
     });
@@ -371,7 +399,6 @@ function renderNavCards() {
     const emptyState = document.getElementById('nav-empty-state');
     const links = getLinks();
 
-    // 移除所有 wrapper 元素，而不只是 nav-card
     container.querySelectorAll('.nav-card-wrapper').forEach(el => el.remove());
     emptyState.style.display = links.length ? 'none' : 'block';
 
@@ -383,26 +410,24 @@ function renderNavCards() {
     updateEditModeUI();
 }
 
-function handleDragStart(e) {
+function handleDragStart(event) {
     draggedCard = this;
-    draggedIndex = parseInt(this.dataset.index);
+    draggedIndex = parseInt(this.dataset.index, 10);
     isDragging = true;
-    dragStartTime = Date.now();
-    // 不改变 opacity，保持毛玻璃效果不变
     this.style.transform = 'scale(0.98)';
     this.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.3)';
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', draggedIndex);
-    // 创建一个透明的拖拽图像，避免默认拖拽反馈
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', draggedIndex);
+
     const dragImage = document.createElement('div');
     dragImage.style.width = '0px';
     dragImage.style.height = '0px';
     document.body.appendChild(dragImage);
-    e.dataTransfer.setDragImage(dragImage, 0, 0);
+    event.dataTransfer.setDragImage(dragImage, 0, 0);
     setTimeout(() => document.body.removeChild(dragImage), 0);
 }
 
-function handleDragEnd(e) {
+function handleDragEnd() {
     this.style.transform = '';
     this.style.boxShadow = '';
     document.querySelectorAll('.nav-card').forEach(card => {
@@ -413,48 +438,54 @@ function handleDragEnd(e) {
     setTimeout(() => { isDragging = false; }, 100);
 }
 
-function handleDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+function handleDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
 }
 
-function handleDragEnter(e) {
-    e.preventDefault();
-    if (this !== draggedCard) {
-        this.classList.add('drag-over');
-    }
+function handleDragEnter(event) {
+    event.preventDefault();
+    if (this !== draggedCard) this.classList.add('drag-over');
 }
 
-function handleDragLeave(e) {
+function handleDragLeave() {
     this.classList.remove('drag-over');
 }
 
-function handleDrop(e) {
-    e.preventDefault();
+async function handleDrop(event) {
+    event.preventDefault();
     if (this === draggedCard) return;
 
-    const dropIndex = parseInt(this.dataset.index);
+    const dropIndex = parseInt(this.dataset.index, 10);
     if (draggedIndex === null || dropIndex === draggedIndex) return;
 
-    const links = getLinks();
+    const previousLinks = [...appState.links];
+    const links = [...appState.links];
     const [draggedItem] = links.splice(draggedIndex, 1);
     links.splice(dropIndex, 0, draggedItem);
-    saveLinks(links);
+    appState.links = links;
 
     const container = document.getElementById('nav-links-container');
-
-    // 临时禁用动画，防止拖拽后闪烁
     container.style.transition = 'none';
-
-    // 直接重新渲染所有卡片
     renderNavCards();
-
-    // 触发重排后恢复
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             container.style.transition = '';
         });
     });
+
+    try {
+        const data = await apiRequest('/api/links/reorder', {
+            method: 'PUT',
+            body: { ids: links.map(link => link.id) }
+        });
+        appState.links = data.links || links;
+        renderNavCards();
+    } catch (error) {
+        appState.links = previousLinks;
+        renderNavCards();
+        alert(error.message);
+    }
 }
 
 function escapeHtml(text) {
@@ -463,19 +494,17 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// ==================== 菜单管理 ====================
 function openManageModal(editIndex) {
-    const modal = document.getElementById('manage-modal');
     const form = document.getElementById('link-form');
     const links = getLinks();
     openModal('manage-modal');
     form.reset();
 
-    // 如果是编辑模式，填充表单
     if (typeof editIndex === 'number' && links[editIndex]) {
         const link = links[editIndex];
         document.getElementById('link-title').value = link.title || '';
         document.getElementById('link-url').value = link.url || '';
-        // 保存编辑索引到表单，用于提交时判断
         form.dataset.editIndex = editIndex;
         document.querySelector('.link-form .btn-primary').textContent = '更新链接';
     } else {
@@ -483,7 +512,6 @@ function openManageModal(editIndex) {
         document.querySelector('.link-form .btn-primary').textContent = '添加链接';
     }
 
-    // 更新布局按钮状态
     document.querySelectorAll('.layout-btn').forEach(btn => {
         const btnCols = parseInt(btn.dataset.columns, 10);
         btn.classList.toggle('active', btnCols === layoutColumns);
@@ -508,37 +536,39 @@ function openModal(modalId) {
     modal.classList.add('modal-open');
 }
 
-function toggleEditMode() {
+async function toggleEditMode() {
+    const previous = editMode;
     editMode = !editMode;
-    localStorage.setItem(EDIT_MODE_KEY, editMode.toString());
+    appState.settings.editMode = editMode;
     updateEditModeUI();
+
+    try {
+        await saveSettingsPatch({ editMode });
+    } catch (error) {
+        editMode = previous;
+        appState.settings.editMode = previous;
+        updateEditModeUI();
+        alert(error.message);
+    }
 }
 
 function updateEditModeUI() {
     const editModeBtn = document.getElementById('edit-mode-btn');
-    const body = document.body;
-
-    if (editMode) {
-        body.classList.add('edit-mode-active');
-        if (editModeBtn) {
-            editModeBtn.classList.add('active');
-        }
-    } else {
-        body.classList.remove('edit-mode-active');
-        if (editModeBtn) {
-            editModeBtn.classList.remove('active');
-        }
-    }
+    document.body.classList.toggle('edit-mode-active', editMode);
+    if (editModeBtn) editModeBtn.classList.toggle('active', editMode);
 }
 
-function deleteLink(index) {
+async function deleteLink(index) {
     const links = getLinks();
-    if (index >= 0 && index < links.length) {
-        if (confirm(`确定要删除链接「${links[index].title}」吗？`)) {
-            links.splice(index, 1);
-            saveLinks(links);
-            renderNavCards();
-        }
+    if (index < 0 || index >= links.length) return;
+    if (!confirm(`确定要删除链接「${links[index].title}」吗？`)) return;
+
+    try {
+        const data = await apiRequest(`/api/links/${links[index].id}`, { method: 'DELETE' });
+        appState.links = data.links || [];
+        renderNavCards();
+    } catch (error) {
+        alert(error.message);
     }
 }
 
@@ -548,7 +578,7 @@ function editLink(index) {
 
 function applyLayoutColumns(columns) {
     layoutColumns = columns;
-    localStorage.setItem(LAYOUT_COLUMNS_KEY, columns.toString());
+    appState.settings.layoutColumns = columns;
     const container = document.getElementById('nav-links-container');
     if (!container) return;
 
@@ -559,13 +589,24 @@ function applyLayoutColumns(columns) {
     } else {
         container.style.setProperty('--layout-cols', columns.toString());
         container.classList.add('layout-fixed');
-        // 列数由 CSS 媒体查询根据视口动态限制，此处只设置目标列数
     }
 
     document.querySelectorAll('.layout-btn').forEach(btn => {
         const btnCols = parseInt(btn.dataset.columns, 10);
         btn.classList.toggle('active', btnCols === columns);
     });
+}
+
+async function setLayoutColumns(columns) {
+    const previous = layoutColumns;
+    applyLayoutColumns(columns);
+
+    try {
+        await saveSettingsPatch({ layoutColumns: columns });
+    } catch (error) {
+        applyLayoutColumns(previous);
+        alert(error.message);
+    }
 }
 
 function bindMenuManagement() {
@@ -575,14 +616,12 @@ function bindMenuManagement() {
     const cancelBtn = document.getElementById('link-form-cancel');
 
     manageBtn.addEventListener('click', () => openManageModal());
-    if (editModeBtn) {
-        editModeBtn.addEventListener('click', toggleEditMode);
-    }
+    if (editModeBtn) editModeBtn.addEventListener('click', toggleEditMode);
     cancelBtn.addEventListener('click', closeManageModal);
 
-    form.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const links = getLinks();
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const submitBtn = form.querySelector('.btn-primary');
         const title = document.getElementById('link-title').value.trim();
         const url = document.getElementById('link-url').value.trim();
         const editIndex = form.dataset.editIndex !== undefined ? parseInt(form.dataset.editIndex, 10) : null;
@@ -593,52 +632,53 @@ function bindMenuManagement() {
             return;
         }
 
-        const item = { title, url };
+        const editingLink = editIndex !== null && getLinks()[editIndex] ? getLinks()[editIndex] : null;
+        submitBtn.disabled = true;
 
-        if (editIndex !== null && Number.isInteger(editIndex) && editIndex >= 0 && editIndex < links.length) {
-            links[editIndex] = item;
-        } else {
-            links.push(item);
+        try {
+            const data = await apiRequest(editingLink ? `/api/links/${editingLink.id}` : '/api/links', {
+                method: editingLink ? 'PUT' : 'POST',
+                body: { title, url }
+            });
+            appState.links = data.links || [];
+            renderNavCards();
+            closeManageModal();
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            submitBtn.disabled = false;
         }
-
-        saveLinks(links);
-        renderNavCards();
-        closeManageModal();
     });
 
-    // 布局设置按钮
     document.querySelectorAll('.layout-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const columns = parseInt(btn.dataset.columns, 10);
-            applyLayoutColumns(columns);
+            setLayoutColumns(columns);
         });
     });
 
-    // 导航卡片上的编辑和删除按钮事件委托
-    document.getElementById('nav-links-container').addEventListener('click', (e) => {
-        const editBtn = e.target.closest('.nav-card-edit');
-        const deleteBtn = e.target.closest('.nav-card-delete');
+    document.getElementById('nav-links-container').addEventListener('click', (event) => {
+        const editBtn = event.target.closest('.nav-card-edit');
+        const deleteBtn = event.target.closest('.nav-card-delete');
 
         if (editBtn) {
-            e.preventDefault();
-            e.stopPropagation();
-            const index = parseInt(editBtn.dataset.index, 10);
-            editLink(index);
+            event.preventDefault();
+            event.stopPropagation();
+            editLink(parseInt(editBtn.dataset.index, 10));
         } else if (deleteBtn) {
-            e.preventDefault();
-            e.stopPropagation();
-            const index = parseInt(deleteBtn.dataset.index, 10);
-            deleteLink(index);
+            event.preventDefault();
+            event.stopPropagation();
+            deleteLink(parseInt(deleteBtn.dataset.index, 10));
         }
     });
 
-    // 通用关闭：按 data-close 关闭对应弹窗
     document.querySelectorAll('.modal-close[data-close]').forEach(btn => {
         btn.addEventListener('click', () => closeModal(btn.getAttribute('data-close')));
     });
+
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) closeModal(overlay.id);
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) closeModal(overlay.id);
         });
     });
 }
@@ -648,17 +688,18 @@ function isValidBackgroundUrl(url) {
     if (!url || typeof url !== 'string') return false;
     const trimmed = url.trim();
     if (!trimmed) return false;
+    if (trimmed.startsWith('/uploads/backgrounds/')) return !trimmed.includes('..');
 
     try {
-        // 只允许 http/https/data:image URL
-        if (trimmed.startsWith('data:image/')) {
-            return true; // 允许本地上传的 base64 图片
-        }
-        const urlObj = new URL(trimmed);
-        return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+        const parsedUrl = new URL(trimmed);
+        return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
     } catch {
         return false;
     }
+}
+
+function cssUrl(value) {
+    return value.replace(/"/g, '\\"');
 }
 
 function applyCustomBackground(url) {
@@ -667,35 +708,50 @@ function applyCustomBackground(url) {
         document.body.style.backgroundSize = '';
         document.body.style.backgroundPosition = '';
         document.body.style.backgroundRepeat = '';
-        localStorage.removeItem(CUSTOM_BACKGROUND_KEY);
+        document.body.style.backgroundAttachment = '';
         return;
     }
 
-    // 验证 URL
-    if (!isValidBackgroundUrl(url)) {
+    const trimmed = url.trim();
+    if (!isValidBackgroundUrl(trimmed)) {
         console.warn('Invalid background URL rejected');
         return;
     }
 
-    const u = url.trim();
-    // 使用 URL 构造函数确保字符串正确转义
-    const safeUrl = u.startsWith('data:') ? u : new URL(u).href;
-    document.body.style.backgroundImage = `url("${safeUrl.replace(/"/g, '\\"')}")`;
+    const safeUrl = trimmed.startsWith('/') ? trimmed : new URL(trimmed).href;
+    document.body.style.backgroundImage = `url("${cssUrl(safeUrl)}")`;
     document.body.style.backgroundSize = 'cover';
     document.body.style.backgroundPosition = 'center';
     document.body.style.backgroundRepeat = 'no-repeat';
     document.body.style.backgroundAttachment = 'fixed';
-    localStorage.setItem(CUSTOM_BACKGROUND_KEY, u);
 }
 
-function applySavedBackground() {
-    const saved = localStorage.getItem(CUSTOM_BACKGROUND_KEY);
-    if (saved && saved.trim()) applyCustomBackground(saved);
+function applySettings(settings) {
+    appState.settings = {
+        ...DEFAULT_SETTINGS,
+        ...(settings || {})
+    };
+    layoutColumns = Number.parseInt(appState.settings.layoutColumns, 10) || 0;
+    editMode = Boolean(appState.settings.editMode);
+    applyLayoutColumns(layoutColumns);
+    updateEditModeUI();
+    applyCustomBackground(appState.settings.backgroundUrl || '');
+}
+
+function revokePreviewObjectUrl() {
+    if (previewObjectUrl) {
+        URL.revokeObjectURL(previewObjectUrl);
+        previewObjectUrl = null;
+    }
+}
+
+function setBackgroundBusy(isBusy) {
+    document.getElementById('background-apply').disabled = isBusy;
+    document.getElementById('background-reset').disabled = isBusy;
 }
 
 function bindBackgroundModal() {
     const btn = document.querySelector('.background-btn');
-    const modal = document.getElementById('background-modal');
     const fileInput = document.getElementById('background-upload');
     const urlInput = document.getElementById('background-url');
     const preview = document.getElementById('background-preview');
@@ -703,133 +759,146 @@ function bindBackgroundModal() {
     const previewRemove = document.getElementById('background-preview-remove');
     const applyBtn = document.getElementById('background-apply');
     const resetBtn = document.getElementById('background-reset');
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-    let uploadedFileData = null;
-
-    // 打开弹窗时恢复保存的背景
     btn.addEventListener('click', () => {
-        const saved = localStorage.getItem(CUSTOM_BACKGROUND_KEY) || '';
-        if (saved && saved.startsWith('data:image')) {
-            // 如果是 base64，显示预览
+        const saved = appState.settings.backgroundUrl || '';
+        selectedBackgroundFile = null;
+        revokePreviewObjectUrl();
+        fileInput.value = '';
+        urlInput.value = saved;
+
+        if (saved) {
             previewImg.src = saved;
             preview.style.display = 'block';
-            uploadedFileData = saved;
-            urlInput.value = '';
         } else {
-            urlInput.value = saved;
+            previewImg.removeAttribute('src');
             preview.style.display = 'none';
-            uploadedFileData = null;
         }
-        fileInput.value = '';
+
         openModal('background-modal');
     });
 
-    // 文件选择
-    fileInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
+    fileInput.addEventListener('change', (event) => {
+        const file = event.target.files[0];
         if (!file) return;
 
-        // 添加文件大小限制（5MB）
-        const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-        if (file.size > MAX_FILE_SIZE) {
+        const maxFileSize = 5 * 1024 * 1024;
+        if (file.size > maxFileSize) {
             alert('图片文件不能超过 5MB');
             fileInput.value = '';
             return;
         }
 
-        if (!file.type.startsWith('image/')) {
-            alert('请选择图片文件');
+        if (!allowedTypes.includes(file.type)) {
+            alert('请选择 JPG、PNG、WebP 或 GIF 图片');
             fileInput.value = '';
             return;
         }
 
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            uploadedFileData = event.target.result; // base64 数据
-            previewImg.src = uploadedFileData;
-            preview.style.display = 'block';
-            urlInput.value = ''; // 清空URL输入
-        };
-        reader.onerror = () => {
-            alert('图片读取失败，请重试');
-            fileInput.value = '';
-        };
-        reader.readAsDataURL(file);
-    });
-
-    // 移除预览
-    previewRemove.addEventListener('click', () => {
-        preview.style.display = 'none';
-        fileInput.value = '';
-        uploadedFileData = null;
-    });
-
-    // 应用背景
-    applyBtn.addEventListener('click', () => {
-        const urlValue = urlInput.value.trim();
-        if (uploadedFileData) {
-            // 优先使用上传的文件
-            applyCustomBackground(uploadedFileData);
-        } else if (urlValue) {
-            // 验证 URL 后再应用
-            if (!isValidBackgroundUrl(urlValue)) {
-                alert('请输入有效的图片 URL（http/https 开头）');
-                return;
-            }
-            applyCustomBackground(urlValue);
-        } else {
-            // 清空背景
-            applyCustomBackground('');
-        }
-        closeModal('background-modal');
-    });
-
-    // 恢复默认
-    resetBtn.addEventListener('click', () => {
-        applyCustomBackground('');
+        selectedBackgroundFile = file;
+        revokePreviewObjectUrl();
+        previewObjectUrl = URL.createObjectURL(file);
+        previewImg.src = previewObjectUrl;
+        preview.style.display = 'block';
         urlInput.value = '';
+    });
+
+    previewRemove.addEventListener('click', () => {
+        selectedBackgroundFile = null;
+        revokePreviewObjectUrl();
         preview.style.display = 'none';
+        previewImg.removeAttribute('src');
         fileInput.value = '';
-        uploadedFileData = null;
-        closeModal('background-modal');
+        urlInput.value = '';
+    });
+
+    applyBtn.addEventListener('click', async () => {
+        const urlValue = urlInput.value.trim();
+        setBackgroundBusy(true);
+
+        try {
+            if (selectedBackgroundFile) {
+                const formData = new FormData();
+                formData.append('background', selectedBackgroundFile);
+                const data = await apiRequest('/api/background', {
+                    method: 'POST',
+                    body: formData
+                });
+                applySettings(data.settings);
+            } else if (urlValue) {
+                if (!isValidBackgroundUrl(urlValue)) {
+                    alert('请输入有效的图片 URL 或服务器图片路径');
+                    return;
+                }
+                await saveSettingsPatch({ backgroundUrl: urlValue });
+            } else {
+                await saveSettingsPatch({ backgroundUrl: '' });
+            }
+
+            selectedBackgroundFile = null;
+            revokePreviewObjectUrl();
+            closeModal('background-modal');
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            setBackgroundBusy(false);
+        }
+    });
+
+    resetBtn.addEventListener('click', async () => {
+        setBackgroundBusy(true);
+        try {
+            await saveSettingsPatch({ backgroundUrl: '' });
+            selectedBackgroundFile = null;
+            revokePreviewObjectUrl();
+            urlInput.value = '';
+            preview.style.display = 'none';
+            previewImg.removeAttribute('src');
+            fileInput.value = '';
+            closeModal('background-modal');
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            setBackgroundBusy(false);
+        }
     });
 }
 
 // ==================== 初始化 ====================
-function init() {
-    // 设置默认搜索引擎
-    updateSearchEngine(currentEngine);
-    bindEvents();
-    searchInput.focus();
+function injectAnimationStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
 
-    // 迁移旧数据
-    migrateLinksData();
-
-    // 编辑模式
-    editMode = localStorage.getItem(EDIT_MODE_KEY) === 'true';
-
-    renderNavCards();
-    bindMenuManagement();
-    bindBackgroundModal();
-    applySavedBackground();
-    applyLayoutColumns(layoutColumns); // 应用保存的布局设置
-    updateEditModeUI(); // 应用编辑模式状态
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+    `;
+    document.head.appendChild(style);
 }
 
-// ==================== 页面加载完成后初始化 ====================
+function init() {
+    injectAnimationStyles();
+    updateSearchEngine(currentEngine);
+    bindAuth();
+    bindSearchEvents();
+    bindMenuManagement();
+    bindBackgroundModal();
+    restoreSession();
+}
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {
     init();
 }
 
-// ==================== 控制台欢迎信息 ====================
-console.log('%c🌟 个人导航首页', 'font-size: 24px; font-weight: bold; color: #667eea;');
-console.log('%c欢迎使用！', 'font-size: 14px; color: #764ba2;');
-console.log('%c快捷键提示:', 'font-size: 12px; font-weight: bold; margin-top: 10px;');
-console.log('  • Ctrl/Cmd + K - 聚焦搜索框');
-console.log('  • Ctrl/Cmd + 1 - 切换到 Google');
-console.log('  • Ctrl/Cmd + 2 - 切换到 GitHub');
-console.log('  • Ctrl/Cmd + 3 - 切换到哔哩哔哩');
-console.log('  • Ctrl/Cmd + 4 - 切换到 YouTube');
-console.log('  • Esc - 清空搜索框');
+console.log('%c个人导航首页', 'font-size: 24px; font-weight: bold; color: #667eea;');
+console.log('快捷键: Ctrl/Cmd + K 聚焦搜索框, Ctrl/Cmd + 1/2/3/4 切换搜索引擎');
