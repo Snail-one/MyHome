@@ -81,6 +81,10 @@ body.auth-pending .auth-screen {
     align-items: center;
     justify-content: center;
     padding: 24px;
+    background:
+        radial-gradient(circle at 18% 16%, rgba(71, 85, 105, 0.35) 0, transparent 30%),
+        radial-gradient(circle at 82% 8%, rgba(148, 163, 184, 0.12) 0, transparent 26%),
+        linear-gradient(135deg, #0b0f14 0%, #171c22 48%, #262b31 100%);
 }
 
 body.logged-out .auth-screen {
@@ -89,13 +93,14 @@ body.logged-out .auth-screen {
 
 .auth-card {
     width: min(380px, 100%);
-    padding: 28px;
-    background: linear-gradient(165deg, rgba(30, 20, 50, 0.9) 0%, rgba(18, 16, 34, 0.94) 100%);
-    backdrop-filter: blur(28px);
-    -webkit-backdrop-filter: blur(28px);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 30px;
+    background: linear-gradient(165deg, rgba(38, 42, 49, 0.92) 0%, rgba(17, 20, 25, 0.95) 100%);
+    backdrop-filter: blur(28px) saturate(1.08);
+    -webkit-backdrop-filter: blur(28px) saturate(1.08);
+    border: 1px solid rgba(226, 232, 240, 0.11);
     border-radius: var(--radius-lg);
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42), 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+    color: #f8fafc;
 }
 
 .auth-card-header {
@@ -105,13 +110,14 @@ body.logged-out .auth-screen {
 
 .auth-card h1 {
     font-size: 24px;
-    font-weight: 700;
+    font-weight: 750;
     line-height: 1.2;
     margin-bottom: 8px;
+    color: #f8fafc;
 }
 
 .auth-card p {
-    color: var(--text-secondary);
+    color: #94a3b8;
     font-size: 13px;
 }
 
@@ -122,38 +128,50 @@ body.logged-out .auth-screen {
 .auth-form-group label {
     display: block;
     font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary);
+    font-weight: 600;
+    color: #cbd5e1;
     margin-bottom: 6px;
 }
 
 .auth-form-group input {
     width: 100%;
     padding: 12px 14px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--glass-border);
+    background: rgba(15, 23, 42, 0.52);
+    border: 1px solid rgba(148, 163, 184, 0.2);
     border-radius: var(--radius-md);
-    color: var(--text-primary);
+    color: #f8fafc;
     font-size: 15px;
-    transition: border-color var(--transition-fast), background var(--transition-fast);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+    transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .auth-form-group input:focus {
     outline: none;
-    background: rgba(255, 255, 255, 0.09);
-    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(15, 23, 42, 0.72);
+    border-color: rgba(226, 232, 240, 0.34);
+    box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
 }
 
 .auth-error {
     min-height: 18px;
     margin: -2px 0 14px;
-    color: #fecaca !important;
+    color: #fca5a5 !important;
     text-align: center;
 }
 
 .auth-submit {
     width: 100%;
     min-height: 44px;
+    background: #f8fafc;
+    color: #111827;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
+}
+
+.auth-submit:hover {
+    background: #e5e7eb;
+    border-color: #e5e7eb;
+    transform: translateY(-1px);
 }
 
 /* 添加动态背景效果 */
@@ -225,8 +243,17 @@ body::before {
     flex-direction: column;
 }
 
+.corner-email {
+    right: 0;
+    top: 0;
+}
+
 .email-links-panel {
     max-width: min(320px, calc(100vw - 24px));
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
 }
 
 .email-link-wrapper {
