@@ -91,7 +91,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS user_settings (
     user_id INTEGER PRIMARY KEY,
     layout_columns INTEGER NOT NULL DEFAULT 0 CHECK (layout_columns >= 0 AND layout_columns <= 6),
+    project_layout_columns INTEGER NOT NULL DEFAULT 0 CHECK (project_layout_columns >= 0 AND project_layout_columns <= 6),
     edit_mode INTEGER NOT NULL DEFAULT 0 CHECK (edit_mode IN (0, 1)),
+    project_link_display_mode TEXT NOT NULL DEFAULT 'centered',
+    bookmark_link_display_mode TEXT NOT NULL DEFAULT 'default',
     background_url TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -149,6 +152,25 @@ function ensureNavLinkSchema() {
     ON nav_links(user_id, link_key)
     WHERE link_key IS NOT NULL
   `);
+}
+
+function ensureUserSettingsSchema() {
+  const columns = db.prepare('PRAGMA table_info(user_settings)').all();
+  const hasProjectLayoutColumns = columns.some((column) => column.name === 'project_layout_columns');
+  const hasProjectLinkDisplayMode = columns.some((column) => column.name === 'project_link_display_mode');
+  const hasBookmarkLinkDisplayMode = columns.some((column) => column.name === 'bookmark_link_display_mode');
+
+  if (!hasProjectLayoutColumns) {
+    db.exec('ALTER TABLE user_settings ADD COLUMN project_layout_columns INTEGER NOT NULL DEFAULT 0');
+  }
+
+  if (!hasProjectLinkDisplayMode) {
+    db.exec("ALTER TABLE user_settings ADD COLUMN project_link_display_mode TEXT NOT NULL DEFAULT 'centered'");
+  }
+
+  if (!hasBookmarkLinkDisplayMode) {
+    db.exec("ALTER TABLE user_settings ADD COLUMN bookmark_link_display_mode TEXT NOT NULL DEFAULT 'default'");
+  }
 }
 
 function ensureSearchEngineSchema() {
@@ -295,6 +317,7 @@ function ensureDefaultSearchEngines() {
 }
 
 ensureNavLinkSchema();
+ensureUserSettingsSchema();
 ensureSearchEngineSchema();
 ensureAdminUser();
 ensureDefaultEmailLink();
@@ -331,6 +354,11 @@ function normalizeLinkType(type) {
   return 'website';
 }
 
+function normalizeDisplayMode(mode, fallback = 'default') {
+  if (mode === 'default' || mode === 'centered') return mode;
+  return fallback;
+}
+
 function isHttpUrl(value) {
   try {
     const url = new URL(value);
@@ -349,7 +377,10 @@ function isBackgroundUrl(value) {
 function serializeSettings(row) {
   return {
     layoutColumns: row.layout_columns,
+    projectLayoutColumns: row.project_layout_columns,
     editMode: Boolean(row.edit_mode),
+    projectLinkDisplayMode: normalizeDisplayMode(row.project_link_display_mode, 'centered'),
+    bookmarkLinkDisplayMode: normalizeDisplayMode(row.bookmark_link_display_mode, 'default'),
     backgroundUrl: row.background_url || ''
   };
 }
@@ -952,7 +983,10 @@ app.put('/api/settings', requireAuth, (req, res) => {
   const current = getSettings();
   const next = {
     layoutColumns: current.layoutColumns,
+    projectLayoutColumns: current.projectLayoutColumns,
     editMode: current.editMode,
+    projectLinkDisplayMode: current.projectLinkDisplayMode,
+    bookmarkLinkDisplayMode: current.bookmarkLinkDisplayMode,
     backgroundUrl: current.backgroundUrl
   };
 
@@ -965,8 +999,25 @@ app.put('/api/settings', requireAuth, (req, res) => {
     next.layoutColumns = layoutColumns;
   }
 
+  if (Object.prototype.hasOwnProperty.call(req.body, 'projectLayoutColumns')) {
+    const projectLayoutColumns = Number.parseInt(req.body.projectLayoutColumns, 10);
+    if (!Number.isInteger(projectLayoutColumns) || projectLayoutColumns < 0 || projectLayoutColumns > 6) {
+      res.status(400).json({ error: '个人项目布局列数必须在 0 到 6 之间' });
+      return;
+    }
+    next.projectLayoutColumns = projectLayoutColumns;
+  }
+
   if (Object.prototype.hasOwnProperty.call(req.body, 'editMode')) {
     next.editMode = Boolean(req.body.editMode);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body, 'projectLinkDisplayMode')) {
+    next.projectLinkDisplayMode = normalizeDisplayMode(req.body.projectLinkDisplayMode, 'default');
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body, 'bookmarkLinkDisplayMode')) {
+    next.bookmarkLinkDisplayMode = normalizeDisplayMode(req.body.bookmarkLinkDisplayMode, 'default');
   }
 
   if (Object.prototype.hasOwnProperty.call(req.body, 'backgroundUrl')) {
@@ -980,9 +1031,23 @@ app.put('/api/settings', requireAuth, (req, res) => {
 
   db.prepare(`
     UPDATE user_settings
-    SET layout_columns = ?, edit_mode = ?, background_url = ?, updated_at = CURRENT_TIMESTAMP
+    SET layout_columns = ?,
+        project_layout_columns = ?,
+        edit_mode = ?,
+        project_link_display_mode = ?,
+        bookmark_link_display_mode = ?,
+        background_url = ?,
+        updated_at = CURRENT_TIMESTAMP
     WHERE user_id = ?
-  `).run(next.layoutColumns, next.editMode ? 1 : 0, next.backgroundUrl, USER_ID);
+  `).run(
+    next.layoutColumns,
+    next.projectLayoutColumns,
+    next.editMode ? 1 : 0,
+    next.projectLinkDisplayMode,
+    next.bookmarkLinkDisplayMode,
+    next.backgroundUrl,
+    USER_ID
+  );
 
   if (current.backgroundUrl !== next.backgroundUrl) {
     deleteLocalBackground(current.backgroundUrl);

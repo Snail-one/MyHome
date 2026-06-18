@@ -1242,6 +1242,7 @@ body::before {
 .project-links-section {
     width: 100%;
     max-width: 100%;
+    margin-bottom: calc(var(--section-margin) * -1);
 }
 
 .project-links-section[hidden] {
@@ -1249,7 +1250,7 @@ body::before {
 }
 
 .project-links {
-    margin-bottom: clamp(10px, 2vh, 18px);
+    margin-bottom: 0;
 }
 
 /* 每行最多 N 个（N=--layout-max-cols 或 --layout-cols），卡片随宽度等比放大，窗口变窄自动减列 */
@@ -1261,6 +1262,10 @@ body::before {
     width: 100%;
     max-width: 100%;
     margin-bottom: clamp(24px, 4vh, 40px);
+}
+
+.navigation-links.layout-centered {
+    grid-template-columns: repeat(auto-fit, var(--nav-card-width));
 }
 
 /* 导航卡片包装器 */

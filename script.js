@@ -26,7 +26,10 @@ let searchEngines = { ...defaultSearchEngines };
 
 const DEFAULT_SETTINGS = {
     layoutColumns: 0,
+    projectLayoutColumns: 0,
     editMode: false,
+    projectLinkDisplayMode: 'centered',
+    bookmarkLinkDisplayMode: 'default',
     backgroundUrl: ''
 };
 const REQUIRED_EMAIL_LINK_KEYS = new Set(['google-mail']);
@@ -43,6 +46,9 @@ const appState = {
 
 let currentEngine = 'google';
 let layoutColumns = 0;
+let projectLayoutColumns = 0;
+let projectLinkDisplayMode = 'centered';
+let bookmarkLinkDisplayMode = 'default';
 let editMode = false;
 let draggedCard = null;
 let draggedIndex = null;
@@ -1133,10 +1139,10 @@ function parseCssPixelValue(value, fallback = 0) {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function getMaxAvailableLayoutColumns() {
+function getMaxAvailableLayoutColumns(linkType = 'website') {
     if (window.matchMedia('(max-width: 768px)').matches) return 1;
 
-    const container = document.getElementById('nav-links-container');
+    const container = getLinkContainer(linkType);
     const rootStyles = getComputedStyle(document.documentElement);
     const containerStyles = container ? getComputedStyle(container) : null;
     const configuredMax = Number.parseInt(rootStyles.getPropertyValue('--layout-max-cols'), 10) || 6;
@@ -1146,43 +1152,110 @@ function getMaxAvailableLayoutColumns() {
     const fallbackWidth = Math.min(window.innerWidth * 0.94, 1400);
     const availableWidth = measuredWidth || fallbackWidth;
     const columns = Math.floor((availableWidth + gap) / (cardWidth + gap));
-    const linkCount = Math.max(1, appState.links.length);
+    const linkCount = Math.max(1, getLinkCollection(linkType).length);
 
     return Math.max(1, Math.min(configuredMax, columns, linkCount));
 }
 
+function getLayoutColumnsForLinkType(linkType = 'website') {
+    return linkType === 'project' ? projectLayoutColumns : layoutColumns;
+}
+
 function updateLayoutButtonState() {
     document.querySelectorAll('.layout-btn').forEach(btn => {
+        if (!btn.dataset.columns) return;
         const btnCols = parseInt(btn.dataset.columns, 10);
-        btn.classList.toggle('active', btnCols === layoutColumns);
+        const linkType = btn.dataset.linkType || 'website';
+        btn.classList.toggle('active', btnCols === getLayoutColumnsForLinkType(linkType));
     });
 }
 
+function getDisplayModeForLinkType(linkType) {
+    return linkType === 'project' ? projectLinkDisplayMode : bookmarkLinkDisplayMode;
+}
+
+function applyLinkDisplayMode(linkType, mode) {
+    const normalizedMode = mode === 'centered' ? 'centered' : 'default';
+    const container = getLinkContainer(linkType);
+    if (!container) return;
+    container.classList.toggle('layout-centered', normalizedMode === 'centered');
+}
+
+function applyLinkDisplayModes() {
+    applyLinkDisplayMode('project', projectLinkDisplayMode);
+    applyLinkDisplayMode('website', bookmarkLinkDisplayMode);
+}
+
+function updateDisplayModeButtonState() {
+    document.querySelectorAll('.display-mode-btn').forEach(btn => {
+        const linkType = btn.dataset.linkType || 'website';
+        btn.classList.toggle('active', btn.dataset.mode === getDisplayModeForLinkType(linkType));
+    });
+}
+
+function renderDisplayModeButtons() {
+    const groups = [
+        { id: 'project-display-mode-buttons', linkType: 'project' },
+        { id: 'bookmark-display-mode-buttons', linkType: 'website' }
+    ];
+    const buttons = [
+        { mode: 'default', label: '默认' },
+        { mode: 'centered', label: '居中' }
+    ];
+
+    groups.forEach(group => {
+        const container = document.getElementById(group.id);
+        if (!container) return;
+        container.innerHTML = buttons.map(button => `
+            <button type="button" class="layout-btn display-mode-btn" data-link-type="${group.linkType}" data-mode="${button.mode}">
+                ${button.label}
+            </button>
+        `).join('');
+    });
+
+    updateDisplayModeButtonState();
+}
+
 function renderLayoutButtons() {
-    const layoutButtons = document.getElementById('layout-buttons');
-    const hint = document.getElementById('layout-options-hint');
+    renderLayoutButtonGroup('project-layout-buttons', 'project-layout-options-hint', 'project');
+    renderLayoutButtonGroup('layout-buttons', 'layout-options-hint', 'website');
+    updateLayoutButtonState();
+    renderDisplayModeButtons();
+}
+
+function renderLayoutButtonGroup(containerId, hintId, linkType = 'website') {
+    const layoutButtons = document.getElementById(containerId);
+    const hint = document.getElementById(hintId);
     if (!layoutButtons) return;
 
-    const maxColumns = getMaxAvailableLayoutColumns();
-    const buttons = ['<button type="button" class="layout-btn" data-columns="0" title="自动">自动</button>'];
+    const savedColumns = getLayoutColumnsForLinkType(linkType);
+    const maxColumns = getMaxAvailableLayoutColumns(linkType);
+    const buttons = [
+        `<button type="button" class="layout-btn" data-link-type="${linkType}" data-columns="0" title="自动">自动</button>`
+    ];
 
     for (let columns = 1; columns <= maxColumns; columns += 1) {
-        buttons.push(`<button type="button" class="layout-btn" data-columns="${columns}" title="${columns}列">${columns}</button>`);
+        buttons.push(`<button type="button" class="layout-btn" data-link-type="${linkType}" data-columns="${columns}" title="${columns}列">${columns}</button>`);
     }
 
     layoutButtons.innerHTML = buttons.join('');
     if (hint) {
-        hint.textContent = layoutColumns > maxColumns
-            ? `当前窗口最多 ${maxColumns} 列，已保存 ${layoutColumns} 列会在窗口足够宽时生效`
+        hint.textContent = savedColumns > maxColumns
+            ? `当前窗口最多 ${maxColumns} 列，已保存 ${savedColumns} 列会在窗口足够宽时生效`
             : `当前窗口最多 ${maxColumns} 列`;
     }
-    updateLayoutButtonState();
 }
 
-function applyLayoutColumns(columns) {
-    layoutColumns = columns;
-    appState.settings.layoutColumns = columns;
-    const container = document.getElementById('nav-links-container');
+function applyLayoutColumns(columns, linkType = 'website') {
+    if (linkType === 'project') {
+        projectLayoutColumns = columns;
+        appState.settings.projectLayoutColumns = columns;
+    } else {
+        layoutColumns = columns;
+        appState.settings.layoutColumns = columns;
+    }
+
+    const container = getLinkContainer(linkType);
     if (!container) return;
 
     if (columns === 0) {
@@ -1197,14 +1270,47 @@ function applyLayoutColumns(columns) {
     updateLayoutButtonState();
 }
 
-async function setLayoutColumns(columns) {
-    const previous = layoutColumns;
-    applyLayoutColumns(columns);
+function applyDisplayModeState(linkType, mode) {
+    const normalizedMode = mode === 'centered' ? 'centered' : 'default';
+    if (linkType === 'project') {
+        projectLinkDisplayMode = normalizedMode;
+        appState.settings.projectLinkDisplayMode = normalizedMode;
+    } else {
+        bookmarkLinkDisplayMode = normalizedMode;
+        appState.settings.bookmarkLinkDisplayMode = normalizedMode;
+    }
+    applyLinkDisplayMode(linkType, normalizedMode);
+    updateDisplayModeButtonState();
+}
+
+async function setDisplayMode(linkType, mode) {
+    const previous = getDisplayModeForLinkType(linkType);
+    applyDisplayModeState(linkType, mode);
 
     try {
-        await saveSettingsPatch({ layoutColumns: columns });
+        await saveSettingsPatch(linkType === 'project'
+            ? { projectLinkDisplayMode: mode }
+            : { bookmarkLinkDisplayMode: mode });
     } catch (error) {
-        applyLayoutColumns(previous);
+        applyDisplayModeState(linkType, previous);
+        alert(error.message);
+    }
+}
+
+async function setLayoutColumns(columns) {
+    return setLinkLayoutColumns('website', columns);
+}
+
+async function setLinkLayoutColumns(linkType, columns) {
+    const previous = getLayoutColumnsForLinkType(linkType);
+    applyLayoutColumns(columns, linkType);
+
+    try {
+        await saveSettingsPatch(linkType === 'project'
+            ? { projectLayoutColumns: columns }
+            : { layoutColumns: columns });
+    } catch (error) {
+        applyLayoutColumns(previous, linkType);
         alert(error.message);
     }
 }
@@ -1242,6 +1348,7 @@ function bindMenuManagement() {
     const searchEngineForm = document.getElementById('search-engine-form');
     const searchEngineList = document.getElementById('search-engine-list');
     const layoutButtons = document.getElementById('layout-buttons');
+    const layoutSettingsSection = document.querySelector('.layout-settings-section');
     const iconRefreshBtn = document.getElementById('icon-refresh-btn');
     const cancelBtn = document.getElementById('link-form-cancel');
     const searchEngineCancelBtn = document.getElementById('search-engine-form-cancel');
@@ -1330,13 +1437,20 @@ function bindMenuManagement() {
         }
     });
 
-    layoutButtons.addEventListener('click', (event) => {
-        const btn = event.target.closest('.layout-btn');
-        if (!btn) return;
+    if (layoutSettingsSection) {
+        layoutSettingsSection.addEventListener('click', (event) => {
+            const displayModeBtn = event.target.closest('.display-mode-btn');
+            if (displayModeBtn) {
+                setDisplayMode(displayModeBtn.dataset.linkType || 'website', displayModeBtn.dataset.mode || 'default');
+                return;
+            }
 
-        const columns = parseInt(btn.dataset.columns, 10);
-        setLayoutColumns(columns);
-    });
+            const layoutBtn = event.target.closest('.layout-btn[data-columns]');
+            if (!layoutBtn) return;
+            const columns = parseInt(layoutBtn.dataset.columns, 10);
+            setLinkLayoutColumns(layoutBtn.dataset.linkType || 'website', columns);
+        });
+    }
 
     searchEngineForm.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -1483,8 +1597,14 @@ function applySettings(settings) {
         ...(settings || {})
     };
     layoutColumns = Number.parseInt(appState.settings.layoutColumns, 10) || 0;
+    projectLayoutColumns = Number.parseInt(appState.settings.projectLayoutColumns, 10) || 0;
+    projectLinkDisplayMode = appState.settings.projectLinkDisplayMode === 'default' ? 'default' : 'centered';
+    bookmarkLinkDisplayMode = appState.settings.bookmarkLinkDisplayMode === 'centered' ? 'centered' : 'default';
     editMode = Boolean(appState.settings.editMode);
     applyLayoutColumns(layoutColumns);
+    applyLayoutColumns(projectLayoutColumns, 'project');
+    applyLinkDisplayModes();
+    updateDisplayModeButtonState();
     updateEditModeUI();
     applyCustomBackground(appState.settings.backgroundUrl || '');
 }
