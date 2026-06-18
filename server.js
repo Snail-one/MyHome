@@ -918,6 +918,11 @@ app.get('/script.js', (req, res) => {
   res.sendFile(path.join(ROOT_DIR, 'script.js'));
 });
 
+app.get('/favicon.svg', (req, res) => {
+  res.type('image/svg+xml');
+  res.sendFile(path.join(ROOT_DIR, 'favicon.svg'));
+});
+
 app.post('/api/login', (req, res) => {
   const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
   const password = typeof req.body.password === 'string' ? req.body.password : '';
