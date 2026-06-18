@@ -444,12 +444,20 @@ body::before {
     max-width: 380px;
 }
 
+#manage-modal .modal {
+    max-width: min(760px, calc(100vw - 40px));
+}
+
 .background-section label {
     display: block;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-secondary);
     margin-bottom: 6px;
+}
+
+.background-section label[for="background-upload"] {
+    text-align: center;
 }
 
 .background-section .full-width {
@@ -509,7 +517,10 @@ body::before {
 }
 
 .file-upload-text {
+    min-width: 0;
+    text-align: center;
     font-size: 14px;
+    line-height: 24px;
 }
 
 .file-preview {
