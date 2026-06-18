@@ -510,6 +510,7 @@ body::before {
     width: 20px;
     height: 20px;
     flex-shrink: 0;
+    transform: translateY(3px);
 }
 
 .file-upload-text {
