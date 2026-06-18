@@ -21,6 +21,10 @@ const HOST = process.env.HOST || '127.0.0.1';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SESSION_SECRET = process.env.SESSION_SECRET;
+const SESSION_COOKIE_SECURE = parseBooleanEnv(
+  process.env.SESSION_COOKIE_SECURE,
+  process.env.NODE_ENV === 'production'
+);
 const MAX_BACKGROUND_SIZE = 10 * 1024 * 1024;
 const MAX_ICON_SIZE = 1024 * 1024;
 const ICON_FETCH_TIMEOUT_MS = 5000;
@@ -28,7 +32,7 @@ const ICON_HTML_SAMPLE_SIZE = 128 * 1024;
 const LOGIN_MAX_FAILED_ATTEMPTS = parseIntegerEnv(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 5, 1);
 const LOGIN_WINDOW_MS = parseIntegerEnv(process.env.LOGIN_WINDOW_MS, 15 * 60 * 1000, 1000);
 const LOGIN_LOCKOUT_MS = parseIntegerEnv(process.env.LOGIN_LOCKOUT_MS, 15 * 60 * 1000, 1000);
-const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+const TRUST_PROXY = parseBooleanEnv(process.env.TRUST_PROXY, false);
 const USER_ID = 1;
 const loginAttempts = new Map();
 const DEFAULT_SEARCH_ENGINES = [
@@ -53,6 +57,7 @@ const DEFAULT_SEARCH_ENGINES = [
     urlTemplate: 'https://search.bilibili.com/all?keyword={query}'
   }
 ];
+const REQUIRED_SEARCH_ENGINE_KEYS = new Set(['google']);
 
 if (!ADMIN_USERNAME || !ADMIN_PASSWORD || !SESSION_SECRET) {
   console.error('Missing required environment variables: ADMIN_USERNAME, ADMIN_PASSWORD, SESSION_SECRET');
@@ -148,6 +153,8 @@ function ensureAdminUser() {
 }
 
 function ensureDefaultSearchEngines() {
+  const existingCountRow = db.prepare('SELECT COUNT(*) AS count FROM search_engines WHERE user_id = ?').get(USER_ID);
+  const shouldSeedAllDefaults = Number(existingCountRow.count) === 0;
   const existingByKey = db.prepare('SELECT id FROM search_engines WHERE user_id = ? AND engine_key = ?');
   const existingByName = db.prepare(`
     SELECT id
@@ -194,6 +201,8 @@ function ensureDefaultSearchEngines() {
   let nextSortOrder = Number(maxSortRow.max_sort_order) + 1;
 
   DEFAULT_SEARCH_ENGINES.forEach((engine) => {
+    if (!shouldSeedAllDefaults && !REQUIRED_SEARCH_ENGINE_KEYS.has(engine.engineKey)) return;
+
     if (existingByKey.get(USER_ID, engine.engineKey)) return;
 
     const existingNameRow = existingByName.get(USER_ID, engine.name);
@@ -234,6 +243,16 @@ function parseIntegerEnv(value, fallback, minimum) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < minimum) return fallback;
   return parsed;
+}
+
+function parseBooleanEnv(value, fallback) {
+  if (value === undefined || value === '') return fallback;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+
+  return fallback;
 }
 
 function normalizeUrl(url) {
@@ -761,7 +780,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: SESSION_COOKIE_SECURE,
     maxAge: 1000 * 60 * 60 * 24 * 30
   }
 }));
@@ -932,8 +951,8 @@ app.delete('/api/search-engines/:id', requireAuth, (req, res) => {
     return;
   }
 
-  if (engine.engine_key) {
-    res.status(400).json({ error: '默认搜索引擎不能删除，可以编辑名称和搜索地址' });
+  if (REQUIRED_SEARCH_ENGINE_KEYS.has(engine.engine_key)) {
+    res.status(400).json({ error: 'Google 搜索需要保留，可以编辑名称和搜索地址' });
     return;
   }
 

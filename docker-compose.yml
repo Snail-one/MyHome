@@ -10,8 +10,8 @@ services:
       PORT: 3000
       DATABASE_PATH: /app/data/my-home.sqlite
     volumes:
-      - my-home-data:/app/data
-      - my-home-uploads:/app/uploads
+      - ./data:/app/data
+      - ./uploads:/app/uploads
     restart: unless-stopped
 
 volumes:

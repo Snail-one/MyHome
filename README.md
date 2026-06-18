@@ -38,6 +38,7 @@ cp .env.example .env
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=换成你的强密码
 SESSION_SECRET=换成一串足够长的随机字符串
+SESSION_COOKIE_SECURE=false
 HOST=127.0.0.1
 PORT=3000
 DATABASE_PATH=./data/my-home.sqlite
@@ -75,7 +76,10 @@ cp .env.example .env
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=换成你的强密码
 SESSION_SECRET=换成一串足够长的随机字符串
+SESSION_COOKIE_SECURE=false
 ```
+
+如果通过 HTTPS 域名和反向代理访问容器，把 `SESSION_COOKIE_SECURE=true`，并按需设置 `TRUST_PROXY=true`。如果直接用 `http://localhost:3000` 或 `http://服务器IP:3000` 访问，保持 `SESSION_COOKIE_SECURE=false`，否则浏览器不会保存登录 Cookie。
 
 2. 构建并启动
 
@@ -142,5 +146,5 @@ docker run -d \
 - 后续修改 `.env` 里的账号或密码并重启服务，会更新管理员账号。
 - 旧版浏览器 `localStorage` 里的链接和背景不会自动迁移。
 - 登录防爆破默认规则：15 分钟内同一 IP + 用户名失败 5 次后锁定 15 分钟。
-- 生产环境请使用 HTTPS，并设置足够强的 `SESSION_SECRET` 和管理员密码。
+- 生产环境请使用 HTTPS，设置足够强的 `SESSION_SECRET` 和管理员密码，并把 `SESSION_COOKIE_SECURE` 设为 `true`。
 - 容器里如果要换端口，只改 `docker-compose.yml` 的端口映射和 `PORT` 环境变量即可。
