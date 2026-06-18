@@ -95,6 +95,8 @@ db.exec(`
     edit_mode INTEGER NOT NULL DEFAULT 0 CHECK (edit_mode IN (0, 1)),
     project_link_display_mode TEXT NOT NULL DEFAULT 'centered',
     bookmark_link_display_mode TEXT NOT NULL DEFAULT 'default',
+    project_link_size TEXT NOT NULL DEFAULT 'medium',
+    bookmark_link_size TEXT NOT NULL DEFAULT 'medium',
     background_url TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -159,6 +161,8 @@ function ensureUserSettingsSchema() {
   const hasProjectLayoutColumns = columns.some((column) => column.name === 'project_layout_columns');
   const hasProjectLinkDisplayMode = columns.some((column) => column.name === 'project_link_display_mode');
   const hasBookmarkLinkDisplayMode = columns.some((column) => column.name === 'bookmark_link_display_mode');
+  const hasProjectLinkSize = columns.some((column) => column.name === 'project_link_size');
+  const hasBookmarkLinkSize = columns.some((column) => column.name === 'bookmark_link_size');
 
   if (!hasProjectLayoutColumns) {
     db.exec('ALTER TABLE user_settings ADD COLUMN project_layout_columns INTEGER NOT NULL DEFAULT 0');
@@ -170,6 +174,14 @@ function ensureUserSettingsSchema() {
 
   if (!hasBookmarkLinkDisplayMode) {
     db.exec("ALTER TABLE user_settings ADD COLUMN bookmark_link_display_mode TEXT NOT NULL DEFAULT 'default'");
+  }
+
+  if (!hasProjectLinkSize) {
+    db.exec("ALTER TABLE user_settings ADD COLUMN project_link_size TEXT NOT NULL DEFAULT 'medium'");
+  }
+
+  if (!hasBookmarkLinkSize) {
+    db.exec("ALTER TABLE user_settings ADD COLUMN bookmark_link_size TEXT NOT NULL DEFAULT 'medium'");
   }
 }
 
@@ -359,6 +371,11 @@ function normalizeDisplayMode(mode, fallback = 'default') {
   return fallback;
 }
 
+function normalizeLinkSize(size, fallback = 'medium') {
+  if (['small', 'medium', 'large', 'xlarge'].includes(size)) return size;
+  return fallback;
+}
+
 function isHttpUrl(value) {
   try {
     const url = new URL(value);
@@ -381,6 +398,8 @@ function serializeSettings(row) {
     editMode: Boolean(row.edit_mode),
     projectLinkDisplayMode: normalizeDisplayMode(row.project_link_display_mode, 'centered'),
     bookmarkLinkDisplayMode: normalizeDisplayMode(row.bookmark_link_display_mode, 'default'),
+    projectLinkSize: normalizeLinkSize(row.project_link_size, 'medium'),
+    bookmarkLinkSize: normalizeLinkSize(row.bookmark_link_size, 'medium'),
     backgroundUrl: row.background_url || ''
   };
 }
@@ -992,6 +1011,8 @@ app.put('/api/settings', requireAuth, (req, res) => {
     editMode: current.editMode,
     projectLinkDisplayMode: current.projectLinkDisplayMode,
     bookmarkLinkDisplayMode: current.bookmarkLinkDisplayMode,
+    projectLinkSize: current.projectLinkSize,
+    bookmarkLinkSize: current.bookmarkLinkSize,
     backgroundUrl: current.backgroundUrl
   };
 
@@ -1025,6 +1046,14 @@ app.put('/api/settings', requireAuth, (req, res) => {
     next.bookmarkLinkDisplayMode = normalizeDisplayMode(req.body.bookmarkLinkDisplayMode, 'default');
   }
 
+  if (Object.prototype.hasOwnProperty.call(req.body, 'projectLinkSize')) {
+    next.projectLinkSize = normalizeLinkSize(req.body.projectLinkSize, 'medium');
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body, 'bookmarkLinkSize')) {
+    next.bookmarkLinkSize = normalizeLinkSize(req.body.bookmarkLinkSize, 'medium');
+  }
+
   if (Object.prototype.hasOwnProperty.call(req.body, 'backgroundUrl')) {
     const backgroundUrl = normalizeUrl(req.body.backgroundUrl || '');
     if (!isBackgroundUrl(backgroundUrl)) {
@@ -1041,6 +1070,8 @@ app.put('/api/settings', requireAuth, (req, res) => {
         edit_mode = ?,
         project_link_display_mode = ?,
         bookmark_link_display_mode = ?,
+        project_link_size = ?,
+        bookmark_link_size = ?,
         background_url = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE user_id = ?
@@ -1050,6 +1081,8 @@ app.put('/api/settings', requireAuth, (req, res) => {
     next.editMode ? 1 : 0,
     next.projectLinkDisplayMode,
     next.bookmarkLinkDisplayMode,
+    next.projectLinkSize,
+    next.bookmarkLinkSize,
     next.backgroundUrl,
     USER_ID
   );

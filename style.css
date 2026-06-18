@@ -872,9 +872,9 @@ body::before {
     box-shadow: var(--shadow-sm);
 }
 
-/* 固定布局：每行 --layout-cols 个，卡片宽度仍由 --nav-card-width 决定 */
+/* 固定布局：每行 --layout-cols 个，卡片宽度由当前链接组尺寸决定 */
 .navigation-links.layout-fixed {
-    grid-template-columns: repeat(var(--layout-cols), var(--nav-card-width)) !important;
+    grid-template-columns: repeat(var(--layout-cols), var(--link-card-width, var(--nav-card-width))) !important;
 }
 
 /* ==================== 导航空状态 ==================== */
@@ -1188,16 +1188,16 @@ body::before {
 /* 每行最多 N 个（N=--layout-max-cols 或 --layout-cols），卡片随宽度等比放大，窗口变窄自动减列 */
 .navigation-links {
     display: grid;
-    grid-template-columns: repeat(auto-fill, var(--nav-card-width));
+    grid-template-columns: repeat(auto-fill, var(--link-card-width, var(--nav-card-width)));
     justify-content: center;
-    gap: var(--nav-gap);
+    gap: var(--link-card-grid-gap, var(--nav-gap));
     width: 100%;
     max-width: 100%;
     margin-bottom: clamp(24px, 4vh, 40px);
 }
 
 .navigation-links.layout-centered {
-    grid-template-columns: repeat(auto-fit, var(--nav-card-width));
+    grid-template-columns: repeat(auto-fit, var(--link-card-width, var(--nav-card-width)));
 }
 
 /* 导航卡片包装器 */
@@ -1212,8 +1212,9 @@ body::before {
     align-items: center;
     justify-content: center;
     text-align: center;
-    gap: clamp(6px, 0.8vw, 10px);
-    padding: clamp(10px, 1.2vw, 16px);
+    gap: var(--link-card-gap, clamp(6px, 0.8vw, 10px));
+    min-height: var(--link-card-min-height, auto);
+    padding: var(--link-card-padding, clamp(10px, 1.2vw, 16px));
     background: var(--glass-bg-card);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
@@ -1229,15 +1230,15 @@ body::before {
 
 .nav-add-card {
     width: 100%;
-    min-height: 92px;
+    min-height: var(--link-add-card-min-height, 92px);
     border-style: dashed;
     font: inherit;
     cursor: pointer;
 }
 
 .nav-add-icon {
-    width: 42px;
-    height: 42px;
+    width: var(--link-add-icon-size, 42px);
+    height: var(--link-add-icon-size, 42px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1248,8 +1249,8 @@ body::before {
 }
 
 .nav-add-icon svg {
-    width: 24px;
-    height: 24px;
+    width: var(--link-add-icon-svg-size, 24px);
+    height: var(--link-add-icon-svg-size, 24px);
 }
 
 .nav-add-card:hover .nav-add-icon {
@@ -1411,8 +1412,8 @@ body::before {
 }
 
 .nav-icon {
-    width: clamp(30px, 3.5vmin, 40px);
-    height: clamp(30px, 3.5vmin, 40px);
+    width: var(--link-card-icon-size, clamp(30px, 3.5vmin, 40px));
+    height: var(--link-card-icon-size, clamp(30px, 3.5vmin, 40px));
     border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
@@ -1437,7 +1438,7 @@ body::before {
 }
 
 .nav-title {
-    font-size: clamp(14px, 1.6vw, 18px);
+    font-size: var(--link-card-title-size, clamp(14px, 1.6vw, 18px));
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
@@ -1522,7 +1523,7 @@ body::before {
     /* 小屏：单列，卡片占满宽 */
     .navigation-links,
     .navigation-links.layout-fixed {
-        grid-template-columns: var(--nav-card-width) !important;
+        grid-template-columns: var(--link-card-width, var(--nav-card-width)) !important;
     }
     
     .layout-buttons {

@@ -30,10 +30,68 @@ const DEFAULT_SETTINGS = {
     editMode: false,
     projectLinkDisplayMode: 'centered',
     bookmarkLinkDisplayMode: 'default',
+    projectLinkSize: 'medium',
+    bookmarkLinkSize: 'medium',
     backgroundUrl: ''
 };
 const REQUIRED_EMAIL_LINK_KEYS = new Set(['google-mail']);
 const LOCAL_ICON_CACHE_STORAGE_KEY = 'my-home-local-icon-cache-v1';
+const LINK_SIZE_OPTIONS = [
+    { size: 'small', label: '小' },
+    { size: 'medium', label: '默认' },
+    { size: 'large', label: '大' },
+    { size: 'xlarge', label: '超大' }
+];
+const LINK_SIZE_CONFIG = {
+    small: {
+        cardWidth: '96px',
+        minHeight: '78px',
+        addCardMinHeight: '78px',
+        iconSize: '30px',
+        titleSize: '13px',
+        cardGap: '6px',
+        cardPadding: '10px',
+        gridGap: '12px',
+        addIconSize: '34px',
+        addIconSvgSize: '20px'
+    },
+    medium: {
+        cardWidth: '120px',
+        minHeight: 'auto',
+        addCardMinHeight: '92px',
+        iconSize: 'clamp(30px, 3.5vmin, 40px)',
+        titleSize: 'clamp(14px, 1.6vw, 18px)',
+        cardGap: 'clamp(6px, 0.8vw, 10px)',
+        cardPadding: 'clamp(10px, 1.2vw, 16px)',
+        gridGap: 'var(--nav-gap)',
+        addIconSize: '42px',
+        addIconSvgSize: '24px'
+    },
+    large: {
+        cardWidth: '144px',
+        minHeight: '112px',
+        addCardMinHeight: '112px',
+        iconSize: '48px',
+        titleSize: '17px',
+        cardGap: '12px',
+        cardPadding: '16px',
+        gridGap: '18px',
+        addIconSize: '50px',
+        addIconSvgSize: '28px'
+    },
+    xlarge: {
+        cardWidth: '168px',
+        minHeight: '132px',
+        addCardMinHeight: '132px',
+        iconSize: '56px',
+        titleSize: '18px',
+        cardGap: '14px',
+        cardPadding: '18px',
+        gridGap: '20px',
+        addIconSize: '58px',
+        addIconSvgSize: '32px'
+    }
+};
 
 const appState = {
     user: null,
@@ -49,6 +107,8 @@ let layoutColumns = 0;
 let projectLayoutColumns = 0;
 let projectLinkDisplayMode = 'centered';
 let bookmarkLinkDisplayMode = 'default';
+let projectLinkSize = 'medium';
+let bookmarkLinkSize = 'medium';
 let editMode = false;
 let draggedCard = null;
 let draggedIndex = null;
@@ -1146,7 +1206,10 @@ function getMaxAvailableLayoutColumns(linkType = 'website') {
     const rootStyles = getComputedStyle(document.documentElement);
     const containerStyles = container ? getComputedStyle(container) : null;
     const configuredMax = Number.parseInt(rootStyles.getPropertyValue('--layout-max-cols'), 10) || 6;
-    const cardWidth = parseCssPixelValue(rootStyles.getPropertyValue('--nav-card-width'), 120);
+    const cardWidth = parseCssPixelValue(
+        containerStyles?.getPropertyValue('--link-card-width') || rootStyles.getPropertyValue('--nav-card-width'),
+        120
+    );
     const gap = parseCssPixelValue(containerStyles?.columnGap || rootStyles.getPropertyValue('--nav-gap'), 16);
     const measuredWidth = container?.getBoundingClientRect().width || 0;
     const fallbackWidth = Math.min(window.innerWidth * 0.94, 1400);
@@ -1174,6 +1237,14 @@ function getDisplayModeForLinkType(linkType) {
     return linkType === 'project' ? projectLinkDisplayMode : bookmarkLinkDisplayMode;
 }
 
+function normalizeLinkSize(size) {
+    return LINK_SIZE_CONFIG[size] ? size : 'medium';
+}
+
+function getLinkSizeForLinkType(linkType) {
+    return linkType === 'project' ? projectLinkSize : bookmarkLinkSize;
+}
+
 function applyLinkDisplayMode(linkType, mode) {
     const normalizedMode = mode === 'centered' ? 'centered' : 'default';
     const container = getLinkContainer(linkType);
@@ -1186,10 +1257,54 @@ function applyLinkDisplayModes() {
     applyLinkDisplayMode('website', bookmarkLinkDisplayMode);
 }
 
+function applyLinkSize(linkType, size) {
+    const normalizedSize = normalizeLinkSize(size);
+    const container = getLinkContainer(linkType);
+    if (!container) return;
+
+    const config = LINK_SIZE_CONFIG[normalizedSize];
+    container.style.setProperty('--link-card-width', config.cardWidth);
+    container.style.setProperty('--link-card-min-height', config.minHeight);
+    container.style.setProperty('--link-add-card-min-height', config.addCardMinHeight);
+    container.style.setProperty('--link-card-icon-size', config.iconSize);
+    container.style.setProperty('--link-card-title-size', config.titleSize);
+    container.style.setProperty('--link-card-gap', config.cardGap);
+    container.style.setProperty('--link-card-padding', config.cardPadding);
+    container.style.setProperty('--link-card-grid-gap', config.gridGap);
+    container.style.setProperty('--link-add-icon-size', config.addIconSize);
+    container.style.setProperty('--link-add-icon-svg-size', config.addIconSvgSize);
+}
+
+function applyLinkSizeState(linkType, size) {
+    const normalizedSize = normalizeLinkSize(size);
+    if (linkType === 'project') {
+        projectLinkSize = normalizedSize;
+        appState.settings.projectLinkSize = normalizedSize;
+    } else {
+        bookmarkLinkSize = normalizedSize;
+        appState.settings.bookmarkLinkSize = normalizedSize;
+    }
+    applyLinkSize(linkType, normalizedSize);
+    updateLinkSizeButtonState();
+    renderLayoutButtons();
+}
+
+function applyLinkSizes() {
+    applyLinkSize('project', projectLinkSize);
+    applyLinkSize('website', bookmarkLinkSize);
+}
+
 function updateDisplayModeButtonState() {
     document.querySelectorAll('.display-mode-btn').forEach(btn => {
         const linkType = btn.dataset.linkType || 'website';
         btn.classList.toggle('active', btn.dataset.mode === getDisplayModeForLinkType(linkType));
+    });
+}
+
+function updateLinkSizeButtonState() {
+    document.querySelectorAll('.link-size-btn').forEach(btn => {
+        const linkType = btn.dataset.linkType || 'website';
+        btn.classList.toggle('active', btn.dataset.size === getLinkSizeForLinkType(linkType));
     });
 }
 
@@ -1216,11 +1331,31 @@ function renderDisplayModeButtons() {
     updateDisplayModeButtonState();
 }
 
+function renderLinkSizeButtons() {
+    const groups = [
+        { id: 'project-link-size-buttons', linkType: 'project' },
+        { id: 'bookmark-link-size-buttons', linkType: 'website' }
+    ];
+
+    groups.forEach(group => {
+        const container = document.getElementById(group.id);
+        if (!container) return;
+        container.innerHTML = LINK_SIZE_OPTIONS.map(option => `
+            <button type="button" class="layout-btn link-size-btn" data-link-type="${group.linkType}" data-size="${option.size}">
+                ${option.label}
+            </button>
+        `).join('');
+    });
+
+    updateLinkSizeButtonState();
+}
+
 function renderLayoutButtons() {
     renderLayoutButtonGroup('project-layout-buttons', 'project-layout-options-hint', 'project');
     renderLayoutButtonGroup('layout-buttons', 'layout-options-hint', 'website');
     updateLayoutButtonState();
     renderDisplayModeButtons();
+    renderLinkSizeButtons();
 }
 
 function renderLayoutButtonGroup(containerId, hintId, linkType = 'website') {
@@ -1293,6 +1428,20 @@ async function setDisplayMode(linkType, mode) {
             : { bookmarkLinkDisplayMode: mode });
     } catch (error) {
         applyDisplayModeState(linkType, previous);
+        alert(error.message);
+    }
+}
+
+async function setLinkSize(linkType, size) {
+    const previous = getLinkSizeForLinkType(linkType);
+    applyLinkSizeState(linkType, size);
+
+    try {
+        await saveSettingsPatch(linkType === 'project'
+            ? { projectLinkSize: size }
+            : { bookmarkLinkSize: size });
+    } catch (error) {
+        applyLinkSizeState(linkType, previous);
         alert(error.message);
     }
 }
@@ -1439,6 +1588,12 @@ function bindMenuManagement() {
 
     if (layoutSettingsSection) {
         layoutSettingsSection.addEventListener('click', (event) => {
+            const linkSizeBtn = event.target.closest('.link-size-btn');
+            if (linkSizeBtn) {
+                setLinkSize(linkSizeBtn.dataset.linkType || 'website', linkSizeBtn.dataset.size || 'medium');
+                return;
+            }
+
             const displayModeBtn = event.target.closest('.display-mode-btn');
             if (displayModeBtn) {
                 setDisplayMode(displayModeBtn.dataset.linkType || 'website', displayModeBtn.dataset.mode || 'default');
@@ -1600,11 +1755,15 @@ function applySettings(settings) {
     projectLayoutColumns = Number.parseInt(appState.settings.projectLayoutColumns, 10) || 0;
     projectLinkDisplayMode = appState.settings.projectLinkDisplayMode === 'default' ? 'default' : 'centered';
     bookmarkLinkDisplayMode = appState.settings.bookmarkLinkDisplayMode === 'centered' ? 'centered' : 'default';
+    projectLinkSize = normalizeLinkSize(appState.settings.projectLinkSize);
+    bookmarkLinkSize = normalizeLinkSize(appState.settings.bookmarkLinkSize);
     editMode = Boolean(appState.settings.editMode);
+    applyLinkSizes();
     applyLayoutColumns(layoutColumns);
     applyLayoutColumns(projectLayoutColumns, 'project');
     applyLinkDisplayModes();
     updateDisplayModeButtonState();
+    updateLinkSizeButtonState();
     updateEditModeUI();
     applyCustomBackground(appState.settings.backgroundUrl || '');
 }
