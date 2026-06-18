@@ -36,6 +36,7 @@ const appState = {
     user: null,
     links: [],
     emailLinks: [],
+    projectLinks: [],
     searchEngineRecords: [],
     settings: { ...DEFAULT_SETTINGS }
 };
@@ -45,6 +46,7 @@ let layoutColumns = 0;
 let editMode = false;
 let draggedCard = null;
 let draggedIndex = null;
+let draggedLinkType = 'website';
 let isDragging = false;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
@@ -112,12 +114,14 @@ async function loadAppData() {
 
     appState.links = Array.isArray(linksData.links) ? linksData.links : [];
     appState.emailLinks = Array.isArray(linksData.emailLinks) ? linksData.emailLinks : [];
+    appState.projectLinks = Array.isArray(linksData.projectLinks) ? linksData.projectLinks : [];
     appState.searchEngineRecords = Array.isArray(searchEnginesData.engines) ? searchEnginesData.engines : [];
     rebuildSearchEngines();
     renderSearchEngineButtons();
     renderSearchEngineList();
     applySettings(settingsData.settings || DEFAULT_SETTINGS);
     renderEmailLinks();
+    renderProjectCards();
     renderNavCards();
 }
 
@@ -132,7 +136,9 @@ async function saveSettingsPatch(patch) {
 function applyLinksResponse(data) {
     appState.links = Array.isArray(data.links) ? data.links : [];
     appState.emailLinks = Array.isArray(data.emailLinks) ? data.emailLinks : [];
+    appState.projectLinks = Array.isArray(data.projectLinks) ? data.projectLinks : [];
     renderEmailLinks();
+    renderProjectCards();
     renderNavCards();
 }
 
@@ -142,12 +148,14 @@ function showLoggedOut(message = '') {
     appState.user = null;
     appState.links = [];
     appState.emailLinks = [];
+    appState.projectLinks = [];
     appState.searchEngineRecords = [];
     appState.settings = { ...DEFAULT_SETTINGS };
     currentEngine = 'google';
     rebuildSearchEngines();
     renderSearchEngineButtons();
     renderEmailLinks();
+    renderProjectCards();
     document.body.classList.remove('auth-pending', 'logged-in');
     document.body.classList.add('logged-out');
     authScreen?.setAttribute('aria-hidden', 'false');
@@ -417,6 +425,27 @@ function getEmailLinks() {
     return appState.emailLinks;
 }
 
+function getProjectLinks() {
+    return appState.projectLinks;
+}
+
+function setLinkCollection(linkType, links) {
+    if (linkType === 'project') {
+        appState.projectLinks = links;
+        return;
+    }
+
+    appState.links = links;
+}
+
+function getLinkContainer(linkType) {
+    return document.getElementById(linkType === 'project' ? 'project-links-container' : 'nav-links-container');
+}
+
+function getLinkEmptyState(linkType) {
+    return document.getElementById(linkType === 'project' ? 'project-empty-state' : 'nav-empty-state');
+}
+
 function getDomainFromUrl(url) {
     if (!url || typeof url !== 'string' || !url.trim()) return null;
     try {
@@ -652,7 +681,7 @@ function renderEmailLinks() {
 }
 
 function createNavCardElement(link, index, options = {}) {
-    const { noAnimation = false } = options;
+    const { noAnimation = false, linkType = 'website' } = options;
     const href = getEffectiveUrl(link);
     const localCachedFaviconUrl = getLocalCachedFaviconUrl(link.url);
     const serverFaviconUrl = getCachedFaviconUrl(link.url);
@@ -664,13 +693,14 @@ function createNavCardElement(link, index, options = {}) {
     const card = document.createElement('div');
     card.className = 'nav-card-wrapper' + (noAnimation ? ' no-animation' : '');
     card.dataset.index = index;
+    card.dataset.linkType = linkType;
 
     if (!noAnimation) {
         card.style.animationDelay = `${0.3 + (index * 0.05)}s`;
     }
 
     card.innerHTML = `
-        <a href="${href}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" draggable="true">
+        <a href="${href}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" data-link-type="${linkType}" draggable="true">
             <div class="nav-icon">
                 ${faviconUrl
                     ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="nav-favicon">${fallbackFavicon}`
@@ -722,11 +752,13 @@ function createNavCardElement(link, index, options = {}) {
     return card;
 }
 
-function createAddLinkCardElement() {
+function createAddLinkCardElement(linkType = 'website') {
+    const isProject = linkType === 'project';
     const card = document.createElement('div');
     card.className = 'nav-card-wrapper nav-add-wrapper';
+    card.dataset.linkType = linkType;
     card.innerHTML = `
-        <button type="button" class="nav-card nav-add-card" title="添加网址" aria-label="添加网址">
+        <button type="button" class="nav-card nav-add-card" data-link-type="${linkType}" title="${isProject ? '添加个人项目' : '添加网址'}" aria-label="${isProject ? '添加个人项目' : '添加网址'}">
             <span class="nav-add-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
                     <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -738,50 +770,65 @@ function createAddLinkCardElement() {
     return card;
 }
 
-function updateNavEmptyState() {
-    const emptyState = document.getElementById('nav-empty-state');
+function updateLinkEmptyState(linkType = 'website') {
+    const emptyState = getLinkEmptyState(linkType);
+    const links = getLinkCollection(linkType);
     if (!emptyState) return;
-    emptyState.style.display = appState.links.length || editMode ? 'none' : 'block';
+    emptyState.style.display = links.length || editMode ? 'none' : 'block';
 }
 
-function syncAddLinkCard() {
-    const container = document.getElementById('nav-links-container');
-    const emptyState = document.getElementById('nav-empty-state');
+function syncAddLinkCard(linkType = 'website') {
+    const container = getLinkContainer(linkType);
+    const emptyState = getLinkEmptyState(linkType);
     if (!container || !emptyState) return;
 
     const existingAddCard = container.querySelector('.nav-add-wrapper');
     if (!editMode) {
         existingAddCard?.remove();
-        updateNavEmptyState();
+        updateLinkEmptyState(linkType);
         return;
     }
 
     if (!existingAddCard) {
-        container.insertBefore(createAddLinkCardElement(), emptyState);
+        container.insertBefore(createAddLinkCardElement(linkType), emptyState);
     }
 
-    updateNavEmptyState();
+    updateLinkEmptyState(linkType);
 }
 
-function renderNavCards() {
-    const container = document.getElementById('nav-links-container');
-    const emptyState = document.getElementById('nav-empty-state');
-    const links = getLinks();
+function renderLinkCards(linkType = 'website') {
+    const container = getLinkContainer(linkType);
+    const emptyState = getLinkEmptyState(linkType);
+    const links = getLinkCollection(linkType);
+    if (!container || !emptyState) return;
 
     container.querySelectorAll('.nav-card-wrapper').forEach(el => el.remove());
-    updateNavEmptyState();
+    updateLinkEmptyState(linkType);
 
     links.forEach((link, index) => {
-        const card = createNavCardElement(link, index);
+        const card = createNavCardElement(link, index, { linkType });
         container.insertBefore(card, emptyState);
     });
 
     updateEditModeUI();
 }
 
+function renderNavCards() {
+    renderLinkCards('website');
+}
+
+function renderProjectCards() {
+    const section = document.getElementById('project-links-section');
+    if (section) {
+        section.hidden = !getProjectLinks().length && !editMode;
+    }
+    renderLinkCards('project');
+}
+
 function handleDragStart(event) {
     draggedCard = this;
     draggedIndex = parseInt(this.dataset.index, 10);
+    draggedLinkType = this.dataset.linkType || 'website';
     isDragging = true;
     this.style.transform = 'scale(0.98)';
     this.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.3)';
@@ -804,6 +851,7 @@ function handleDragEnd() {
     });
     draggedCard = null;
     draggedIndex = null;
+    draggedLinkType = 'website';
     setTimeout(() => { isDragging = false; }, 100);
 }
 
@@ -825,18 +873,21 @@ async function handleDrop(event) {
     event.preventDefault();
     if (this === draggedCard) return;
 
+    const linkType = this.dataset.linkType || 'website';
+    if (linkType !== draggedLinkType) return;
+
     const dropIndex = parseInt(this.dataset.index, 10);
     if (draggedIndex === null || dropIndex === draggedIndex) return;
 
-    const previousLinks = [...appState.links];
-    const links = [...appState.links];
+    const previousLinks = [...getLinkCollection(linkType)];
+    const links = [...getLinkCollection(linkType)];
     const [draggedItem] = links.splice(draggedIndex, 1);
     links.splice(dropIndex, 0, draggedItem);
-    appState.links = links;
+    setLinkCollection(linkType, links);
 
-    const container = document.getElementById('nav-links-container');
+    const container = getLinkContainer(linkType);
     container.style.transition = 'none';
-    renderNavCards();
+    renderLinkCards(linkType);
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             container.style.transition = '';
@@ -846,15 +897,25 @@ async function handleDrop(event) {
     try {
         const data = await apiRequest('/api/links/reorder', {
             method: 'PUT',
-            body: { ids: links.map(link => link.id) }
+            body: { ids: links.map(link => link.id), type: linkType }
         });
-        appState.links = data.links || links;
-        appState.emailLinks = data.emailLinks || appState.emailLinks;
+        if (
+            Array.isArray(data.links) &&
+            Array.isArray(data.emailLinks) &&
+            Array.isArray(data.projectLinks)
+        ) {
+            appState.links = data.links;
+            appState.emailLinks = data.emailLinks;
+            appState.projectLinks = data.projectLinks;
+        } else {
+            setLinkCollection(linkType, links);
+        }
         renderEmailLinks();
+        renderProjectCards();
         renderNavCards();
     } catch (error) {
-        appState.links = previousLinks;
-        renderNavCards();
+        setLinkCollection(linkType, previousLinks);
+        renderLinkCards(linkType);
         alert(error.message);
     }
 }
@@ -877,7 +938,9 @@ function openManageModal() {
 }
 
 function getLinkCollection(linkType) {
-    return linkType === 'email' ? getEmailLinks() : getLinks();
+    if (linkType === 'email') return getEmailLinks();
+    if (linkType === 'project') return getProjectLinks();
+    return getLinks();
 }
 
 function openLinkModal(editIndex, linkType = 'website') {
@@ -897,6 +960,11 @@ function openLinkModal(editIndex, linkType = 'website') {
         urlLabel.textContent = '邮箱登录地址';
         urlInput.placeholder = 'https://mail.google.com/';
         hint.textContent = '点击后会在新页面打开邮箱登录或访问页面。';
+    } else if (linkType === 'project') {
+        urlInput.type = 'url';
+        urlLabel.textContent = '项目地址';
+        urlInput.placeholder = 'https://example.com';
+        hint.textContent = '用于展示你自己部署的服务，图标将根据项目地址自动获取。';
     } else {
         urlInput.type = 'url';
         urlLabel.textContent = '链接地址';
@@ -909,12 +977,20 @@ function openLinkModal(editIndex, linkType = 'website') {
         document.getElementById('link-title').value = link.title || '';
         document.getElementById('link-url').value = link.url || '';
         form.dataset.editIndex = editIndex;
-        modalTitle.textContent = linkType === 'email' ? '编辑邮箱' : '编辑网址';
-        submitBtn.textContent = linkType === 'email' ? '更新邮箱' : '更新链接';
+        modalTitle.textContent = linkType === 'email'
+            ? '编辑邮箱'
+            : linkType === 'project' ? '编辑个人项目' : '编辑网址';
+        submitBtn.textContent = linkType === 'email'
+            ? '更新邮箱'
+            : linkType === 'project' ? '更新项目' : '更新链接';
     } else {
         delete form.dataset.editIndex;
-        modalTitle.textContent = linkType === 'email' ? '添加邮箱' : '添加网址';
-        submitBtn.textContent = linkType === 'email' ? '添加邮箱' : '添加链接';
+        modalTitle.textContent = linkType === 'email'
+            ? '添加邮箱'
+            : linkType === 'project' ? '添加个人项目' : '添加网址';
+        submitBtn.textContent = linkType === 'email'
+            ? '添加邮箱'
+            : linkType === 'project' ? '添加项目' : '添加链接';
     }
 
     setTimeout(() => document.getElementById('link-title')?.focus(), 0);
@@ -1030,6 +1106,9 @@ function updateEditModeUI() {
     if (editModeBtn) editModeBtn.classList.toggle('active', editMode);
     renderEmailLinks();
     syncAddLinkCard();
+    const projectSection = document.getElementById('project-links-section');
+    if (projectSection) projectSection.hidden = !getProjectLinks().length && !editMode;
+    syncAddLinkCard('project');
 }
 
 async function deleteLink(index, linkType = 'website') {
@@ -1142,6 +1221,7 @@ async function refreshIconCache() {
         await apiRequest('/api/icon-cache/refresh', { method: 'POST' });
         clearLocalIconCache();
         iconCacheVersion = Date.now();
+        renderProjectCards();
         renderNavCards();
     } catch (error) {
         alert(error.message);
@@ -1158,6 +1238,7 @@ function bindMenuManagement() {
     const editModeBtn = document.getElementById('edit-mode-btn');
     const form = document.getElementById('link-form');
     const emailLinksContainer = document.getElementById('email-links-container');
+    const projectLinksContainer = document.getElementById('project-links-container');
     const searchEngineForm = document.getElementById('search-engine-form');
     const searchEngineList = document.getElementById('search-engine-list');
     const layoutButtons = document.getElementById('layout-buttons');
@@ -1191,17 +1272,43 @@ function bindMenuManagement() {
         });
     }
 
+    if (projectLinksContainer) {
+        projectLinksContainer.addEventListener('click', (event) => {
+            const addBtn = event.target.closest('.nav-add-card');
+            const deleteBtn = event.target.closest('.nav-card-delete');
+            const navCard = event.target.closest('.nav-card:not(.nav-add-card)');
+
+            if (addBtn) {
+                event.preventDefault();
+                event.stopPropagation();
+                openLinkModal(undefined, 'project');
+            } else if (deleteBtn) {
+                event.preventDefault();
+                event.stopPropagation();
+                deleteLink(parseInt(deleteBtn.dataset.index, 10), 'project');
+            } else if (navCard && editMode && !isDragging) {
+                event.preventDefault();
+                event.stopPropagation();
+                editLink(parseInt(navCard.dataset.index, 10), 'project');
+            }
+        });
+    }
+
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const submitBtn = form.querySelector('.btn-primary');
         const title = document.getElementById('link-title').value.trim();
         const url = document.getElementById('link-url').value.trim();
         const editIndex = form.dataset.editIndex !== undefined ? parseInt(form.dataset.editIndex, 10) : null;
-        const linkType = form.dataset.linkType === 'email' ? 'email' : 'website';
+        const linkType = form.dataset.linkType === 'email'
+            ? 'email'
+            : form.dataset.linkType === 'project' ? 'project' : 'website';
 
         if (!title) return;
         if (!url) {
-            alert(linkType === 'email' ? '请填写邮箱登录地址' : '请填写链接地址');
+            alert(linkType === 'email'
+                ? '请填写邮箱登录地址'
+                : linkType === 'project' ? '请填写项目地址' : '请填写链接地址');
             return;
         }
 

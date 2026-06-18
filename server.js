@@ -327,7 +327,8 @@ function normalizeUrl(url) {
 }
 
 function normalizeLinkType(type) {
-  return type === 'email' ? 'email' : 'website';
+  if (type === 'email' || type === 'project') return type;
+  return 'website';
 }
 
 function isHttpUrl(value) {
@@ -367,7 +368,8 @@ function getLinks(linkType = 'website') {
 function getLinksResponse() {
   return {
     links: getLinks('website'),
-    emailLinks: getLinks('email')
+    emailLinks: getLinks('email'),
+    projectLinks: getLinks('project')
   };
 }
 
@@ -1067,7 +1069,8 @@ app.post('/api/links', requireAuth, (req, res) => {
 
 app.put('/api/links/reorder', requireAuth, (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map((id) => Number.parseInt(id, 10)) : [];
-  const currentIds = getLinks('website').map((link) => link.id);
+  const linkType = normalizeLinkType(req.body.type || req.body.linkType);
+  const currentIds = getLinks(linkType).map((link) => link.id);
   const currentSet = new Set(currentIds);
   const uniqueIds = new Set(ids);
 

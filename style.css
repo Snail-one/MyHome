@@ -1239,6 +1239,33 @@ body::before {
 }
 
 /* ==================== 导航链接区 ==================== */
+.project-links-section {
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: calc(var(--section-margin) * -0.65);
+}
+
+.project-links-section[hidden] {
+    display: none !important;
+}
+
+.project-links-title,
+.link-section-title {
+    margin-bottom: 8px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.link-section-title {
+    margin-top: 0;
+}
+
+.project-links {
+    margin-bottom: 0;
+}
+
 /* 每行最多 N 个（N=--layout-max-cols 或 --layout-cols），卡片随宽度等比放大，窗口变窄自动减列 */
 .navigation-links {
     display: grid;
