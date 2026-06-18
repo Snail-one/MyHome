@@ -692,86 +692,6 @@ body::before {
     border-color: rgba(255, 255, 255, 0.3);
 }
 
-.link-list-section h3 {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    margin-bottom: 12px;
-}
-
-.link-list {
-    list-style: none;
-}
-
-.link-list-empty {
-    padding: 16px;
-    text-align: center;
-    color: var(--text-tertiary);
-    font-size: 13px;
-}
-
-.link-list-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    background: rgba(255, 255, 255, 0.04);
-    border-radius: var(--radius-md);
-    margin-bottom: 8px;
-}
-
-.link-list-favicon {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    flex-shrink: 0;
-}
-
-.link-list-title {
-    flex: 1;
-    font-size: 14px;
-    color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.link-list-url {
-    font-size: 12px;
-    color: var(--text-tertiary);
-}
-
-.link-list-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.link-list-edit,
-.link-list-delete {
-    padding: 4px 10px;
-    font-size: 12px;
-    border-radius: var(--radius-sm);
-    border: none;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.link-list-edit {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
-}
-
-.link-list-delete {
-    background: rgba(255, 80, 80, 0.3);
-    color: #ffb3b3;
-}
-
-.link-list-edit:hover,
-.link-list-delete:hover {
-    opacity: 0.9;
-    transform: scale(1.02);
-}
-
 /* ==================== 布局设置 ==================== */
 .layout-settings-section {
     margin-top: 32px;
@@ -1652,13 +1572,8 @@ body::before {
     }
     
     .nav-icon {
-        width: 30px;
-        height: 30px;
-    }
-    
-    .nav-icon {
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
     }
 }
 
