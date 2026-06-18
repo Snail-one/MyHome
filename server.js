@@ -58,6 +58,12 @@ const DEFAULT_SEARCH_ENGINES = [
   }
 ];
 const REQUIRED_SEARCH_ENGINE_KEYS = new Set(['google']);
+const DEFAULT_EMAIL_LINK = {
+  linkKey: 'google-mail',
+  title: 'Google',
+  url: 'https://mail.google.com/'
+};
+const REQUIRED_LINK_KEYS = new Set([DEFAULT_EMAIL_LINK.linkKey]);
 
 if (!ADMIN_USERNAME || !ADMIN_PASSWORD || !SESSION_SECRET) {
   console.error('Missing required environment variables: ADMIN_USERNAME, ADMIN_PASSWORD, SESSION_SECRET');
@@ -94,6 +100,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS nav_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
+    link_key TEXT,
+    link_type TEXT NOT NULL DEFAULT 'website',
     title TEXT NOT NULL,
     url TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -118,6 +126,30 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_search_engines_user_sort ON search_engines(user_id, sort_order, id);
 `);
+
+function ensureNavLinkSchema() {
+  const columns = db.prepare('PRAGMA table_info(nav_links)').all();
+  const hasLinkType = columns.some((column) => column.name === 'link_type');
+  if (!hasLinkType) {
+    db.exec("ALTER TABLE nav_links ADD COLUMN link_type TEXT NOT NULL DEFAULT 'website'");
+  }
+
+  const hasLinkKey = columns.some((column) => column.name === 'link_key');
+  if (!hasLinkKey) {
+    db.exec('ALTER TABLE nav_links ADD COLUMN link_key TEXT');
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_nav_links_user_type_sort
+    ON nav_links(user_id, link_type, sort_order, id)
+  `);
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_nav_links_user_key
+    ON nav_links(user_id, link_key)
+    WHERE link_key IS NOT NULL
+  `);
+}
 
 function ensureSearchEngineSchema() {
   const columns = db.prepare('PRAGMA table_info(search_engines)').all();
@@ -150,6 +182,38 @@ function ensureAdminUser() {
   }
 
   db.prepare('INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)').run(USER_ID);
+}
+
+function ensureDefaultEmailLink() {
+  const existingByKey = db.prepare('SELECT id FROM nav_links WHERE user_id = ? AND link_key = ?')
+    .get(USER_ID, DEFAULT_EMAIL_LINK.linkKey);
+  if (existingByKey) return;
+
+  const existingEmailRow = db.prepare(`
+    SELECT id
+    FROM nav_links
+    WHERE user_id = ? AND link_type = 'email' AND link_key IS NULL AND url = ?
+    ORDER BY sort_order ASC, id ASC
+    LIMIT 1
+  `).get(USER_ID, DEFAULT_EMAIL_LINK.url);
+
+  if (existingEmailRow) {
+    db.prepare(`
+      UPDATE nav_links
+      SET link_key = ?, title = ?, link_type = 'email', updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND id = ?
+    `).run(DEFAULT_EMAIL_LINK.linkKey, DEFAULT_EMAIL_LINK.title, USER_ID, existingEmailRow.id);
+    return;
+  }
+
+  const row = db.prepare(
+    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM nav_links WHERE user_id = ? AND link_type = 'email'"
+  ).get(USER_ID);
+
+  db.prepare(`
+    INSERT INTO nav_links (user_id, link_key, link_type, title, url, sort_order)
+    VALUES (?, ?, 'email', ?, ?, ?)
+  `).run(USER_ID, DEFAULT_EMAIL_LINK.linkKey, DEFAULT_EMAIL_LINK.title, DEFAULT_EMAIL_LINK.url, row.next_order);
 }
 
 function ensureDefaultSearchEngines() {
@@ -230,8 +294,10 @@ function ensureDefaultSearchEngines() {
   });
 }
 
+ensureNavLinkSchema();
 ensureSearchEngineSchema();
 ensureAdminUser();
+ensureDefaultEmailLink();
 ensureDefaultSearchEngines();
 
 function normalizeTitle(title) {
@@ -258,6 +324,10 @@ function parseBooleanEnv(value, fallback) {
 function normalizeUrl(url) {
   if (typeof url !== 'string') return '';
   return url.trim().slice(0, 1000);
+}
+
+function normalizeLinkType(type) {
+  return type === 'email' ? 'email' : 'website';
 }
 
 function isHttpUrl(value) {
@@ -288,10 +358,17 @@ function getSettings() {
   return serializeSettings(row);
 }
 
-function getLinks() {
+function getLinks(linkType = 'website') {
   return db.prepare(
-    'SELECT id, title, url FROM nav_links WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
-  ).all(USER_ID);
+    'SELECT id, link_key AS linkKey, link_type AS linkType, title, url FROM nav_links WHERE user_id = ? AND link_type = ? ORDER BY sort_order ASC, id ASC'
+  ).all(USER_ID, normalizeLinkType(linkType));
+}
+
+function getLinksResponse() {
+  return {
+    links: getLinks('website'),
+    emailLinks: getLinks('email')
+  };
 }
 
 function getSearchEngines() {
@@ -384,6 +461,7 @@ function sendLoginLockedResponse(res, state) {
 
 function validateLinkPayload(req, res) {
   const title = normalizeTitle(req.body.title);
+  const linkType = normalizeLinkType(req.body.type || req.body.linkType);
   const url = normalizeUrl(req.body.url);
 
   if (!title) {
@@ -392,11 +470,15 @@ function validateLinkPayload(req, res) {
   }
 
   if (!url || !isHttpUrl(url)) {
-    res.status(400).json({ error: '链接地址必须是 http 或 https URL' });
+    res.status(400).json({
+      error: linkType === 'email'
+        ? '邮箱登录地址必须是 http 或 https URL'
+        : '链接地址必须是 http 或 https URL'
+    });
     return null;
   }
 
-  return { title, url };
+  return { title, url, linkType };
 }
 
 function normalizeSearchEngineName(name) {
@@ -966,24 +1048,26 @@ app.delete('/api/search-engines/:id', requireAuth, (req, res) => {
 });
 
 app.get('/api/links', requireAuth, (req, res) => {
-  res.json({ links: getLinks() });
+  res.json(getLinksResponse());
 });
 
 app.post('/api/links', requireAuth, (req, res) => {
   const payload = validateLinkPayload(req, res);
   if (!payload) return;
 
-  const row = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM nav_links WHERE user_id = ?').get(USER_ID);
+  const row = db.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM nav_links WHERE user_id = ? AND link_type = ?'
+  ).get(USER_ID, payload.linkType);
   db.prepare(
-    'INSERT INTO nav_links (user_id, title, url, sort_order) VALUES (?, ?, ?, ?)'
-  ).run(USER_ID, payload.title, payload.url, row.next_order);
+    'INSERT INTO nav_links (user_id, link_type, title, url, sort_order) VALUES (?, ?, ?, ?, ?)'
+  ).run(USER_ID, payload.linkType, payload.title, payload.url, row.next_order);
 
-  res.status(201).json({ links: getLinks() });
+  res.status(201).json(getLinksResponse());
 });
 
 app.put('/api/links/reorder', requireAuth, (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map((id) => Number.parseInt(id, 10)) : [];
-  const currentIds = getLinks().map((link) => link.id);
+  const currentIds = getLinks('website').map((link) => link.id);
   const currentSet = new Set(currentIds);
   const uniqueIds = new Set(ids);
 
@@ -1002,32 +1086,50 @@ app.put('/api/links/reorder', requireAuth, (req, res) => {
     throw error;
   }
 
-  res.json({ links: getLinks() });
+  res.json(getLinksResponse());
 });
 
 app.put('/api/links/:id', requireAuth, (req, res) => {
   const payload = validateLinkPayload(req, res);
   if (!payload) return;
 
+  const existing = db.prepare('SELECT link_key FROM nav_links WHERE user_id = ? AND id = ?').get(USER_ID, req.params.id);
+  if (!existing) {
+    res.status(404).json({ error: '链接不存在' });
+    return;
+  }
+
+  const nextLinkType = REQUIRED_LINK_KEYS.has(existing.link_key) ? 'email' : payload.linkType;
   const result = db.prepare(
-    'UPDATE nav_links SET title = ?, url = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?'
-  ).run(payload.title, payload.url, USER_ID, req.params.id);
+    'UPDATE nav_links SET link_type = ?, title = ?, url = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?'
+  ).run(nextLinkType, payload.title, payload.url, USER_ID, req.params.id);
 
   if (Number(result.changes) === 0) {
     res.status(404).json({ error: '链接不存在' });
     return;
   }
 
-  res.json({ links: getLinks() });
+  res.json(getLinksResponse());
 });
 
 app.delete('/api/links/:id', requireAuth, (req, res) => {
+  const existing = db.prepare('SELECT link_key FROM nav_links WHERE user_id = ? AND id = ?').get(USER_ID, req.params.id);
+  if (!existing) {
+    res.status(404).json({ error: '链接不存在' });
+    return;
+  }
+
+  if (REQUIRED_LINK_KEYS.has(existing.link_key)) {
+    res.status(400).json({ error: 'Google 邮箱需要保留，可以编辑名称和登录地址' });
+    return;
+  }
+
   const result = db.prepare('DELETE FROM nav_links WHERE user_id = ? AND id = ?').run(USER_ID, req.params.id);
   if (Number(result.changes) === 0) {
     res.status(404).json({ error: '链接不存在' });
     return;
   }
-  res.json({ links: getLinks() });
+  res.json(getLinksResponse());
 });
 
 app.get('/api/icon', requireAuth, async (req, res) => {

@@ -28,6 +28,9 @@
         </form>
     </div>
 
+    <div class="corner-controls corner-left email-links-panel" id="email-links-container" aria-label="邮箱链接">
+    </div>
+
     <div class="corner-controls corner-right" aria-label="设置">
         <button type="button" class="corner-btn edit-mode-btn" id="edit-mode-btn" title="开启/关闭编辑模式">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -146,10 +149,10 @@
                         <input type="text" id="link-title" name="title" placeholder="例如：GitHub" required>
                     </div>
                     <div class="form-group">
-                        <label for="link-url">链接地址</label>
+                        <label for="link-url" id="link-url-label">链接地址</label>
                         <input type="url" id="link-url" name="url" placeholder="https://example.com" required>
                     </div>
-                    <p class="form-hint">图标将根据网址自动获取网页 favicon。</p>
+                    <p class="form-hint" id="link-form-hint">图标将根据网址自动获取网页 favicon。</p>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary" id="link-form-submit">添加链接</button>
                         <button type="button" class="btn btn-secondary" id="link-form-cancel">取消</button>

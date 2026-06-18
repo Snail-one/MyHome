@@ -29,11 +29,13 @@ const DEFAULT_SETTINGS = {
     editMode: false,
     backgroundUrl: ''
 };
+const REQUIRED_EMAIL_LINK_KEYS = new Set(['google-mail']);
 const LOCAL_ICON_CACHE_STORAGE_KEY = 'my-home-local-icon-cache-v1';
 
 const appState = {
     user: null,
     links: [],
+    emailLinks: [],
     searchEngineRecords: [],
     settings: { ...DEFAULT_SETTINGS }
 };
@@ -109,11 +111,13 @@ async function loadAppData() {
     ]);
 
     appState.links = Array.isArray(linksData.links) ? linksData.links : [];
+    appState.emailLinks = Array.isArray(linksData.emailLinks) ? linksData.emailLinks : [];
     appState.searchEngineRecords = Array.isArray(searchEnginesData.engines) ? searchEnginesData.engines : [];
     rebuildSearchEngines();
     renderSearchEngineButtons();
     renderSearchEngineList();
     applySettings(settingsData.settings || DEFAULT_SETTINGS);
+    renderEmailLinks();
     renderNavCards();
 }
 
@@ -125,16 +129,25 @@ async function saveSettingsPatch(patch) {
     applySettings(data.settings || DEFAULT_SETTINGS);
 }
 
+function applyLinksResponse(data) {
+    appState.links = Array.isArray(data.links) ? data.links : [];
+    appState.emailLinks = Array.isArray(data.emailLinks) ? data.emailLinks : [];
+    renderEmailLinks();
+    renderNavCards();
+}
+
 // ==================== 登录状态 ====================
 function showLoggedOut(message = '') {
     const authScreen = document.getElementById('auth-screen');
     appState.user = null;
     appState.links = [];
+    appState.emailLinks = [];
     appState.searchEngineRecords = [];
     appState.settings = { ...DEFAULT_SETTINGS };
     currentEngine = 'google';
     rebuildSearchEngines();
     renderSearchEngineButtons();
+    renderEmailLinks();
     document.body.classList.remove('auth-pending', 'logged-in');
     document.body.classList.add('logged-out');
     authScreen?.setAttribute('aria-hidden', 'false');
@@ -400,6 +413,10 @@ function getLinks() {
     return appState.links;
 }
 
+function getEmailLinks() {
+    return appState.emailLinks;
+}
+
 function getDomainFromUrl(url) {
     if (!url || typeof url !== 'string' || !url.trim()) return null;
     try {
@@ -569,6 +586,69 @@ function getEffectiveUrl(link) {
     } catch {
         return '#';
     }
+}
+
+function getEffectiveEmailUrl(link) {
+    return getEffectiveUrl(link);
+}
+
+function getMailIconSvg(className = 'email-link-icon') {
+    return `
+        <svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+            <path d="m3 7 9 6 9-6"></path>
+        </svg>
+    `;
+}
+
+function createEmailLinkElement(link, index) {
+    const wrapper = document.createElement('div');
+    const isRequired = REQUIRED_EMAIL_LINK_KEYS.has(link.linkKey);
+    wrapper.className = 'email-link-wrapper';
+    wrapper.dataset.index = index;
+    wrapper.innerHTML = `
+        <a href="${escapeAttribute(getEffectiveEmailUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" title="${escapeAttribute(link.title || '邮箱登录')}">
+            ${getMailIconSvg()}
+            <span class="email-link-label">${escapeHtml(link.title || '邮箱登录')}</span>
+        </a>
+        ${isRequired ? '' : `
+            <div class="email-link-actions">
+                <button type="button" class="email-link-delete" data-index="${index}" title="删除邮箱链接">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
+                </button>
+            </div>
+        `}
+    `;
+    return wrapper;
+}
+
+function createAddEmailLinkElement() {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'email-link email-add-link';
+    button.title = '添加邮箱登录';
+    button.setAttribute('aria-label', '添加邮箱登录');
+    button.innerHTML = `
+        ${getMailIconSvg()}
+        <span class="email-link-label">添加邮箱</span>
+    `;
+    return button;
+}
+
+function renderEmailLinks() {
+    const container = document.getElementById('email-links-container');
+    if (!container) return;
+
+    container.innerHTML = '';
+    getEmailLinks().forEach((link, index) => {
+        container.appendChild(createEmailLinkElement(link, index));
+    });
+
+    if (editMode) {
+        container.appendChild(createAddEmailLinkElement());
+    }
+
+    container.hidden = !getEmailLinks().length && !editMode;
 }
 
 function createNavCardElement(link, index, options = {}) {
@@ -769,6 +849,8 @@ async function handleDrop(event) {
             body: { ids: links.map(link => link.id) }
         });
         appState.links = data.links || links;
+        appState.emailLinks = data.emailLinks || appState.emailLinks;
+        renderEmailLinks();
         renderNavCards();
     } catch (error) {
         appState.links = previousLinks;
@@ -794,25 +876,45 @@ function openManageModal() {
     renderSearchEngineList();
 }
 
-function openLinkModal(editIndex) {
+function getLinkCollection(linkType) {
+    return linkType === 'email' ? getEmailLinks() : getLinks();
+}
+
+function openLinkModal(editIndex, linkType = 'website') {
     const form = document.getElementById('link-form');
     const modalTitle = document.getElementById('link-modal-title');
     const submitBtn = document.getElementById('link-form-submit');
-    const links = getLinks();
+    const urlInput = document.getElementById('link-url');
+    const urlLabel = document.getElementById('link-url-label');
+    const hint = document.getElementById('link-form-hint');
+    const links = getLinkCollection(linkType);
     openModal('link-modal');
     form.reset();
+    form.dataset.linkType = linkType;
+
+    if (linkType === 'email') {
+        urlInput.type = 'url';
+        urlLabel.textContent = '邮箱登录地址';
+        urlInput.placeholder = 'https://mail.google.com/';
+        hint.textContent = '点击后会在新页面打开邮箱登录或访问页面。';
+    } else {
+        urlInput.type = 'url';
+        urlLabel.textContent = '链接地址';
+        urlInput.placeholder = 'https://example.com';
+        hint.textContent = '图标将根据网址自动获取网页 favicon。';
+    }
 
     if (typeof editIndex === 'number' && links[editIndex]) {
         const link = links[editIndex];
         document.getElementById('link-title').value = link.title || '';
         document.getElementById('link-url').value = link.url || '';
         form.dataset.editIndex = editIndex;
-        modalTitle.textContent = '编辑网址';
-        submitBtn.textContent = '更新链接';
+        modalTitle.textContent = linkType === 'email' ? '编辑邮箱' : '编辑网址';
+        submitBtn.textContent = linkType === 'email' ? '更新邮箱' : '更新链接';
     } else {
         delete form.dataset.editIndex;
-        modalTitle.textContent = '添加网址';
-        submitBtn.textContent = '添加链接';
+        modalTitle.textContent = linkType === 'email' ? '添加邮箱' : '添加网址';
+        submitBtn.textContent = linkType === 'email' ? '添加邮箱' : '添加链接';
     }
 
     setTimeout(() => document.getElementById('link-title')?.focus(), 0);
@@ -822,7 +924,10 @@ function closeLinkModal() {
     const form = document.getElementById('link-form');
     closeModal('link-modal');
     form?.reset();
-    if (form) delete form.dataset.editIndex;
+    if (form) {
+        delete form.dataset.editIndex;
+        delete form.dataset.linkType;
+    }
 }
 
 function closeModal(modalId) {
@@ -923,25 +1028,25 @@ function updateEditModeUI() {
     const editModeBtn = document.getElementById('edit-mode-btn');
     document.body.classList.toggle('edit-mode-active', editMode);
     if (editModeBtn) editModeBtn.classList.toggle('active', editMode);
+    renderEmailLinks();
     syncAddLinkCard();
 }
 
-async function deleteLink(index) {
-    const links = getLinks();
+async function deleteLink(index, linkType = 'website') {
+    const links = getLinkCollection(linkType);
     if (index < 0 || index >= links.length) return;
     if (!confirm(`确定要删除链接「${links[index].title}」吗？`)) return;
 
     try {
         const data = await apiRequest(`/api/links/${links[index].id}`, { method: 'DELETE' });
-        appState.links = data.links || [];
-        renderNavCards();
+        applyLinksResponse(data);
     } catch (error) {
         alert(error.message);
     }
 }
 
-function editLink(index) {
-    openLinkModal(index);
+function editLink(index, linkType = 'website') {
+    openLinkModal(index, linkType);
 }
 
 function parseCssPixelValue(value, fallback = 0) {
@@ -1052,6 +1157,7 @@ function bindMenuManagement() {
     const manageBtn = document.querySelector('.manage-menu-btn');
     const editModeBtn = document.getElementById('edit-mode-btn');
     const form = document.getElementById('link-form');
+    const emailLinksContainer = document.getElementById('email-links-container');
     const searchEngineForm = document.getElementById('search-engine-form');
     const searchEngineList = document.getElementById('search-engine-list');
     const layoutButtons = document.getElementById('layout-buttons');
@@ -1065,29 +1171,50 @@ function bindMenuManagement() {
     cancelBtn.addEventListener('click', closeLinkModal);
     if (searchEngineCancelBtn) searchEngineCancelBtn.addEventListener('click', resetSearchEngineForm);
 
+    if (emailLinksContainer) {
+        emailLinksContainer.addEventListener('click', (event) => {
+            const addBtn = event.target.closest('.email-add-link');
+            const deleteBtn = event.target.closest('.email-link-delete');
+            const emailLink = event.target.closest('.email-link:not(.email-add-link)');
+
+            if (addBtn) {
+                event.preventDefault();
+                openLinkModal(undefined, 'email');
+            } else if (deleteBtn) {
+                event.preventDefault();
+                event.stopPropagation();
+                deleteLink(parseInt(deleteBtn.dataset.index, 10), 'email');
+            } else if (emailLink && editMode) {
+                event.preventDefault();
+                editLink(parseInt(emailLink.dataset.index, 10), 'email');
+            }
+        });
+    }
+
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const submitBtn = form.querySelector('.btn-primary');
         const title = document.getElementById('link-title').value.trim();
         const url = document.getElementById('link-url').value.trim();
         const editIndex = form.dataset.editIndex !== undefined ? parseInt(form.dataset.editIndex, 10) : null;
+        const linkType = form.dataset.linkType === 'email' ? 'email' : 'website';
 
         if (!title) return;
         if (!url) {
-            alert('请填写链接地址');
+            alert(linkType === 'email' ? '请填写邮箱登录地址' : '请填写链接地址');
             return;
         }
 
-        const editingLink = editIndex !== null && getLinks()[editIndex] ? getLinks()[editIndex] : null;
+        const links = getLinkCollection(linkType);
+        const editingLink = editIndex !== null && links[editIndex] ? links[editIndex] : null;
         submitBtn.disabled = true;
 
         try {
             const data = await apiRequest(editingLink ? `/api/links/${editingLink.id}` : '/api/links', {
                 method: editingLink ? 'PUT' : 'POST',
-                body: { title, url }
+                body: { title, url, type: linkType }
             });
-            appState.links = data.links || [];
-            renderNavCards();
+            applyLinksResponse(data);
             closeLinkModal();
         } catch (error) {
             alert(error.message);
