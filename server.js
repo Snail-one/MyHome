@@ -890,6 +890,23 @@ function getIconCandidateScore(candidate) {
 
 function getKnownHighResolutionIconCandidates(parsedUrl) {
   const hostname = parsedUrl.hostname.toLowerCase();
+  if (hostname === 'google.com' || hostname.endsWith('.google.com')) {
+    return [
+      {
+        url: 'https://www.gstatic.com/images/branding/product/2x/googleg_48dp.png',
+        rel: 'known-icon',
+        sizes: '96x96',
+        type: 'image/png'
+      },
+      {
+        url: 'https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png',
+        rel: 'known-icon',
+        sizes: '48x48',
+        type: 'image/png'
+      }
+    ];
+  }
+
   if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be') {
     return [
       {

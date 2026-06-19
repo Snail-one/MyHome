@@ -740,6 +740,13 @@ function getLocalCachedFaviconUrl(url) {
 
 function getKnownHighResolutionIconCandidates(parsedUrl) {
     const hostname = parsedUrl.hostname.toLowerCase();
+    if (hostname === 'google.com' || hostname.endsWith('.google.com')) {
+        return [
+            'https://www.gstatic.com/images/branding/product/2x/googleg_48dp.png',
+            'https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png'
+        ];
+    }
+
     if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be') {
         return [
             'https://www.gstatic.com/youtube/img/branding/favicon/favicon_192x192_v2.png',
@@ -1687,10 +1694,15 @@ async function setLinkLayoutColumns(linkType, columns) {
 
 async function refreshIconCache() {
     const refreshBtn = document.getElementById('icon-refresh-btn');
-    const previousText = refreshBtn?.textContent || '刷新图标';
+    const refreshBtnLabel = refreshBtn?.querySelector('.corner-btn-label');
+    const previousText = refreshBtnLabel?.textContent || refreshBtn?.textContent || '刷新图标';
     if (refreshBtn) {
         refreshBtn.disabled = true;
-        refreshBtn.textContent = '刷新中...';
+        if (refreshBtnLabel) {
+            refreshBtnLabel.textContent = '刷新中...';
+        } else {
+            refreshBtn.textContent = '刷新中...';
+        }
     }
 
     try {
@@ -1703,7 +1715,11 @@ async function refreshIconCache() {
     } finally {
         if (refreshBtn) {
             refreshBtn.disabled = false;
-            refreshBtn.textContent = previousText;
+            if (refreshBtnLabel) {
+                refreshBtnLabel.textContent = previousText;
+            } else {
+                refreshBtn.textContent = previousText;
+            }
         }
     }
 }
