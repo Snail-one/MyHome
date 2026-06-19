@@ -1819,7 +1819,7 @@ app.post('/api/icon-cache/import', requireAuth, async (req, res) => {
   try {
     const icon = await fetchIconCandidate(iconUrl);
     if (!icon) {
-      res.status(404).json({ error: '没有获取到图标' });
+      res.json({ ok: false });
       return;
     }
 
@@ -1827,7 +1827,7 @@ app.post('/api/icon-cache/import', requireAuth, async (req, res) => {
     res.status(201).json({ ok: true });
   } catch (error) {
     console.warn('Failed to import icon cache:', error.message);
-    res.status(404).json({ error: '没有获取到图标' });
+    res.json({ ok: false });
   }
 });
 

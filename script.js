@@ -36,7 +36,10 @@ const DEFAULT_SETTINGS = {
 };
 const REQUIRED_EMAIL_LINK_KEYS = new Set(['google-mail']);
 const LOCAL_ICON_CACHE_STORAGE_KEY = 'my-home-local-icon-cache-v1';
+const ICON_IMPORT_FAILURE_STORAGE_KEY = 'my-home-icon-import-failures-v1';
+const ICON_IMPORT_FAILURE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ICON_UPLOAD_SIZE = 1024 * 1024;
+let iconImportEndpointAvailable = true;
 const LINK_SIZE_OPTIONS = [
     { size: 'small', label: '小' },
     { size: 'medium', label: '默认' },
@@ -625,37 +628,131 @@ async function uploadIconBlobToServer(targetUrl, iconUrl, blob) {
     });
 }
 
+function loadIconImportFailures() {
+    try {
+        const now = Date.now();
+        const stored = JSON.parse(localStorage.getItem(ICON_IMPORT_FAILURE_STORAGE_KEY) || '{}');
+        if (!stored || typeof stored !== 'object') return {};
+
+        return Object.fromEntries(Object.entries(stored).filter(([, savedAt]) => (
+            typeof savedAt === 'number' && now - savedAt < ICON_IMPORT_FAILURE_TTL_MS
+        )));
+    } catch {
+        return {};
+    }
+}
+
+let iconImportFailures = loadIconImportFailures();
+
+function saveIconImportFailures() {
+    try {
+        const entries = Object.entries(iconImportFailures)
+            .sort(([, left], [, right]) => right - left)
+            .slice(0, 500);
+        iconImportFailures = Object.fromEntries(entries);
+        localStorage.setItem(ICON_IMPORT_FAILURE_STORAGE_KEY, JSON.stringify(iconImportFailures));
+    } catch {
+        // Failed imports are only an optimization; icon loading can continue without this cache.
+    }
+}
+
+function getIconImportFailureKey(targetUrl, iconUrl) {
+    return `${targetUrl}\n${iconUrl}`;
+}
+
+function hasRecentIconImportFailure(targetUrl, iconUrl) {
+    const savedAt = iconImportFailures[getIconImportFailureKey(targetUrl, iconUrl)];
+    return typeof savedAt === 'number' && Date.now() - savedAt < ICON_IMPORT_FAILURE_TTL_MS;
+}
+
+function rememberIconImportFailure(targetUrl, iconUrl) {
+    iconImportFailures[getIconImportFailureKey(targetUrl, iconUrl)] = Date.now();
+    saveIconImportFailures();
+}
+
+function forgetIconImportFailure(targetUrl, iconUrl) {
+    const key = getIconImportFailureKey(targetUrl, iconUrl);
+    if (!iconImportFailures[key]) return;
+    delete iconImportFailures[key];
+    saveIconImportFailures();
+}
+
+function clearIconImportFailures() {
+    iconImportFailures = {};
+    try {
+        localStorage.removeItem(ICON_IMPORT_FAILURE_STORAGE_KEY);
+    } catch {
+        // localStorage may be unavailable.
+    }
+}
+
+function isSameOriginUrl(url) {
+    try {
+        return new URL(url, window.location.href).origin === window.location.origin;
+    } catch {
+        return false;
+    }
+}
+
 async function importIconUrlToServer(targetUrl, iconUrl) {
-    await apiRequest('/api/icon-cache/import', {
+    if (!iconImportEndpointAvailable) return false;
+    if (hasRecentIconImportFailure(targetUrl, iconUrl)) return false;
+
+    const response = await fetch('/api/icon-cache/import', {
         method: 'POST',
-        body: {
-            url: targetUrl,
-            iconUrl
-        }
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl, iconUrl })
     });
+
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await response.json() : null;
+
+    if (response.status === 401) {
+        showLoggedOut(data?.error || '登录已过期，请重新登录');
+        return false;
+    }
+
+    if (response.status === 404 && !data) {
+        iconImportEndpointAvailable = false;
+        return false;
+    }
+
+    if (!response.ok) {
+        rememberIconImportFailure(targetUrl, iconUrl);
+        return false;
+    }
+
+    if (data?.ok === true) {
+        forgetIconImportFailure(targetUrl, iconUrl);
+        return true;
+    }
+
+    rememberIconImportFailure(targetUrl, iconUrl);
+    return false;
 }
 
 async function uploadCandidateIconToServer(targetUrl, iconUrl) {
-    try {
-        const response = await fetch(iconUrl, {
-            mode: 'cors',
-            credentials: 'omit',
-            cache: 'no-store'
-        });
-        if (response.ok) {
-            const blob = await response.blob();
-            if (isUploadableIconBlob(blob, iconUrl)) {
-                await uploadIconBlobToServer(targetUrl, iconUrl, blob);
-                return true;
+    if (isSameOriginUrl(iconUrl)) {
+        try {
+            const response = await fetch(iconUrl, {
+                credentials: 'same-origin',
+                cache: 'no-store'
+            });
+            if (response.ok) {
+                const blob = await response.blob();
+                if (isUploadableIconBlob(blob, iconUrl)) {
+                    await uploadIconBlobToServer(targetUrl, iconUrl, blob);
+                    return true;
+                }
             }
+        } catch {
+            // Fall back to server-side import below.
         }
-    } catch {
-        // Many sites allow <img> display but block reading bytes with CORS.
     }
 
     try {
-        await importIconUrlToServer(targetUrl, iconUrl);
-        return true;
+        return await importIconUrlToServer(targetUrl, iconUrl);
     } catch {
         return false;
     }
@@ -678,6 +775,7 @@ async function refreshCachedIconFromLocal(targetUrl, preferredIconUrl = '') {
             candidates.unshift(preferredIconUrl);
         }
         for (const candidateUrl of candidates) {
+            if (hasRecentIconImportFailure(normalizedTargetUrl, candidateUrl)) continue;
             if (await uploadCandidateIconToServer(normalizedTargetUrl, candidateUrl)) {
                 iconCacheVersion = Date.now();
                 return getCachedFaviconUrl(normalizedTargetUrl);
@@ -1805,6 +1903,7 @@ async function refreshIconCache() {
 
     try {
         await apiRequest('/api/icon-cache/refresh', { method: 'POST' });
+        clearIconImportFailures();
         iconCacheVersion = Date.now();
         refreshVisibleNavIconsInBackground();
         refreshSearchEngineIconsInBackground();
