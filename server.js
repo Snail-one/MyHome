@@ -32,7 +32,6 @@ const MAX_ICON_SIZE = 1024 * 1024;
 const ICON_FETCH_TIMEOUT_MS = 5000;
 const ICON_HTML_SAMPLE_SIZE = 128 * 1024;
 const ICON_DISCOVERY_VERSION = 3;
-const MIN_PREFERRED_ICON_SIZE = 96;
 const LOGIN_MAX_FAILED_ATTEMPTS = parseIntegerEnv(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 5, 1);
 const LOGIN_WINDOW_MS = parseIntegerEnv(process.env.LOGIN_WINDOW_MS, 15 * 60 * 1000, 1000);
 const LOGIN_LOCKOUT_MS = parseIntegerEnv(process.env.LOGIN_LOCKOUT_MS, 15 * 60 * 1000, 1000);
@@ -889,6 +888,28 @@ function getIconCandidateScore(candidate) {
   return score;
 }
 
+function getKnownHighResolutionIconCandidates(parsedUrl) {
+  const hostname = parsedUrl.hostname.toLowerCase();
+  if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be') {
+    return [
+      {
+        url: 'https://www.gstatic.com/youtube/img/branding/favicon/favicon_192x192_v2.png',
+        rel: 'known-icon',
+        sizes: '192x192',
+        type: 'image/png'
+      },
+      {
+        url: 'https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144_v2.png',
+        rel: 'known-icon',
+        sizes: '144x144',
+        type: 'image/png'
+      }
+    ];
+  }
+
+  return [];
+}
+
 function getConventionalIconCandidates(parsedUrl) {
   const rootIconPaths = [
     '/android-chrome-512x512.png',
@@ -976,7 +997,7 @@ function uniqueIconCandidates(candidates) {
 }
 
 async function discoverIconCandidates(parsedUrl) {
-  const candidates = [];
+  const candidates = getKnownHighResolutionIconCandidates(parsedUrl);
   const manifestUrls = [];
 
   try {
@@ -1143,7 +1164,7 @@ async function cacheIconForUrl(targetUrl, cacheKey, options = {}) {
 }
 
 function sendCachedIcon(res, cachedIcon) {
-  res.set('Cache-Control', 'private, max-age=86400');
+  res.set('Cache-Control', 'private, no-cache');
   res.type(cachedIcon.contentType);
   res.sendFile(cachedIcon.filePath);
 }
@@ -1640,36 +1661,87 @@ app.get('/api/icon', requireAuth, async (req, res) => {
   const cacheKey = getIconCacheKey(targetUrl);
 
   try {
-    const forceRefresh = req.query.refresh === '1';
     const cachedIcon = await findCachedIcon(cacheKey);
-    const hasCachedImage = cachedIcon && !cachedIcon.miss;
-
-    if (!forceRefresh && cachedIcon?.miss) {
+    if (!cachedIcon || cachedIcon.miss) {
       res.status(404).end();
       return;
     }
 
-    if (!forceRefresh && hasCachedImage) {
-      sendCachedIcon(res, cachedIcon);
-      return;
-    }
-
-    const downloadedIcon = await cacheIconForUrl(targetUrl, cacheKey, {
-      markMiss: !hasCachedImage
-    });
-    if (!downloadedIcon) {
-      if (hasCachedImage) {
-        sendCachedIcon(res, cachedIcon);
-        return;
-      }
-      res.status(404).end();
-      return;
-    }
-
-    sendCachedIcon(res, downloadedIcon);
+    sendCachedIcon(res, cachedIcon);
   } catch (error) {
     console.warn('Failed to load icon:', error.message);
     res.status(404).end();
+  }
+});
+
+const iconUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_ICON_SIZE,
+    files: 1
+  }
+});
+
+app.post('/api/icon-cache/upload', requireAuth, (req, res) => {
+  iconUpload.single('icon')(req, res, async (error) => {
+    if (error) {
+      const message = error.code === 'LIMIT_FILE_SIZE' ? '图标文件不能超过 1MB' : error.message;
+      res.status(400).json({ error: message });
+      return;
+    }
+
+    const targetUrl = normalizeIconTargetUrl(req.body.url);
+    if (!targetUrl) {
+      res.status(400).json({ error: '图标目标地址无效' });
+      return;
+    }
+
+    if (!req.file?.buffer?.length) {
+      res.status(400).json({ error: '请选择图标文件' });
+      return;
+    }
+
+    const candidateUrl = toHttpUrl(req.body.sourceUrl || req.file.originalname || '', targetUrl) || targetUrl;
+    if (!isSupportedIconResponse(req.file.mimetype, candidateUrl, req.file.buffer)) {
+      res.status(400).json({ error: '图标文件格式不支持' });
+      return;
+    }
+
+    try {
+      const extension = getIconExtension(req.file.mimetype, candidateUrl, req.file.buffer);
+      await writeCachedIcon(getIconCacheKey(targetUrl), {
+        buffer: req.file.buffer,
+        extension,
+        contentType: getIconContentType(extension)
+      });
+      res.status(201).json({ ok: true });
+    } catch (uploadError) {
+      console.warn('Failed to upload icon cache:', uploadError.message);
+      res.status(500).json({ error: '上传图标缓存失败' });
+    }
+  });
+});
+
+app.post('/api/icon-cache/import', requireAuth, async (req, res) => {
+  const targetUrl = normalizeIconTargetUrl(req.body.url);
+  const iconUrl = toHttpUrl(req.body.iconUrl, targetUrl || undefined);
+  if (!targetUrl || !iconUrl) {
+    res.status(400).json({ error: '图标地址无效' });
+    return;
+  }
+
+  try {
+    const icon = await fetchIconCandidate(iconUrl);
+    if (!icon) {
+      res.status(404).json({ error: '没有获取到图标' });
+      return;
+    }
+
+    await writeCachedIcon(getIconCacheKey(targetUrl), icon);
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    console.warn('Failed to import icon cache:', error.message);
+    res.status(404).json({ error: '没有获取到图标' });
   }
 });
 

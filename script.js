@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = {
 };
 const REQUIRED_EMAIL_LINK_KEYS = new Set(['google-mail']);
 const LOCAL_ICON_CACHE_STORAGE_KEY = 'my-home-local-icon-cache-v1';
+const MAX_ICON_UPLOAD_SIZE = 1024 * 1024;
 const LINK_SIZE_OPTIONS = [
     { size: 'small', label: '小' },
     { size: 'medium', label: '默认' },
@@ -119,6 +120,7 @@ let previewObjectUrl = null;
 let layoutResizeTimer = null;
 let iconCacheVersion = Date.now();
 let localIconCache = loadLocalIconCache();
+const iconRefreshPromises = new Map();
 
 // ==================== DOM 元素 ====================
 const searchInput = document.querySelector('.search-input');
@@ -370,12 +372,22 @@ function getSearchEngineFaviconUrl(domain) {
 
 function bindExternalFaviconFallback(img) {
     const fallbackUrl = img?.dataset?.fallbackFavicon;
+    const targetUrl = img?.dataset?.iconTargetUrl;
     if (!fallbackUrl) return;
 
     img.addEventListener('error', () => {
         if (img.dataset.fallbackTried === '1') return;
         img.dataset.fallbackTried = '1';
-        img.src = fallbackUrl;
+        if (!targetUrl) {
+            img.src = fallbackUrl;
+            return;
+        }
+
+        refreshCachedIconFromLocal(targetUrl).then((serverIconUrl) => {
+            img.src = serverIconUrl || fallbackUrl;
+        }).catch(() => {
+            img.src = fallbackUrl;
+        });
     });
 }
 
@@ -392,7 +404,7 @@ function renderSearchEngineButtons() {
         btn.dataset.engine = key;
         btn.innerHTML = `
             ${faviconUrl
-                ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="engine-favicon" data-fallback-favicon="${escapeAttribute(getFallbackFaviconUrlForDomain(domain))}">`
+                ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="engine-favicon" data-icon-target-url="${escapeAttribute(`https://${domain}/`)}" data-fallback-favicon="${escapeAttribute(getFallbackFaviconUrlForDomain(domain))}">`
                 : '<span class="engine-favicon" aria-hidden="true"></span>'
             }
             <span>${escapeHtml(engine.name)}</span>
@@ -567,7 +579,132 @@ function getCachedFaviconUrl(url, options = {}) {
         v: String(iconCacheVersion)
     });
     if (options.refresh) params.set('refresh', '1');
+    if (options.cacheOnly) params.set('cacheOnly', '1');
     return `/api/icon?${params.toString()}`;
+}
+
+function getIconUploadFilename(iconUrl, blob) {
+    const extensionByType = {
+        'image/x-icon': '.ico',
+        'image/vnd.microsoft.icon': '.ico',
+        'image/png': '.png',
+        'image/svg+xml': '.svg',
+        'image/jpeg': '.jpg',
+        'image/webp': '.webp',
+        'image/gif': '.gif'
+    };
+
+    try {
+        const extension = new URL(iconUrl).pathname.match(/\.(ico|png|svg|jpg|jpeg|webp|gif)$/i)?.[0];
+        if (extension) return `icon${extension.toLowerCase()}`;
+    } catch {
+        // Fall back to content type below.
+    }
+
+    return `icon${extensionByType[blob?.type] || '.ico'}`;
+}
+
+function isUploadableIconBlob(blob, iconUrl) {
+    if (!blob || !blob.size || blob.size > MAX_ICON_UPLOAD_SIZE) return false;
+    if (blob.type && blob.type.startsWith('image/')) return true;
+    return /\.(ico|png|svg|jpg|jpeg|webp|gif)(\?|#|$)/i.test(iconUrl);
+}
+
+async function uploadIconBlobToServer(targetUrl, iconUrl, blob) {
+    const formData = new FormData();
+    formData.append('url', targetUrl);
+    formData.append('sourceUrl', iconUrl);
+    formData.append('icon', blob, getIconUploadFilename(iconUrl, blob));
+    await apiRequest('/api/icon-cache/upload', {
+        method: 'POST',
+        body: formData
+    });
+}
+
+async function importIconUrlToServer(targetUrl, iconUrl) {
+    await apiRequest('/api/icon-cache/import', {
+        method: 'POST',
+        body: {
+            url: targetUrl,
+            iconUrl
+        }
+    });
+}
+
+async function uploadCandidateIconToServer(targetUrl, iconUrl) {
+    try {
+        const response = await fetch(iconUrl, {
+            mode: 'cors',
+            credentials: 'omit',
+            cache: 'no-store'
+        });
+        if (response.ok) {
+            const blob = await response.blob();
+            if (isUploadableIconBlob(blob, iconUrl)) {
+                await uploadIconBlobToServer(targetUrl, iconUrl, blob);
+                return true;
+            }
+        }
+    } catch {
+        // Many sites allow <img> display but block reading bytes with CORS.
+    }
+
+    try {
+        await importIconUrlToServer(targetUrl, iconUrl);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function refreshCachedIconFromLocal(targetUrl, preferredIconUrl = '') {
+    const normalizedTargetUrl = getLocalIconCacheKey(targetUrl);
+    if (!normalizedTargetUrl) return null;
+
+    if (iconRefreshPromises.has(normalizedTargetUrl)) {
+        return iconRefreshPromises.get(normalizedTargetUrl);
+    }
+
+    const refreshPromise = (async () => {
+        const candidates = getLocalFaviconCandidates(normalizedTargetUrl);
+        if (preferredIconUrl && !candidates.includes(preferredIconUrl)) {
+            candidates.unshift(preferredIconUrl);
+        } else if (preferredIconUrl) {
+            candidates.splice(candidates.indexOf(preferredIconUrl), 1);
+            candidates.unshift(preferredIconUrl);
+        }
+        for (const candidateUrl of candidates) {
+            if (await uploadCandidateIconToServer(normalizedTargetUrl, candidateUrl)) {
+                iconCacheVersion = Date.now();
+                return getCachedFaviconUrl(normalizedTargetUrl);
+            }
+        }
+        return null;
+    })().finally(() => {
+        iconRefreshPromises.delete(normalizedTargetUrl);
+    });
+
+    iconRefreshPromises.set(normalizedTargetUrl, refreshPromise);
+    return refreshPromise;
+}
+
+function refreshFaviconInBackground(img, targetUrl, preferredIconUrl = '') {
+    if (!img || !targetUrl) return;
+
+    refreshCachedIconFromLocal(targetUrl, preferredIconUrl).then((serverIconUrl) => {
+        if (!serverIconUrl || !img.isConnected) return;
+        img.iconSource = 'server';
+        img.iconCurrentUrl = serverIconUrl;
+        img.src = serverIconUrl;
+    }).catch(() => {
+        // Keep the currently displayed cached icon.
+    });
+}
+
+function maybeUploadLoadedLocalFavicon(img, loadedIconUrl) {
+    if (!img?.iconTargetUrl || !loadedIconUrl) return;
+    if (img.iconAutoUpload !== true) return;
+    refreshFaviconInBackground(img, img.iconTargetUrl, loadedIconUrl);
 }
 
 function loadLocalIconCache() {
@@ -599,6 +736,18 @@ function getLocalIconCacheKey(url) {
 function getLocalCachedFaviconUrl(url) {
     const cacheKey = getLocalIconCacheKey(url);
     return cacheKey ? localIconCache[cacheKey]?.iconUrl || null : null;
+}
+
+function getKnownHighResolutionIconCandidates(parsedUrl) {
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be') {
+        return [
+            'https://www.gstatic.com/youtube/img/branding/favicon/favicon_192x192_v2.png',
+            'https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144_v2.png'
+        ];
+    }
+
+    return [];
 }
 
 function setLocalCachedFaviconUrl(targetUrl, iconUrl) {
@@ -664,7 +813,9 @@ function getLocalFaviconCandidates(url) {
         pathPrefixes.unshift(currentPrefix);
     }
 
-    const candidates = [];
+    const cachedIconUrl = getLocalCachedFaviconUrl(parsedUrl.href);
+    const candidates = getKnownHighResolutionIconCandidates(parsedUrl);
+    if (cachedIconUrl) candidates.push(cachedIconUrl);
     rootIconPaths.forEach(iconPath => {
         candidates.push(`${parsedUrl.origin}${iconPath}`);
     });
@@ -674,16 +825,15 @@ function getLocalFaviconCandidates(url) {
         });
     });
 
-    const cachedIconUrl = getLocalCachedFaviconUrl(parsedUrl.href);
-    if (cachedIconUrl) candidates.push(cachedIconUrl);
-
     return [...new Set(candidates)];
 }
 
 function handleFaviconLoad(event) {
     const img = event.currentTarget;
     if (img.iconSource === 'local') {
-        setLocalCachedFaviconUrl(img.iconTargetUrl, img.iconCurrentUrl || img.getAttribute('src'));
+        const loadedIconUrl = img.iconCurrentUrl || img.getAttribute('src');
+        setLocalCachedFaviconUrl(img.iconTargetUrl, loadedIconUrl);
+        maybeUploadLoadedLocalFavicon(img, loadedIconUrl);
     }
 }
 
@@ -699,6 +849,7 @@ function handleFaviconError(event) {
 
         img.localFaviconIndex = nextIndex - 1;
         img.iconSource = 'local';
+        img.iconAutoUpload = true;
         img.iconCurrentUrl = nextUrl;
         img.src = nextUrl;
         return;
@@ -788,8 +939,10 @@ function createNavCardElement(link, index, options = {}) {
     const { noAnimation = false, linkType = 'website', refreshIcon = false } = options;
     const href = getEffectiveUrl(link);
     const localCachedFaviconUrl = getLocalCachedFaviconUrl(link.url);
-    const serverFaviconUrl = getCachedFaviconUrl(link.url, { refresh: refreshIcon });
-    const faviconUrl = serverFaviconUrl || localCachedFaviconUrl;
+    const serverFaviconUrl = getCachedFaviconUrl(link.url, { cacheOnly: refreshIcon });
+    const faviconUrl = refreshIcon
+        ? (localCachedFaviconUrl || serverFaviconUrl)
+        : (serverFaviconUrl || localCachedFaviconUrl);
     const localFaviconCandidates = getLocalFaviconCandidates(link.url);
     const iconTargetUrl = getLocalIconCacheKey(link.url);
     const fallbackFavicon = '<svg class="nav-favicon-fallback" style="display:none" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
@@ -831,6 +984,7 @@ function createNavCardElement(link, index, options = {}) {
         faviconImg.localFaviconIndex = localFaviconCandidates.indexOf(faviconUrl);
         faviconImg.addEventListener('load', handleFaviconLoad);
         faviconImg.addEventListener('error', handleFaviconError);
+        if (refreshIcon) refreshFaviconInBackground(faviconImg, link.url);
     }
 
     const navCard = card.querySelector('.nav-card');
@@ -926,6 +1080,15 @@ function renderProjectCards(options = {}) {
         section.hidden = !getProjectLinks().length && !editMode;
     }
     renderLinkCards('project', options);
+}
+
+function refreshVisibleNavIconsInBackground() {
+    document.querySelectorAll('.nav-favicon').forEach(img => {
+        if (!img.iconTargetUrl) return;
+        img.iconAutoUpload = true;
+        const preferredIconUrl = img.iconSource === 'local' ? (img.iconCurrentUrl || img.getAttribute('src')) : '';
+        refreshFaviconInBackground(img, img.iconTargetUrl, preferredIconUrl);
+    });
 }
 
 function handleDragStart(event) {
@@ -1165,7 +1328,7 @@ function renderSearchEngineList() {
         return `
             <div class="engine-list-item">
                 ${faviconUrl
-                    ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="engine-list-icon" data-fallback-favicon="${escapeAttribute(getFallbackFaviconUrlForDomain(domain))}">`
+                    ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="engine-list-icon" data-icon-target-url="${escapeAttribute(`https://${domain}/`)}" data-fallback-favicon="${escapeAttribute(getFallbackFaviconUrlForDomain(domain))}">`
                     : '<span class="engine-list-icon" aria-hidden="true"></span>'
                 }
                 <div class="engine-list-info">
@@ -1187,6 +1350,25 @@ function renderSearchEngineList() {
     }).join('');
 
     list.querySelectorAll('.engine-list-icon[data-fallback-favicon]').forEach(bindExternalFaviconFallback);
+}
+
+function getSearchEngineIconTargets() {
+    return [...new Set(getRenderableSearchEngines()
+        .map(engine => getSearchTemplateDomain(engine.urlTemplate))
+        .filter(Boolean)
+        .map(domain => `https://${domain}/`))];
+}
+
+function refreshSearchEngineIconsInBackground() {
+    getSearchEngineIconTargets().forEach(targetUrl => {
+        refreshCachedIconFromLocal(targetUrl).then((serverIconUrl) => {
+            if (!serverIconUrl) return;
+            renderSearchEngineButtons();
+            renderSearchEngineList();
+        }).catch(() => {
+            // Keep the currently displayed cached icon.
+        });
+    });
 }
 
 async function toggleEditMode() {
@@ -1514,8 +1696,8 @@ async function refreshIconCache() {
     try {
         await apiRequest('/api/icon-cache/refresh', { method: 'POST' });
         iconCacheVersion = Date.now();
-        renderProjectCards({ refreshIcon: true });
-        renderNavCards({ refreshIcon: true });
+        refreshVisibleNavIconsInBackground();
+        refreshSearchEngineIconsInBackground();
     } catch (error) {
         alert(error.message);
     } finally {
