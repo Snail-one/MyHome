@@ -440,8 +440,12 @@ function getSearchEngines() {
   ).all(USER_ID);
 }
 
+function isAuthenticated(req) {
+  return req.session && req.session.userId === USER_ID;
+}
+
 function requireAuth(req, res, next) {
-  if (req.session && req.session.userId === USER_ID) {
+  if (isAuthenticated(req)) {
     next();
     return;
   }
@@ -1333,6 +1337,27 @@ class SQLiteSessionStore extends session.Store {
 
 const app = express();
 app.set('trust proxy', TRUST_PROXY);
+app.disable('x-powered-by');
+
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "img-src 'self' http: https: data: blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "connect-src 'self' https:",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'"
+].join('; ');
+
+app.use((req, res, next) => {
+  res.set('Content-Security-Policy', contentSecurityPolicy);
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'same-origin');
+  next();
+});
 
 app.use(express.json({ limit: '64kb' }));
 app.use(session({
@@ -1356,7 +1381,23 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
 }));
 
 app.get('/', (req, res) => {
+  if (!isAuthenticated(req)) {
+    res.redirect(302, '/login');
+    return;
+  }
+
+  res.set('Cache-Control', 'no-store');
   res.sendFile(path.join(ROOT_DIR, 'index.html'));
+});
+
+app.get('/login', (req, res) => {
+  if (isAuthenticated(req)) {
+    res.redirect(302, '/');
+    return;
+  }
+
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(ROOT_DIR, 'login.html'));
 });
 
 app.get('/style.css', (req, res) => {
@@ -1365,6 +1406,10 @@ app.get('/style.css', (req, res) => {
 
 app.get('/script.js', (req, res) => {
   res.sendFile(path.join(ROOT_DIR, 'script.js'));
+});
+
+app.get('/login.js', (req, res) => {
+  res.sendFile(path.join(ROOT_DIR, 'login.js'));
 });
 
 app.get('/favicon.svg', (req, res) => {
@@ -1421,7 +1466,7 @@ app.post('/api/logout', requireAuth, (req, res) => {
 });
 
 app.get('/api/me', (req, res) => {
-  if (req.session && req.session.userId === USER_ID) {
+  if (isAuthenticated(req)) {
     const user = db.prepare('SELECT username FROM users WHERE id = ?').get(USER_ID);
     res.json({ authenticated: true, user });
     return;

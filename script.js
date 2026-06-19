@@ -128,8 +128,6 @@ const searchBox = document.querySelector('.search-box');
 const searchEngineSwitcher = document.querySelector('.search-engine-switcher');
 const engineIndicator = document.querySelector('.current-engine');
 const searchEngineIndicator = document.querySelector('.search-engine-indicator');
-const loginForm = document.getElementById('login-form');
-const loginError = document.getElementById('login-error');
 const logoutBtn = document.getElementById('logout-btn');
 
 // ==================== API ====================
@@ -210,9 +208,33 @@ function applyLinksResponse(data) {
     renderNavCards();
 }
 
+function clearAuthenticatedDom() {
+    searchEngineSwitcher.innerHTML = '';
+    if (engineIndicator) engineIndicator.textContent = 'Google';
+
+    document.getElementById('email-links-container')?.replaceChildren();
+    document.getElementById('search-engine-list')?.replaceChildren();
+    document.getElementById('layout-buttons')?.replaceChildren();
+    document.getElementById('project-layout-buttons')?.replaceChildren();
+    document.getElementById('project-display-mode-buttons')?.replaceChildren();
+    document.getElementById('bookmark-display-mode-buttons')?.replaceChildren();
+    document.getElementById('project-link-size-buttons')?.replaceChildren();
+    document.getElementById('bookmark-link-size-buttons')?.replaceChildren();
+
+    document.querySelectorAll('.nav-card-wrapper, .nav-add-wrapper').forEach(element => element.remove());
+    updateLinkEmptyState('website');
+    updateLinkEmptyState('project');
+
+    document.getElementById('link-form')?.reset();
+    document.getElementById('search-engine-form')?.reset();
+    const backgroundUpload = document.getElementById('background-upload');
+    const backgroundUrl = document.getElementById('background-url');
+    if (backgroundUpload) backgroundUpload.value = '';
+    if (backgroundUrl) backgroundUrl.value = '';
+}
+
 // ==================== 登录状态 ====================
 function showLoggedOut(message = '') {
-    const authScreen = document.getElementById('auth-screen');
     appState.user = null;
     appState.links = [];
     appState.emailLinks = [];
@@ -220,59 +242,24 @@ function showLoggedOut(message = '') {
     appState.searchEngineRecords = [];
     appState.settings = { ...DEFAULT_SETTINGS };
     currentEngine = 'google';
-    rebuildSearchEngines();
-    renderSearchEngineButtons();
-    renderEmailLinks();
-    renderProjectCards();
-    document.body.classList.remove('auth-pending', 'logged-in');
-    document.body.classList.add('logged-out');
-    authScreen?.setAttribute('aria-hidden', 'false');
+    searchEngines = {};
     closeModal('link-modal');
     closeModal('manage-modal');
     closeModal('background-modal');
-    renderNavCards();
+    clearAuthenticatedDom();
     applySettings(DEFAULT_SETTINGS);
-
-    if (loginError) loginError.textContent = message;
-    setTimeout(() => document.getElementById('login-username')?.focus(), 0);
+    const loginUrl = message ? `/login?reason=${encodeURIComponent(message)}` : '/login';
+    window.location.replace(loginUrl);
 }
 
 function showLoggedIn(user) {
-    const authScreen = document.getElementById('auth-screen');
     appState.user = user;
-    document.body.classList.remove('auth-pending', 'logged-out');
     document.body.classList.add('logged-in');
-    authScreen?.setAttribute('aria-hidden', 'true');
-    if (loginError) loginError.textContent = '';
     setTimeout(() => searchInput?.focus(), 0);
 }
 
 function bindAuth() {
-    loginForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const submitBtn = loginForm.querySelector('button[type="submit"]');
-        const username = document.getElementById('login-username').value.trim();
-        const password = document.getElementById('login-password').value;
-
-        loginError.textContent = '';
-        submitBtn.disabled = true;
-
-        try {
-            const data = await apiRequest('/api/login', {
-                method: 'POST',
-                body: { username, password }
-            });
-            await loadAppData();
-            showLoggedIn(data.user);
-            loginForm.reset();
-        } catch (error) {
-            loginError.textContent = error.message;
-        } finally {
-            submitBtn.disabled = false;
-        }
-    });
-
-    logoutBtn.addEventListener('click', async () => {
+    logoutBtn?.addEventListener('click', async () => {
         try {
             await apiRequest('/api/logout', { method: 'POST' });
         } catch (error) {
@@ -490,8 +477,16 @@ document.addEventListener('keydown', (event) => {
     }
 
     if (event.key === 'Escape') {
-        searchInput.value = '';
-        searchInput.blur();
+        if (closeActiveModal()) {
+            event.preventDefault();
+            return;
+        }
+
+        if (editMode) {
+            event.preventDefault();
+            toggleEditMode();
+            return;
+        }
     }
 
     if ((event.ctrlKey || event.metaKey) && event.key === '1') {
@@ -1284,6 +1279,20 @@ function closeModal(modalId) {
     if (!modal) return;
     modal.setAttribute('aria-hidden', 'true');
     modal.classList.remove('modal-open');
+}
+
+function closeActiveModal() {
+    const activeModals = Array.from(document.querySelectorAll('.modal-overlay.modal-open'));
+    const activeModal = activeModals.at(-1);
+    if (!activeModal) return false;
+
+    if (activeModal.id === 'link-modal') {
+        closeLinkModal();
+    } else {
+        closeModal(activeModal.id);
+    }
+
+    return true;
 }
 
 function openModal(modalId) {
