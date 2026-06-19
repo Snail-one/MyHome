@@ -211,7 +211,7 @@ body::before {
     z-index: 1;
 }
 
-/* ==================== 角落控制（内网/外网 + 管理菜单 + 背景） ==================== */
+/* ==================== 角落控制（邮箱 + 退出 + 管理菜单 + 背景） ==================== */
 .corner-controls {
     position: fixed;
     z-index: 100;
@@ -230,6 +230,11 @@ body::before {
     right: 0;
     bottom: 0;
     flex-direction: row-reverse;
+}
+
+.corner-logout {
+    left: 0;
+    bottom: 0;
 }
 
 .corner-left {
