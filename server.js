@@ -1588,6 +1588,30 @@ app.post('/api/search-engines', requireAuth, (req, res) => {
   res.status(201).json({ engines: getSearchEngines() });
 });
 
+app.put('/api/search-engines/reorder', requireAuth, (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map((id) => Number.parseInt(id, 10)) : [];
+  const currentIds = getSearchEngines().map((engine) => engine.id);
+  const currentSet = new Set(currentIds);
+  const uniqueIds = new Set(ids);
+
+  if (ids.length !== currentIds.length || uniqueIds.size !== currentIds.length || ids.some((id) => !currentSet.has(id))) {
+    res.status(400).json({ error: '排序数据无效' });
+    return;
+  }
+
+  try {
+    db.exec('BEGIN');
+    const statement = db.prepare('UPDATE search_engines SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?');
+    ids.forEach((id, index) => statement.run(index, USER_ID, id));
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  res.json({ engines: getSearchEngines() });
+});
+
 app.put('/api/search-engines/:id', requireAuth, (req, res) => {
   const payload = validateSearchEnginePayload(req, res);
   if (!payload) return;

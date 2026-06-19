@@ -57,8 +57,8 @@ body {
     overflow-x: hidden;
 }
 
-body.auth-pending .container,
-body.auth-pending .corner-controls,
+body.app-loading .container,
+body.app-loading .corner-controls,
 body.logged-out .container,
 body.logged-out .corner-controls {
     display: none;
@@ -69,7 +69,7 @@ body.logged-out .corner-controls {
 }
 
 body.logged-in .auth-screen,
-body.auth-pending .auth-screen {
+body.app-loading .auth-screen {
     display: none;
 }
 
@@ -312,6 +312,8 @@ body::before {
     position: absolute;
     top: -6px;
     right: -6px;
+    display: flex;
+    gap: 4px;
     opacity: 0;
     visibility: hidden;
     transform: translateY(-4px) scale(0.9);
@@ -325,6 +327,7 @@ body::before {
     transform: translateY(0) scale(1);
 }
 
+.email-link-move,
 .email-link-delete {
     width: 26px;
     height: 26px;
@@ -341,9 +344,21 @@ body::before {
     transition: all var(--transition-fast);
 }
 
+.email-link-move svg,
 .email-link-delete svg {
     width: 15px;
     height: 15px;
+}
+
+.email-link-move:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.email-link-move:not(:disabled):hover {
+    background: rgba(102, 126, 234, 0.6);
+    border-color: rgba(102, 126, 234, 0.8);
+    transform: scale(1.05);
 }
 
 .email-link-delete:hover {
@@ -794,6 +809,7 @@ body::before {
     flex-shrink: 0;
 }
 
+.engine-list-move,
 .engine-list-edit,
 .engine-list-delete {
     width: 30px;
@@ -806,6 +822,7 @@ body::before {
     transition: all var(--transition-fast);
 }
 
+.engine-list-move,
 .engine-list-edit {
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.14);
@@ -818,9 +835,15 @@ body::before {
     color: #fecaca;
 }
 
+.engine-list-move:not(:disabled):hover,
 .engine-list-edit:hover {
     background: rgba(102, 126, 234, 0.34);
     transform: scale(1.04);
+}
+
+.engine-list-move:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
 }
 
 .engine-list-delete:hover {
@@ -828,6 +851,7 @@ body::before {
     transform: scale(1.04);
 }
 
+.engine-list-move svg,
 .engine-list-edit svg,
 .engine-list-delete svg {
     width: 16px;
@@ -1270,7 +1294,8 @@ body::before {
 }
 
 /* 拖拽时的样式 */
-.nav-card.drag-over {
+.nav-card.drag-over,
+.email-link.drag-over {
     transform: translateY(-4px) scale(1.02);
     border-color: rgba(255, 255, 255, 0.4);
     background: var(--glass-bg-card);

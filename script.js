@@ -248,12 +248,15 @@ function showLoggedOut(message = '') {
     closeModal('background-modal');
     clearAuthenticatedDom();
     applySettings(DEFAULT_SETTINGS);
+    document.body.classList.remove('app-loading', 'logged-in');
+    document.body.classList.add('logged-out');
     const loginUrl = message ? `/login?reason=${encodeURIComponent(message)}` : '/login';
     window.location.replace(loginUrl);
 }
 
 function showLoggedIn(user) {
     appState.user = user;
+    document.body.classList.remove('app-loading', 'logged-out');
     document.body.classList.add('logged-in');
     setTimeout(() => searchInput?.focus(), 0);
 }
@@ -524,6 +527,11 @@ function getProjectLinks() {
 }
 
 function setLinkCollection(linkType, links) {
+    if (linkType === 'email') {
+        appState.emailLinks = links;
+        return;
+    }
+
     if (linkType === 'project') {
         appState.projectLinks = links;
         return;
@@ -533,6 +541,7 @@ function setLinkCollection(linkType, links) {
 }
 
 function getLinkContainer(linkType) {
+    if (linkType === 'email') return document.getElementById('email-links-container');
     return document.getElementById(linkType === 'project' ? 'project-links-container' : 'nav-links-container');
 }
 
@@ -887,24 +896,41 @@ function getMailIconSvg(className = 'email-link-icon') {
     `;
 }
 
-function createEmailLinkElement(link, index) {
+function createEmailLinkElement(link, index, total) {
     const wrapper = document.createElement('div');
     const isRequired = REQUIRED_EMAIL_LINK_KEYS.has(link.linkKey);
     wrapper.className = 'email-link-wrapper';
     wrapper.dataset.index = index;
     wrapper.innerHTML = `
-        <a href="${escapeAttribute(getEffectiveEmailUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" title="${escapeAttribute(link.title || '邮箱登录')}">
+        <a href="${escapeAttribute(getEffectiveEmailUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" data-link-type="email" draggable="${editMode ? 'true' : 'false'}" title="${escapeAttribute(link.title || '邮箱登录')}">
             ${getMailIconSvg()}
             <span class="email-link-label">${escapeHtml(link.title || '邮箱登录')}</span>
         </a>
-        ${isRequired ? '' : `
-            <div class="email-link-actions">
+        <div class="email-link-actions">
+            <button type="button" class="email-link-move" data-index="${index}" data-direction="up" title="上移" aria-label="上移" ${index === 0 ? 'disabled' : ''}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m18 15-6-6-6 6"/></svg>
+            </button>
+            <button type="button" class="email-link-move" data-index="${index}" data-direction="down" title="下移" aria-label="下移" ${index >= total - 1 ? 'disabled' : ''}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            ${isRequired ? '' : `
                 <button type="button" class="email-link-delete" data-index="${index}" title="删除邮箱链接">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
                 </button>
-            </div>
-        `}
+            `}
+        </div>
     `;
+
+    const emailLink = wrapper.querySelector('.email-link');
+    if (emailLink && editMode) {
+        emailLink.addEventListener('dragstart', handleDragStart);
+        emailLink.addEventListener('dragend', handleDragEnd);
+        emailLink.addEventListener('dragover', handleDragOver);
+        emailLink.addEventListener('drop', handleDrop);
+        emailLink.addEventListener('dragenter', handleDragEnter);
+        emailLink.addEventListener('dragleave', handleDragLeave);
+    }
+
     return wrapper;
 }
 
@@ -926,8 +952,9 @@ function renderEmailLinks() {
     if (!container) return;
 
     container.innerHTML = '';
-    getEmailLinks().forEach((link, index) => {
-        container.appendChild(createEmailLinkElement(link, index));
+    const links = getEmailLinks();
+    links.forEach((link, index) => {
+        container.appendChild(createEmailLinkElement(link, index, links.length));
     });
 
     if (editMode) {
@@ -1093,6 +1120,51 @@ function refreshVisibleNavIconsInBackground() {
     });
 }
 
+function renderLinkCollection(linkType = 'website') {
+    if (linkType === 'email') {
+        renderEmailLinks();
+        return;
+    }
+
+    renderLinkCards(linkType);
+}
+
+async function persistLinkOrder(linkType, links, previousLinks) {
+    try {
+        const data = await apiRequest('/api/links/reorder', {
+            method: 'PUT',
+            body: { ids: links.map(link => link.id), type: linkType }
+        });
+
+        if (
+            Array.isArray(data.links) &&
+            Array.isArray(data.emailLinks) &&
+            Array.isArray(data.projectLinks)
+        ) {
+            applyLinksResponse(data);
+        } else {
+            setLinkCollection(linkType, links);
+            renderLinkCollection(linkType);
+        }
+    } catch (error) {
+        setLinkCollection(linkType, previousLinks);
+        renderLinkCollection(linkType);
+        alert(error.message);
+    }
+}
+
+async function moveLink(index, direction, linkType = 'website') {
+    const links = [...getLinkCollection(linkType)];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (index < 0 || index >= links.length || targetIndex < 0 || targetIndex >= links.length) return;
+
+    const previousLinks = [...links];
+    [links[index], links[targetIndex]] = [links[targetIndex], links[index]];
+    setLinkCollection(linkType, links);
+    renderLinkCollection(linkType);
+    await persistLinkOrder(linkType, links, previousLinks);
+}
+
 function handleDragStart(event) {
     draggedCard = this;
     draggedIndex = parseInt(this.dataset.index, 10);
@@ -1114,7 +1186,7 @@ function handleDragStart(event) {
 function handleDragEnd() {
     this.style.transform = '';
     this.style.boxShadow = '';
-    document.querySelectorAll('.nav-card').forEach(card => {
+    document.querySelectorAll('.nav-card, .email-link').forEach(card => {
         card.classList.remove('drag-over');
     });
     draggedCard = null;
@@ -1154,38 +1226,18 @@ async function handleDrop(event) {
     setLinkCollection(linkType, links);
 
     const container = getLinkContainer(linkType);
-    container.style.transition = 'none';
-    renderLinkCards(linkType);
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            container.style.transition = '';
-        });
-    });
-
-    try {
-        const data = await apiRequest('/api/links/reorder', {
-            method: 'PUT',
-            body: { ids: links.map(link => link.id), type: linkType }
-        });
-        if (
-            Array.isArray(data.links) &&
-            Array.isArray(data.emailLinks) &&
-            Array.isArray(data.projectLinks)
-        ) {
-            appState.links = data.links;
-            appState.emailLinks = data.emailLinks;
-            appState.projectLinks = data.projectLinks;
-        } else {
-            setLinkCollection(linkType, links);
-        }
-        renderEmailLinks();
-        renderProjectCards();
-        renderNavCards();
-    } catch (error) {
-        setLinkCollection(linkType, previousLinks);
-        renderLinkCards(linkType);
-        alert(error.message);
+    if (container) {
+        container.style.transition = 'none';
     }
+    renderLinkCollection(linkType);
+    if (container) {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                container.style.transition = '';
+            });
+        });
+    }
+    await persistLinkOrder(linkType, links, previousLinks);
 }
 
 function escapeHtml(text) {
@@ -1337,7 +1389,7 @@ function renderSearchEngineList() {
         return;
     }
 
-    list.innerHTML = appState.searchEngineRecords.map(engine => {
+    list.innerHTML = appState.searchEngineRecords.map((engine, index, records) => {
         const domain = getSearchTemplateDomain(engine.urlTemplate);
         const faviconUrl = getSearchEngineFaviconUrl(domain);
         const isRequired = engine.engineKey === 'google';
@@ -1352,6 +1404,12 @@ function renderSearchEngineList() {
                     <div class="engine-list-url">${escapeHtml(engine.urlTemplate)}</div>
                 </div>
                 <div class="engine-list-actions">
+                    <button type="button" class="engine-list-move" data-id="${engine.id}" data-direction="up" title="上移" aria-label="上移" ${index === 0 ? 'disabled' : ''}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m18 15-6-6-6 6"/></svg>
+                    </button>
+                    <button type="button" class="engine-list-move" data-id="${engine.id}" data-direction="down" title="下移" aria-label="下移" ${index >= records.length - 1 ? 'disabled' : ''}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
+                    </button>
                     <button type="button" class="engine-list-edit" data-id="${engine.id}" title="编辑搜索引擎">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
@@ -1366,6 +1424,37 @@ function renderSearchEngineList() {
     }).join('');
 
     list.querySelectorAll('.engine-list-icon[data-fallback-favicon]').forEach(bindExternalFaviconFallback);
+}
+
+async function moveSearchEngine(engineId, direction) {
+    const currentIndex = appState.searchEngineRecords.findIndex(engine => String(engine.id) === String(engineId));
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= appState.searchEngineRecords.length) return;
+
+    const previousEngines = [...appState.searchEngineRecords];
+    const nextEngines = [...appState.searchEngineRecords];
+    [nextEngines[currentIndex], nextEngines[targetIndex]] = [nextEngines[targetIndex], nextEngines[currentIndex]];
+    appState.searchEngineRecords = nextEngines;
+    rebuildSearchEngines();
+    renderSearchEngineButtons();
+    renderSearchEngineList();
+
+    try {
+        const data = await apiRequest('/api/search-engines/reorder', {
+            method: 'PUT',
+            body: { ids: nextEngines.map(engine => engine.id) }
+        });
+        appState.searchEngineRecords = data.engines || nextEngines;
+        rebuildSearchEngines();
+        renderSearchEngineButtons();
+        renderSearchEngineList();
+    } catch (error) {
+        appState.searchEngineRecords = previousEngines;
+        rebuildSearchEngines();
+        renderSearchEngineButtons();
+        renderSearchEngineList();
+        alert(error.message);
+    }
 }
 
 function getSearchEngineIconTargets() {
@@ -1756,19 +1845,28 @@ function bindMenuManagement() {
     if (emailLinksContainer) {
         emailLinksContainer.addEventListener('click', (event) => {
             const addBtn = event.target.closest('.email-add-link');
+            const moveBtn = event.target.closest('.email-link-move');
             const deleteBtn = event.target.closest('.email-link-delete');
             const emailLink = event.target.closest('.email-link:not(.email-add-link)');
 
             if (addBtn) {
                 event.preventDefault();
                 openLinkModal(undefined, 'email');
+            } else if (moveBtn) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!moveBtn.disabled) {
+                    moveLink(parseInt(moveBtn.dataset.index, 10), moveBtn.dataset.direction, 'email');
+                }
             } else if (deleteBtn) {
                 event.preventDefault();
                 event.stopPropagation();
                 deleteLink(parseInt(deleteBtn.dataset.index, 10), 'email');
             } else if (emailLink && editMode) {
                 event.preventDefault();
-                editLink(parseInt(emailLink.dataset.index, 10), 'email');
+                if (!isDragging) {
+                    editLink(parseInt(emailLink.dataset.index, 10), 'email');
+                }
             }
         });
     }
@@ -1880,13 +1978,21 @@ function bindMenuManagement() {
     });
 
     searchEngineList.addEventListener('click', async (event) => {
+        const moveBtn = event.target.closest('.engine-list-move');
         const editBtn = event.target.closest('.engine-list-edit');
         const deleteBtn = event.target.closest('.engine-list-delete');
-        if (!editBtn && !deleteBtn) return;
+        if (!moveBtn && !editBtn && !deleteBtn) return;
 
-        const actionBtn = editBtn || deleteBtn;
+        const actionBtn = moveBtn || editBtn || deleteBtn;
         const engine = appState.searchEngineRecords.find(item => String(item.id) === actionBtn.dataset.id);
         if (!engine) return;
+
+        if (moveBtn) {
+            if (!moveBtn.disabled) {
+                await moveSearchEngine(engine.id, moveBtn.dataset.direction);
+            }
+            return;
+        }
 
         if (editBtn) {
             editSearchEngine(engine);
