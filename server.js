@@ -25,6 +25,8 @@ const SESSION_COOKIE_SECURE = parseBooleanEnv(
   process.env.SESSION_COOKIE_SECURE,
   process.env.NODE_ENV === 'production'
 );
+const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
+const SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_BACKGROUND_SIZE = 10 * 1024 * 1024;
 const MAX_ICON_SIZE = 1024 * 1024;
 const ICON_FETCH_TIMEOUT_MS = 5000;
@@ -130,6 +132,14 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_search_engines_user_sort ON search_engines(user_id, sort_order, id);
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    sid TEXT PRIMARY KEY,
+    sess TEXT NOT NULL,
+    expires INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
 `);
 
 function ensureNavLinkSchema() {
@@ -902,11 +912,157 @@ function sendCachedIcon(res, cachedIcon) {
   res.sendFile(cachedIcon.filePath);
 }
 
+function deferSessionCallback(callback, ...args) {
+  if (!callback) return;
+  if (typeof setImmediate === 'function') {
+    setImmediate(callback, ...args);
+    return;
+  }
+  process.nextTick(() => callback(...args));
+}
+
+function getSessionExpiresAt(sessionData) {
+  const expires = sessionData?.cookie?.expires;
+  if (expires) {
+    const expiresAt = new Date(expires).getTime();
+    if (Number.isFinite(expiresAt)) {
+      return expiresAt;
+    }
+  }
+
+  const maxAge = sessionData?.cookie?.maxAge;
+  if (typeof maxAge === 'number' && Number.isFinite(maxAge)) {
+    return Date.now() + maxAge;
+  }
+
+  return Date.now() + SESSION_MAX_AGE_MS;
+}
+
+class SQLiteSessionStore extends session.Store {
+  constructor(database) {
+    super();
+
+    this.statements = {
+      get: database.prepare('SELECT sess, expires FROM sessions WHERE sid = ?'),
+      set: database.prepare(`
+        INSERT INTO sessions (sid, sess, expires)
+        VALUES (?, ?, ?)
+        ON CONFLICT(sid) DO UPDATE SET
+          sess = excluded.sess,
+          expires = excluded.expires
+      `),
+      all: database.prepare('SELECT sid, sess FROM sessions WHERE expires > ?'),
+      count: database.prepare('SELECT COUNT(*) AS count FROM sessions WHERE expires > ?'),
+      destroy: database.prepare('DELETE FROM sessions WHERE sid = ?'),
+      clear: database.prepare('DELETE FROM sessions'),
+      deleteExpired: database.prepare('DELETE FROM sessions WHERE expires <= ?')
+    };
+
+    this.cleanupExpiredSessions();
+    this.cleanupTimer = setInterval(() => this.cleanupExpiredSessions(), SESSION_CLEANUP_INTERVAL_MS);
+    if (typeof this.cleanupTimer.unref === 'function') {
+      this.cleanupTimer.unref();
+    }
+  }
+
+  get(sessionId, callback) {
+    try {
+      const row = this.statements.get.get(sessionId);
+      if (!row) {
+        deferSessionCallback(callback, null);
+        return;
+      }
+
+      if (Number(row.expires) <= Date.now()) {
+        this.statements.destroy.run(sessionId);
+        deferSessionCallback(callback, null);
+        return;
+      }
+
+      deferSessionCallback(callback, null, JSON.parse(row.sess));
+    } catch (error) {
+      deferSessionCallback(callback, error);
+    }
+  }
+
+  set(sessionId, sessionData, callback) {
+    try {
+      this.statements.set.run(sessionId, JSON.stringify(sessionData), getSessionExpiresAt(sessionData));
+      deferSessionCallback(callback);
+    } catch (error) {
+      deferSessionCallback(callback, error);
+    }
+  }
+
+  touch(sessionId, sessionData, callback) {
+    try {
+      const row = this.statements.get.get(sessionId);
+      if (row) {
+        const currentSession = JSON.parse(row.sess);
+        currentSession.cookie = sessionData.cookie;
+        this.statements.set.run(sessionId, JSON.stringify(currentSession), getSessionExpiresAt(currentSession));
+      }
+      deferSessionCallback(callback);
+    } catch (error) {
+      deferSessionCallback(callback, error);
+    }
+  }
+
+  destroy(sessionId, callback) {
+    try {
+      this.statements.destroy.run(sessionId);
+      deferSessionCallback(callback);
+    } catch (error) {
+      deferSessionCallback(callback, error);
+    }
+  }
+
+  all(callback) {
+    try {
+      this.cleanupExpiredSessions();
+      const sessions = Object.create(null);
+      const rows = this.statements.all.all(Date.now());
+
+      rows.forEach((row) => {
+        sessions[row.sid] = JSON.parse(row.sess);
+      });
+
+      deferSessionCallback(callback, null, sessions);
+    } catch (error) {
+      deferSessionCallback(callback, error);
+    }
+  }
+
+  clear(callback) {
+    try {
+      this.statements.clear.run();
+      deferSessionCallback(callback);
+    } catch (error) {
+      deferSessionCallback(callback, error);
+    }
+  }
+
+  length(callback) {
+    try {
+      this.cleanupExpiredSessions();
+      const row = this.statements.count.get(Date.now());
+      deferSessionCallback(callback, null, Number(row.count));
+    } catch (error) {
+      deferSessionCallback(callback, error);
+    }
+  }
+
+  cleanupExpiredSessions() {
+    this.statements.deleteExpired.run(Date.now());
+  }
+}
+
 const app = express();
 app.set('trust proxy', TRUST_PROXY);
 
 app.use(express.json({ limit: '64kb' }));
 app.use(session({
+  store: new SQLiteSessionStore(db),
   name: 'my_home_sid',
   secret: SESSION_SECRET,
   resave: false,
@@ -915,7 +1071,7 @@ app.use(session({
     httpOnly: true,
     sameSite: 'lax',
     secure: SESSION_COOKIE_SECURE,
-    maxAge: 1000 * 60 * 60 * 24 * 30
+    maxAge: SESSION_MAX_AGE_MS
   }
 }));
 
