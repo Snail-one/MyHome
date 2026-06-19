@@ -360,24 +360,45 @@ function getSearchTemplateDomain(urlTemplate) {
     return getDomainFromUrl(urlTemplate.replaceAll('{query}', 'test'));
 }
 
+function getFallbackFaviconUrlForDomain(domain) {
+    return domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64` : '';
+}
+
+function getSearchEngineFaviconUrl(domain) {
+    return domain ? getCachedFaviconUrl(`https://${domain}/`) : '';
+}
+
+function bindExternalFaviconFallback(img) {
+    const fallbackUrl = img?.dataset?.fallbackFavicon;
+    if (!fallbackUrl) return;
+
+    img.addEventListener('error', () => {
+        if (img.dataset.fallbackTried === '1') return;
+        img.dataset.fallbackTried = '1';
+        img.src = fallbackUrl;
+    });
+}
+
 function renderSearchEngineButtons() {
     searchEngineSwitcher.innerHTML = '';
 
     getRenderableSearchEngines().forEach(engine => {
         const key = getEngineKey(engine);
         const domain = getSearchTemplateDomain(engine.urlTemplate);
-        const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32` : '';
+        const faviconUrl = getSearchEngineFaviconUrl(domain);
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'engine-btn';
         btn.dataset.engine = key;
         btn.innerHTML = `
             ${faviconUrl
-                ? `<img src="${faviconUrl}" alt="" class="engine-favicon">`
+                ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="engine-favicon" data-fallback-favicon="${escapeAttribute(getFallbackFaviconUrlForDomain(domain))}">`
                 : '<span class="engine-favicon" aria-hidden="true"></span>'
             }
             <span>${escapeHtml(engine.name)}</span>
         `;
+        const faviconImg = btn.querySelector('.engine-favicon');
+        if (faviconImg) bindExternalFaviconFallback(faviconImg);
         searchEngineSwitcher.appendChild(btn);
     });
 
@@ -537,10 +558,16 @@ function getParsedHttpUrl(url) {
     }
 }
 
-function getCachedFaviconUrl(url) {
+function getCachedFaviconUrl(url, options = {}) {
     const parsedUrl = getParsedHttpUrl(url);
     if (!parsedUrl) return null;
-    return `/api/icon?url=${encodeURIComponent(parsedUrl.href)}&v=${iconCacheVersion}`;
+
+    const params = new URLSearchParams({
+        url: parsedUrl.href,
+        v: String(iconCacheVersion)
+    });
+    if (options.refresh) params.set('refresh', '1');
+    return `/api/icon?${params.toString()}`;
 }
 
 function loadLocalIconCache() {
@@ -561,15 +588,6 @@ function saveLocalIconCache() {
         localStorage.setItem(LOCAL_ICON_CACHE_STORAGE_KEY, JSON.stringify(localIconCache));
     } catch {
         // localStorage can be unavailable or full; icons still work without this cache.
-    }
-}
-
-function clearLocalIconCache() {
-    localIconCache = {};
-    try {
-        localStorage.removeItem(LOCAL_ICON_CACHE_STORAGE_KEY);
-    } catch {
-        // Ignore localStorage failures.
     }
 }
 
@@ -603,13 +621,33 @@ function getLocalFaviconCandidates(url) {
     if (!parsedUrl) return [];
 
     const rootIconPaths = [
-        '/favicon.ico',
-        '/favicon.png',
-        '/favicon.svg',
-        '/favicon-32x32.png',
-        '/favicon-16x16.png',
+        '/android-chrome-512x512.png',
+        '/android-chrome-384x384.png',
+        '/android-chrome-256x256.png',
+        '/android-chrome-192x192.png',
         '/apple-touch-icon.png',
         '/apple-touch-icon-precomposed.png',
+        '/apple-touch-icon-180x180.png',
+        '/apple-touch-icon-167x167.png',
+        '/apple-touch-icon-152x152.png',
+        '/apple-touch-icon-144x144.png',
+        '/apple-touch-icon-120x120.png',
+        '/mstile-310x310.png',
+        '/mstile-150x150.png',
+        '/favicon.svg',
+        '/favicon-512x512.png',
+        '/favicon-384x384.png',
+        '/favicon-256x256.png',
+        '/favicon-196x196.png',
+        '/favicon-192x192.png',
+        '/favicon-128x128.png',
+        '/favicon-96x96.png',
+        '/favicon-64x64.png',
+        '/favicon-48x48.png',
+        '/favicon-32x32.png',
+        '/favicon.png',
+        '/favicon.ico',
+        '/favicon-16x16.png',
         '/images/favicon.ico',
         '/images/favicon.png',
         '/static/favicon.ico',
@@ -637,7 +675,7 @@ function getLocalFaviconCandidates(url) {
     });
 
     const cachedIconUrl = getLocalCachedFaviconUrl(parsedUrl.href);
-    if (cachedIconUrl) candidates.unshift(cachedIconUrl);
+    if (cachedIconUrl) candidates.push(cachedIconUrl);
 
     return [...new Set(candidates)];
 }
@@ -747,11 +785,11 @@ function renderEmailLinks() {
 }
 
 function createNavCardElement(link, index, options = {}) {
-    const { noAnimation = false, linkType = 'website' } = options;
+    const { noAnimation = false, linkType = 'website', refreshIcon = false } = options;
     const href = getEffectiveUrl(link);
     const localCachedFaviconUrl = getLocalCachedFaviconUrl(link.url);
-    const serverFaviconUrl = getCachedFaviconUrl(link.url);
-    const faviconUrl = localCachedFaviconUrl || serverFaviconUrl;
+    const serverFaviconUrl = getCachedFaviconUrl(link.url, { refresh: refreshIcon });
+    const faviconUrl = serverFaviconUrl || localCachedFaviconUrl;
     const localFaviconCandidates = getLocalFaviconCandidates(link.url);
     const iconTargetUrl = getLocalIconCacheKey(link.url);
     const fallbackFavicon = '<svg class="nav-favicon-fallback" style="display:none" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
@@ -787,12 +825,10 @@ function createNavCardElement(link, index, options = {}) {
     const faviconImg = card.querySelector('.nav-favicon');
     if (faviconImg) {
         faviconImg.iconTargetUrl = iconTargetUrl;
-        faviconImg.iconSource = localCachedFaviconUrl ? 'local' : 'server';
+        faviconImg.iconSource = faviconUrl === localCachedFaviconUrl ? 'local' : 'server';
         faviconImg.iconCurrentUrl = faviconUrl;
         faviconImg.localFaviconCandidates = localFaviconCandidates;
-        faviconImg.localFaviconIndex = localCachedFaviconUrl
-            ? localFaviconCandidates.indexOf(localCachedFaviconUrl)
-            : -1;
+        faviconImg.localFaviconIndex = localFaviconCandidates.indexOf(faviconUrl);
         faviconImg.addEventListener('load', handleFaviconLoad);
         faviconImg.addEventListener('error', handleFaviconError);
     }
@@ -862,7 +898,8 @@ function syncAddLinkCard(linkType = 'website') {
     updateLinkEmptyState(linkType);
 }
 
-function renderLinkCards(linkType = 'website') {
+function renderLinkCards(linkType = 'website', options = {}) {
+    const { refreshIcon = false } = options;
     const container = getLinkContainer(linkType);
     const emptyState = getLinkEmptyState(linkType);
     const links = getLinkCollection(linkType);
@@ -872,23 +909,23 @@ function renderLinkCards(linkType = 'website') {
     updateLinkEmptyState(linkType);
 
     links.forEach((link, index) => {
-        const card = createNavCardElement(link, index, { linkType });
+        const card = createNavCardElement(link, index, { linkType, refreshIcon });
         container.insertBefore(card, emptyState);
     });
 
     updateEditModeUI();
 }
 
-function renderNavCards() {
-    renderLinkCards('website');
+function renderNavCards(options = {}) {
+    renderLinkCards('website', options);
 }
 
-function renderProjectCards() {
+function renderProjectCards(options = {}) {
     const section = document.getElementById('project-links-section');
     if (section) {
         section.hidden = !getProjectLinks().length && !editMode;
     }
-    renderLinkCards('project');
+    renderLinkCards('project', options);
 }
 
 function handleDragStart(event) {
@@ -1123,12 +1160,12 @@ function renderSearchEngineList() {
 
     list.innerHTML = appState.searchEngineRecords.map(engine => {
         const domain = getSearchTemplateDomain(engine.urlTemplate);
-        const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32` : '';
+        const faviconUrl = getSearchEngineFaviconUrl(domain);
         const isRequired = engine.engineKey === 'google';
         return `
             <div class="engine-list-item">
                 ${faviconUrl
-                    ? `<img src="${faviconUrl}" alt="" class="engine-list-icon">`
+                    ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="engine-list-icon" data-fallback-favicon="${escapeAttribute(getFallbackFaviconUrlForDomain(domain))}">`
                     : '<span class="engine-list-icon" aria-hidden="true"></span>'
                 }
                 <div class="engine-list-info">
@@ -1148,6 +1185,8 @@ function renderSearchEngineList() {
             </div>
         `;
     }).join('');
+
+    list.querySelectorAll('.engine-list-icon[data-fallback-favicon]').forEach(bindExternalFaviconFallback);
 }
 
 async function toggleEditMode() {
@@ -1474,10 +1513,9 @@ async function refreshIconCache() {
 
     try {
         await apiRequest('/api/icon-cache/refresh', { method: 'POST' });
-        clearLocalIconCache();
         iconCacheVersion = Date.now();
-        renderProjectCards();
-        renderNavCards();
+        renderProjectCards({ refreshIcon: true });
+        renderNavCards({ refreshIcon: true });
     } catch (error) {
         alert(error.message);
     } finally {
@@ -1696,11 +1734,6 @@ function bindMenuManagement() {
         btn.addEventListener('click', () => closeModal(btn.getAttribute('data-close')));
     });
 
-    document.querySelectorAll('.modal-overlay').forEach(overlay => {
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) closeModal(overlay.id);
-        });
-    });
 }
 
 // ==================== 自定义背景 ====================

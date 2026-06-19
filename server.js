@@ -31,6 +31,8 @@ const MAX_BACKGROUND_SIZE = 10 * 1024 * 1024;
 const MAX_ICON_SIZE = 1024 * 1024;
 const ICON_FETCH_TIMEOUT_MS = 5000;
 const ICON_HTML_SAMPLE_SIZE = 128 * 1024;
+const ICON_DISCOVERY_VERSION = 3;
+const MIN_PREFERRED_ICON_SIZE = 96;
 const LOGIN_MAX_FAILED_ATTEMPTS = parseIntegerEnv(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 5, 1);
 const LOGIN_WINDOW_MS = parseIntegerEnv(process.env.LOGIN_WINDOW_MS, 15 * 60 * 1000, 1000);
 const LOGIN_LOCKOUT_MS = parseIntegerEnv(process.env.LOGIN_LOCKOUT_MS, 15 * 60 * 1000, 1000);
@@ -742,6 +744,15 @@ function toHttpUrl(value, baseUrl) {
   }
 }
 
+function getConventionalManifestCandidates(parsedUrl) {
+  return [
+    '/manifest.webmanifest',
+    '/site.webmanifest',
+    '/manifest.json',
+    '/webmanifest.json'
+  ].map((manifestPath) => `${parsedUrl.origin}${manifestPath}`);
+}
+
 function extractIconLinksFromHtml(html, pageUrl) {
   const candidates = [];
 
@@ -749,24 +760,164 @@ function extractIconLinksFromHtml(html, pageUrl) {
     const tag = match[0];
     const rel = getHtmlAttribute(tag, 'rel').toLowerCase();
     const href = getHtmlAttribute(tag, 'href');
-    if (!rel || !href || !rel.includes('icon')) continue;
+    if (!rel || !href || !rel.includes('icon') || rel.includes('mask-icon')) continue;
 
     const iconUrl = toHttpUrl(href, pageUrl);
-    if (iconUrl) candidates.push(iconUrl);
+    if (iconUrl) {
+      candidates.push({
+        url: iconUrl,
+        rel,
+        sizes: getHtmlAttribute(tag, 'sizes'),
+        type: getHtmlAttribute(tag, 'type')
+      });
+    }
   }
 
   return candidates;
 }
 
+function extractManifestLinksFromHtml(html, pageUrl) {
+  const manifestUrls = [];
+
+  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = match[0];
+    const rel = getHtmlAttribute(tag, 'rel').toLowerCase();
+    const href = getHtmlAttribute(tag, 'href');
+    if (!rel || !href || !rel.split(/\s+/).includes('manifest')) continue;
+
+    const manifestUrl = toHttpUrl(href, pageUrl);
+    if (manifestUrl) manifestUrls.push(manifestUrl);
+  }
+
+  return manifestUrls;
+}
+
+function getManifestIconCandidates(manifest, manifestUrl) {
+  if (!manifest || !Array.isArray(manifest.icons)) return [];
+
+  return manifest.icons
+    .map((icon) => {
+      if (!icon || typeof icon.src !== 'string') return null;
+      const iconUrl = toHttpUrl(icon.src, manifestUrl);
+      if (!iconUrl) return null;
+
+      return {
+        url: iconUrl,
+        rel: 'manifest-icon',
+        sizes: typeof icon.sizes === 'string' ? icon.sizes : '',
+        type: typeof icon.type === 'string' ? icon.type : '',
+        purpose: typeof icon.purpose === 'string' ? icon.purpose : ''
+      };
+    })
+    .filter(Boolean);
+}
+
+async function fetchManifestIconCandidates(manifestUrl) {
+  const response = await fetchWithTimeout(manifestUrl, {
+    headers: {
+      Accept: 'application/manifest+json,application/json,*/*;q=0.8'
+    }
+  });
+
+  if (!response.ok) return [];
+
+  const buffer = await readResponseBuffer(response, ICON_HTML_SAMPLE_SIZE, true);
+  if (!buffer.length) return [];
+
+  try {
+    return getManifestIconCandidates(JSON.parse(buffer.toString('utf8')), manifestUrl);
+  } catch {
+    return [];
+  }
+}
+
+function getLargestIconSizeFromText(value, options = {}) {
+  if (!value || typeof value !== 'string') return 0;
+  const normalized = value.toLowerCase();
+  if (options.allowAny && /\bany\b/.test(normalized)) return 512;
+
+  let largestSize = 0;
+  for (const match of normalized.matchAll(/(\d{2,4})\s*x\s*(\d{2,4})/g)) {
+    const width = Number.parseInt(match[1], 10);
+    const height = Number.parseInt(match[2], 10);
+    if (Number.isInteger(width) && Number.isInteger(height)) {
+      largestSize = Math.max(largestSize, Math.min(width, height));
+    }
+  }
+
+  return largestSize;
+}
+
+function getIconSizeFromUrl(candidateUrl) {
+  try {
+    const pathname = decodeURIComponent(new URL(candidateUrl).pathname);
+    return getLargestIconSizeFromText(pathname);
+  } catch {
+    return 0;
+  }
+}
+
+function getIconCandidateScore(candidate) {
+  const candidateUrl = typeof candidate === 'string' ? candidate : candidate.url;
+  const rel = (candidate.rel || '').toLowerCase();
+  const type = (candidate.type || '').toLowerCase();
+  const purpose = (candidate.purpose || '').toLowerCase();
+  const sizes = Math.max(getLargestIconSizeFromText(candidate.sizes, { allowAny: true }), getIconSizeFromUrl(candidateUrl));
+  let pathname = '';
+
+  try {
+    pathname = decodeURIComponent(new URL(candidateUrl).pathname).toLowerCase();
+  } catch {
+    pathname = String(candidateUrl || '').toLowerCase();
+  }
+
+  let score = Math.min(sizes, 512) * 10;
+
+  if (pathname.endsWith('.svg') || type.includes('svg')) score += 10000;
+  if (rel.includes('apple-touch-icon') || pathname.includes('apple-touch-icon')) score += 1800;
+  if (rel.includes('manifest')) score += 200;
+  if (pathname.includes('/favicon')) score += 1000;
+  if (sizes >= 96) score += 1000;
+  if (sizes >= 144) score += 700;
+  if (sizes > 0 && sizes < 32) score -= 1000;
+  if (type.includes('png') || pathname.endsWith('.png')) score += 80;
+  if (type.includes('webp') || pathname.endsWith('.webp')) score += 70;
+  if (pathname.endsWith('.ico')) score += 30;
+  if (purpose.includes('maskable')) score -= 3500;
+  if (purpose.includes('monochrome')) score -= 8000;
+
+  return score;
+}
+
 function getConventionalIconCandidates(parsedUrl) {
   const rootIconPaths = [
-    '/favicon.ico',
-    '/favicon.png',
-    '/favicon.svg',
-    '/favicon-32x32.png',
-    '/favicon-16x16.png',
+    '/android-chrome-512x512.png',
+    '/android-chrome-384x384.png',
+    '/android-chrome-256x256.png',
+    '/android-chrome-192x192.png',
     '/apple-touch-icon.png',
     '/apple-touch-icon-precomposed.png',
+    '/apple-touch-icon-180x180.png',
+    '/apple-touch-icon-167x167.png',
+    '/apple-touch-icon-152x152.png',
+    '/apple-touch-icon-144x144.png',
+    '/apple-touch-icon-120x120.png',
+    '/mstile-310x310.png',
+    '/mstile-150x150.png',
+    '/favicon.svg',
+    '/favicon-512x512.png',
+    '/favicon-384x384.png',
+    '/favicon-256x256.png',
+    '/favicon-196x196.png',
+    '/favicon-192x192.png',
+    '/favicon-128x128.png',
+    '/favicon-96x96.png',
+    '/favicon-64x64.png',
+    '/favicon-48x48.png',
+    '/favicon-32x32.png',
+    '/favicon.png',
+    '/favicon.ico',
+    '/favicon-16x16.png',
     '/images/favicon.ico',
     '/images/favicon.png',
     '/static/favicon.ico',
@@ -797,18 +948,36 @@ function getConventionalIconCandidates(parsedUrl) {
   return candidates;
 }
 
-function uniqueHttpUrls(urls) {
-  const seen = new Set();
-  return urls.filter((url) => {
-    const httpUrl = toHttpUrl(url);
-    if (!httpUrl || seen.has(httpUrl)) return false;
-    seen.add(httpUrl);
-    return true;
+function uniqueIconCandidates(candidates) {
+  const candidatesByUrl = new Map();
+
+  candidates.forEach((candidate, index) => {
+    const candidateUrl = typeof candidate === 'string' ? candidate : candidate.url;
+    const httpUrl = toHttpUrl(candidateUrl);
+    if (!httpUrl) return;
+    const normalizedCandidate = {
+      ...(typeof candidate === 'string' ? {} : candidate),
+      url: httpUrl,
+      sourceOrder: index
+    };
+    const scoredCandidate = {
+      ...normalizedCandidate,
+      score: getIconCandidateScore(normalizedCandidate)
+    };
+    const existingCandidate = candidatesByUrl.get(httpUrl);
+    if (!existingCandidate || scoredCandidate.score > existingCandidate.score) {
+      candidatesByUrl.set(httpUrl, scoredCandidate);
+    }
   });
+
+  return Array.from(candidatesByUrl.values())
+    .sort((left, right) => (right.score - left.score) || (left.sourceOrder - right.sourceOrder))
+    .map((candidate) => candidate.url);
 }
 
 async function discoverIconCandidates(parsedUrl) {
   const candidates = [];
+  const manifestUrls = [];
 
   try {
     const response = await fetchWithTimeout(parsedUrl.href, {
@@ -821,13 +990,25 @@ async function discoverIconCandidates(parsedUrl) {
     if (response.ok && (!contentType || contentType.includes('text/html') || contentType.includes('application/xhtml+xml'))) {
       const html = (await readResponseBuffer(response, ICON_HTML_SAMPLE_SIZE, true)).toString('utf8');
       candidates.push(...extractIconLinksFromHtml(html, parsedUrl.href));
+      manifestUrls.push(...extractManifestLinksFromHtml(html, parsedUrl.href));
     }
   } catch {
     // Conventional favicon paths below still cover most services.
   }
 
-  candidates.push(...getConventionalIconCandidates(parsedUrl));
-  return uniqueHttpUrls(candidates);
+  manifestUrls.push(...getConventionalManifestCandidates(parsedUrl));
+
+  for (const manifestUrl of [...new Set(manifestUrls)]) {
+    try {
+      const manifestIconCandidates = await fetchManifestIconCandidates(manifestUrl);
+      candidates.push(...manifestIconCandidates);
+    } catch {
+      // Manifest icons are optional; conventional paths below are still valid.
+    }
+  }
+
+  candidates.push(...getConventionalIconCandidates(parsedUrl).map((url) => ({ url })));
+  return uniqueIconCandidates(candidates);
 }
 
 async function fetchIconCandidate(candidateUrl) {
@@ -854,35 +1035,95 @@ async function fetchIconCandidate(candidateUrl) {
 }
 
 async function findCachedIcon(cacheKey) {
-  const missFilePath = path.join(ICON_CACHE_DIR, `${cacheKey}.miss`);
-  try {
-    await fs.promises.access(missFilePath);
-    return { miss: true };
-  } catch {
-    // Continue with image lookup.
-  }
-
   const entries = await fs.promises.readdir(ICON_CACHE_DIR, { withFileTypes: true }).catch(() => []);
-  const cachedEntry = entries.find((entry) => (
+  const cachedEntries = entries.filter((entry) => (
     entry.isFile() &&
     entry.name.startsWith(`${cacheKey}.`) &&
     iconContentTypeByExtension.has(path.extname(entry.name).toLowerCase())
   ));
 
-  if (!cachedEntry) return null;
+  if (!cachedEntries.length) {
+    const missFilePath = path.join(ICON_CACHE_DIR, `${cacheKey}.miss`);
+    try {
+      const missContent = await fs.promises.readFile(missFilePath, 'utf8');
+      const miss = JSON.parse(missContent);
+      return miss?.version === ICON_DISCOVERY_VERSION ? { miss: true } : null;
+    } catch {
+      return null;
+    }
+  }
 
-  const extension = path.extname(cachedEntry.name).toLowerCase();
+  const cachedFiles = await Promise.all(cachedEntries.map(async (entry) => {
+    const filePath = path.join(ICON_CACHE_DIR, entry.name);
+    const stats = await fs.promises.stat(filePath).catch(() => null);
+    return {
+      name: entry.name,
+      filePath,
+      mtimeMs: stats?.mtimeMs || 0
+    };
+  }));
+  const cachedFile = cachedFiles.sort((left, right) => right.mtimeMs - left.mtimeMs)[0];
+  const extension = path.extname(cachedFile.name).toLowerCase();
   return {
-    filePath: path.join(ICON_CACHE_DIR, cachedEntry.name),
+    filePath: cachedFile.filePath,
     contentType: getIconContentType(extension)
   };
 }
 
 async function markIconCacheMiss(cacheKey) {
-  await fs.promises.writeFile(path.join(ICON_CACHE_DIR, `${cacheKey}.miss`), new Date().toISOString());
+  await fs.promises.writeFile(path.join(ICON_CACHE_DIR, `${cacheKey}.miss`), JSON.stringify({
+    version: ICON_DISCOVERY_VERSION,
+    savedAt: new Date().toISOString()
+  }));
 }
 
-async function cacheIconForUrl(targetUrl, cacheKey) {
+async function removeIconCacheMiss(cacheKey) {
+  await fs.promises.unlink(path.join(ICON_CACHE_DIR, `${cacheKey}.miss`)).catch((error) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+}
+
+async function clearIconCacheMisses() {
+  const entries = await fs.promises.readdir(ICON_CACHE_DIR, { withFileTypes: true }).catch(() => []);
+  await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.miss'))
+    .map((entry) => fs.promises.unlink(path.join(ICON_CACHE_DIR, entry.name)).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    })));
+}
+
+async function deleteCachedIconFiles(cacheKey, keepFileName) {
+  const entries = await fs.promises.readdir(ICON_CACHE_DIR, { withFileTypes: true }).catch(() => []);
+  await Promise.all(entries
+    .filter((entry) => (
+      entry.isFile() &&
+      entry.name !== keepFileName &&
+      entry.name.startsWith(`${cacheKey}.`) &&
+      iconContentTypeByExtension.has(path.extname(entry.name).toLowerCase())
+    ))
+    .map((entry) => fs.promises.unlink(path.join(ICON_CACHE_DIR, entry.name)).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    })));
+}
+
+async function writeCachedIcon(cacheKey, icon) {
+  const finalFileName = `${cacheKey}${icon.extension}`;
+  const finalPath = path.join(ICON_CACHE_DIR, finalFileName);
+  const tempPath = path.join(ICON_CACHE_DIR, `${cacheKey}.${crypto.randomBytes(8).toString('hex')}.tmp`);
+
+  await fs.promises.writeFile(tempPath, icon.buffer);
+  await fs.promises.rename(tempPath, finalPath);
+  await removeIconCacheMiss(cacheKey);
+  await deleteCachedIconFiles(cacheKey, finalFileName);
+
+  return {
+    filePath: finalPath,
+    contentType: icon.contentType
+  };
+}
+
+async function cacheIconForUrl(targetUrl, cacheKey, options = {}) {
+  const { markMiss = true } = options;
   const parsedUrl = new URL(targetUrl);
   const candidates = await discoverIconCandidates(parsedUrl);
 
@@ -891,18 +1132,13 @@ async function cacheIconForUrl(targetUrl, cacheKey) {
       const icon = await fetchIconCandidate(candidateUrl);
       if (!icon) continue;
 
-      const filePath = path.join(ICON_CACHE_DIR, `${cacheKey}${icon.extension}`);
-      await fs.promises.writeFile(filePath, icon.buffer);
-      return {
-        filePath,
-        contentType: icon.contentType
-      };
+      return await writeCachedIcon(cacheKey, icon);
     } catch {
       // Try the next candidate.
     }
   }
 
-  await markIconCacheMiss(cacheKey);
+  if (markMiss) await markIconCacheMiss(cacheKey);
   return null;
 }
 
@@ -1404,19 +1640,28 @@ app.get('/api/icon', requireAuth, async (req, res) => {
   const cacheKey = getIconCacheKey(targetUrl);
 
   try {
+    const forceRefresh = req.query.refresh === '1';
     const cachedIcon = await findCachedIcon(cacheKey);
-    if (cachedIcon?.miss) {
+    const hasCachedImage = cachedIcon && !cachedIcon.miss;
+
+    if (!forceRefresh && cachedIcon?.miss) {
       res.status(404).end();
       return;
     }
 
-    if (cachedIcon) {
+    if (!forceRefresh && hasCachedImage) {
       sendCachedIcon(res, cachedIcon);
       return;
     }
 
-    const downloadedIcon = await cacheIconForUrl(targetUrl, cacheKey);
+    const downloadedIcon = await cacheIconForUrl(targetUrl, cacheKey, {
+      markMiss: !hasCachedImage
+    });
     if (!downloadedIcon) {
+      if (hasCachedImage) {
+        sendCachedIcon(res, cachedIcon);
+        return;
+      }
       res.status(404).end();
       return;
     }
@@ -1430,8 +1675,8 @@ app.get('/api/icon', requireAuth, async (req, res) => {
 
 app.post('/api/icon-cache/refresh', requireAuth, async (req, res) => {
   try {
-    await fs.promises.rm(ICON_CACHE_DIR, { recursive: true, force: true });
     await fs.promises.mkdir(ICON_CACHE_DIR, { recursive: true });
+    await clearIconCacheMisses();
     res.json({ ok: true });
   } catch (error) {
     console.warn('Failed to refresh icon cache:', error.message);
