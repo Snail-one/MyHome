@@ -402,6 +402,45 @@ function isBackgroundUrl(value) {
   return isHttpUrl(value);
 }
 
+function escapeHtmlAttribute(value) {
+  return String(value).replace(/[&"<>]/g, (char) => ({
+    '&': '&amp;',
+    '"': '&quot;',
+    '<': '&lt;',
+    '>': '&gt;'
+  }[char]));
+}
+
+function escapeCssUrl(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\n\r\f]/g, '');
+}
+
+function getInitialBackgroundStyle(backgroundUrl) {
+  if (!backgroundUrl || !isBackgroundUrl(backgroundUrl)) return '';
+
+  const safeUrl = backgroundUrl.startsWith('/') ? backgroundUrl : new URL(backgroundUrl).href;
+  const cssUrl = escapeHtmlAttribute(escapeCssUrl(safeUrl));
+  return [
+    `background-image: url(&quot;${cssUrl}&quot;)`,
+    'background-size: cover',
+    'background-position: center',
+    'background-repeat: no-repeat',
+    'background-attachment: fixed'
+  ].join('; ');
+}
+
+async function renderIndexHtml() {
+  const html = await fs.promises.readFile(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const settings = getSettings();
+  const backgroundStyle = getInitialBackgroundStyle(settings.backgroundUrl);
+  if (!backgroundStyle) return html;
+
+  return html.replace(
+    '<body class="app-loading">',
+    `<body class="app-loading" style="${backgroundStyle}">`
+  );
+}
+
 function serializeSettings(row) {
   return {
     layoutColumns: row.layout_columns,
@@ -1380,14 +1419,18 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
   maxAge: '7d'
 }));
 
-app.get('/', (req, res) => {
+app.get('/', async (req, res, next) => {
   if (!isAuthenticated(req)) {
     res.redirect(302, '/login');
     return;
   }
 
-  res.set('Cache-Control', 'no-store');
-  res.sendFile(path.join(ROOT_DIR, 'index.html'));
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.type('html').send(await renderIndexHtml());
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/login', (req, res) => {
