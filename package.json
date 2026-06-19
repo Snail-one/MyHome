@@ -4,7 +4,7 @@
   "description": "Personal navigation homepage with account login and persisted settings.",
   "main": "server.js",
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "start": "node server.js",
     "dev": "node --disable-warning=ExperimentalWarning server.js"
   },
   "dependencies": {
