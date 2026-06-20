@@ -1,0 +1,132 @@
+const path = require('path');
+
+require('dotenv').config();
+
+const DEFAULT_SEARCH_ENGINES = [
+  {
+    engineKey: 'google',
+    name: 'Google',
+    urlTemplate: 'https://www.google.com/search?q={query}'
+  },
+  {
+    engineKey: 'youtube',
+    name: 'YouTube',
+    urlTemplate: 'https://www.youtube.com/results?search_query={query}'
+  },
+  {
+    engineKey: 'github',
+    name: 'GitHub',
+    urlTemplate: 'https://github.com/search?q={query}'
+  },
+  {
+    engineKey: 'bilibili',
+    name: '哔哩哔哩',
+    urlTemplate: 'https://search.bilibili.com/all?keyword={query}'
+  }
+];
+
+const DEFAULT_EMAIL_LINK = {
+  linkKey: 'google-mail',
+  title: 'Google',
+  url: 'https://mail.google.com/'
+};
+
+const REQUIRED_SEARCH_ENGINE_KEYS = new Set(['google']);
+const REQUIRED_LINK_KEYS = new Set([DEFAULT_EMAIL_LINK.linkKey]);
+const USER_ID = 1;
+const SCHEMA_VERSION = '2026-06-20.1';
+
+function parseIntegerEnv(value, fallback, minimum) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < minimum) return fallback;
+  return parsed;
+}
+
+function parseBooleanEnv(value, fallback) {
+  if (value === undefined || value === '') return fallback;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+
+  return fallback;
+}
+
+function resolveFromRoot(rootDir, value) {
+  if (!value) return value;
+  return path.isAbsolute(value) ? value : path.resolve(rootDir, value);
+}
+
+function loadConfig(env = process.env, options = {}) {
+  const { requireSecrets = true, rootDir = path.resolve(__dirname, '../..') } = options;
+  const dataDir = resolveFromRoot(rootDir, env.DATA_DIR || './data');
+  const uploadsDir = resolveFromRoot(rootDir, env.UPLOADS_DIR || './uploads');
+  const publicDir = resolveFromRoot(rootDir, env.PUBLIC_DIR || './public');
+  const databasePath = resolveFromRoot(rootDir, env.DATABASE_PATH || './data/my-home.sqlite');
+  const nodeEnv = env.NODE_ENV || 'development';
+
+  const config = {
+    rootDir,
+    publicDir,
+    dataDir,
+    uploadsDir,
+    backgroundsDir: path.join(uploadsDir, 'backgrounds'),
+    iconCacheDir: path.join(dataDir, 'icon-cache'),
+    databasePath,
+    host: env.HOST || '127.0.0.1',
+    port: parseIntegerEnv(env.PORT, 3000, 1),
+    nodeEnv,
+    adminUsername: env.ADMIN_USERNAME,
+    adminPassword: env.ADMIN_PASSWORD,
+    sessionSecret: env.SESSION_SECRET,
+    sessionCookieName: 'my_home_sid',
+    sessionCookieSecure: parseBooleanEnv(env.SESSION_COOKIE_SECURE, nodeEnv === 'production'),
+    sessionMaxAgeMs: 1000 * 60 * 60 * 24 * 30,
+    sessionCleanupIntervalMs: 60 * 60 * 1000,
+    trustProxy: parseBooleanEnv(env.TRUST_PROXY, false),
+    loginMaxFailedAttempts: parseIntegerEnv(env.LOGIN_MAX_FAILED_ATTEMPTS, 5, 1),
+    loginWindowMs: parseIntegerEnv(env.LOGIN_WINDOW_MS, 15 * 60 * 1000, 1000),
+    loginLockoutMs: parseIntegerEnv(env.LOGIN_LOCKOUT_MS, 15 * 60 * 1000, 1000),
+    bcryptRounds: parseIntegerEnv(env.BCRYPT_ROUNDS, 12, 4),
+    maxBackgroundSize: 10 * 1024 * 1024,
+    maxIconSize: 1024 * 1024,
+    iconFetchTimeoutMs: parseIntegerEnv(env.ICON_FETCH_TIMEOUT_MS, 5000, 100),
+    iconHtmlSampleSize: 128 * 1024,
+    iconDiscoveryVersion: 4,
+    iconMaxRedirects: parseIntegerEnv(env.ICON_MAX_REDIRECTS, 3, 0),
+    iconMaxCandidates: parseIntegerEnv(env.ICON_MAX_CANDIDATES, 40, 1),
+    userId: USER_ID,
+    schemaVersion: SCHEMA_VERSION,
+    defaultSearchEngines: DEFAULT_SEARCH_ENGINES,
+    defaultEmailLink: DEFAULT_EMAIL_LINK,
+    requiredSearchEngineKeys: REQUIRED_SEARCH_ENGINE_KEYS,
+    requiredLinkKeys: REQUIRED_LINK_KEYS
+  };
+
+  if (requireSecrets) {
+    const missing = [];
+    if (!config.adminUsername) missing.push('ADMIN_USERNAME');
+    if (!config.adminPassword) missing.push('ADMIN_PASSWORD');
+    if (!config.sessionSecret) missing.push('SESSION_SECRET');
+    if (missing.length) {
+      const error = new Error(`Missing required environment variables: ${missing.join(', ')}`);
+      error.code = 'CONFIG_MISSING_REQUIRED_ENV';
+      error.missing = missing;
+      throw error;
+    }
+  }
+
+  return config;
+}
+
+module.exports = {
+  DEFAULT_EMAIL_LINK,
+  DEFAULT_SEARCH_ENGINES,
+  REQUIRED_LINK_KEYS,
+  REQUIRED_SEARCH_ENGINE_KEYS,
+  SCHEMA_VERSION,
+  USER_ID,
+  loadConfig,
+  parseBooleanEnv,
+  parseIntegerEnv
+};

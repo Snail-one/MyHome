@@ -1,4 +1,4 @@
-FROM node:24-slim
+FROM node:22-slim
 
 WORKDIR /app
 
@@ -6,11 +6,13 @@ ENV NODE_ENV=production
 
 COPY package*.json ./
 
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
-COPY . .
+COPY --chown=node:node . .
 
-RUN mkdir -p data uploads/backgrounds
+RUN mkdir -p data uploads/backgrounds && chown -R node:node /app
+
+USER node
 
 EXPOSE 3000
 

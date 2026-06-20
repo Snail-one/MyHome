@@ -1,110 +1,22 @@
-// ==================== 搜索引擎配置 ====================
-const defaultSearchEngines = {
-    google: {
-        name: 'Google',
-        urlTemplate: 'https://www.google.com/search?q={query}',
-        placeholder: '搜索 Google...'
-    },
-    youtube: {
-        name: 'YouTube',
-        urlTemplate: 'https://www.youtube.com/results?search_query={query}',
-        placeholder: '在 YouTube 搜索...'
-    },
-    github: {
-        name: 'GitHub',
-        urlTemplate: 'https://github.com/search?q={query}',
-        placeholder: '搜索 GitHub...'
-    },
-    bilibili: {
-        name: '哔哩哔哩',
-        urlTemplate: 'https://search.bilibili.com/all?keyword={query}',
-        placeholder: '在 B 站搜索...'
-    }
-};
+import { buildSearchUrl as buildSearchUrlFromTemplate } from './search.js';
+import {
+    DEFAULT_SETTINGS,
+    ICON_IMPORT_FAILURE_STORAGE_KEY,
+    ICON_IMPORT_FAILURE_TTL_MS,
+    LINK_SIZE_CONFIG,
+    LINK_SIZE_OPTIONS,
+    LOCAL_ICON_CACHE_STORAGE_KEY,
+    MAX_ICON_UPLOAD_SIZE,
+    REQUIRED_EMAIL_LINK_KEYS,
+    createAppState,
+    defaultSearchEngines
+} from './state.js';
 
+// ==================== 搜索引擎配置 ====================
 let searchEngines = { ...defaultSearchEngines };
 
-const DEFAULT_SETTINGS = {
-    layoutColumns: 0,
-    projectLayoutColumns: 0,
-    editMode: false,
-    projectLinkDisplayMode: 'centered',
-    bookmarkLinkDisplayMode: 'default',
-    projectLinkSize: 'medium',
-    bookmarkLinkSize: 'medium',
-    backgroundUrl: ''
-};
-const REQUIRED_EMAIL_LINK_KEYS = new Set(['google-mail']);
-const LOCAL_ICON_CACHE_STORAGE_KEY = 'my-home-local-icon-cache-v1';
-const ICON_IMPORT_FAILURE_STORAGE_KEY = 'my-home-icon-import-failures-v1';
-const ICON_IMPORT_FAILURE_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_ICON_UPLOAD_SIZE = 1024 * 1024;
 let iconImportEndpointAvailable = true;
-const LINK_SIZE_OPTIONS = [
-    { size: 'small', label: '小' },
-    { size: 'medium', label: '默认' },
-    { size: 'large', label: '大' },
-    { size: 'xlarge', label: '超大' }
-];
-const LINK_SIZE_CONFIG = {
-    small: {
-        cardWidth: '96px',
-        minHeight: '78px',
-        addCardMinHeight: '78px',
-        iconSize: '30px',
-        titleSize: '13px',
-        cardGap: '6px',
-        cardPadding: '10px',
-        gridGap: '12px',
-        addIconSize: '34px',
-        addIconSvgSize: '20px'
-    },
-    medium: {
-        cardWidth: '120px',
-        minHeight: 'auto',
-        addCardMinHeight: '92px',
-        iconSize: 'clamp(30px, 3.5vmin, 40px)',
-        titleSize: 'clamp(14px, 1.6vw, 18px)',
-        cardGap: 'clamp(6px, 0.8vw, 10px)',
-        cardPadding: 'clamp(10px, 1.2vw, 16px)',
-        gridGap: 'var(--nav-gap)',
-        addIconSize: '42px',
-        addIconSvgSize: '24px'
-    },
-    large: {
-        cardWidth: '144px',
-        minHeight: '112px',
-        addCardMinHeight: '112px',
-        iconSize: '48px',
-        titleSize: '17px',
-        cardGap: '12px',
-        cardPadding: '16px',
-        gridGap: '18px',
-        addIconSize: '50px',
-        addIconSvgSize: '28px'
-    },
-    xlarge: {
-        cardWidth: '168px',
-        minHeight: '132px',
-        addCardMinHeight: '132px',
-        iconSize: '56px',
-        titleSize: '18px',
-        cardGap: '14px',
-        cardPadding: '18px',
-        gridGap: '20px',
-        addIconSize: '58px',
-        addIconSvgSize: '32px'
-    }
-};
-
-const appState = {
-    user: null,
-    links: [],
-    emailLinks: [],
-    projectLinks: [],
-    searchEngineRecords: [],
-    settings: { ...DEFAULT_SETTINGS }
-};
+const appState = createAppState();
 
 let currentEngine = 'google';
 let layoutColumns = 0;
@@ -414,17 +326,7 @@ function renderSearchEngineButtons() {
 }
 
 function buildSearchUrl(engineConfig, query) {
-    const encodedQuery = encodeURIComponent(query);
-    if (engineConfig.urlTemplate) {
-        if (engineConfig.urlTemplate.includes('{query}')) {
-            return engineConfig.urlTemplate.replaceAll('{query}', encodedQuery);
-        }
-
-        const separator = engineConfig.urlTemplate.includes('?') ? '&' : '?';
-        return `${engineConfig.urlTemplate}${separator}q=${encodedQuery}`;
-    }
-
-    return engineConfig.url ? engineConfig.url + encodedQuery : '#';
+    return buildSearchUrlFromTemplate(engineConfig, query);
 }
 
 function switchSearchEngine(engine) {
@@ -555,7 +457,9 @@ function getLinkEmptyState(linkType) {
 function getDomainFromUrl(url) {
     if (!url || typeof url !== 'string' || !url.trim()) return null;
     try {
-        const normalizedUrl = url.startsWith('http') ? url : 'https://' + url;
+        const trimmed = url.trim();
+        if (/^[a-z][a-z\d+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) return null;
+        const normalizedUrl = /^https?:\/\//i.test(trimmed) ? trimmed : 'https://' + trimmed;
         const parsedUrl = new URL(normalizedUrl);
         if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
         return parsedUrl.hostname;
@@ -568,7 +472,9 @@ function getParsedHttpUrl(url) {
     if (!url || typeof url !== 'string' || !url.trim()) return null;
 
     try {
-        const normalizedUrl = url.trim().startsWith('http') ? url.trim() : 'https://' + url.trim();
+        const trimmed = url.trim();
+        if (/^[a-z][a-z\d+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) return null;
+        const normalizedUrl = /^https?:\/\//i.test(trimmed) ? trimmed : 'https://' + trimmed;
         const parsedUrl = new URL(normalizedUrl);
         if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
         return parsedUrl;
@@ -973,7 +879,8 @@ function getEffectiveUrl(link) {
     const url = link.url && link.url.trim();
     try {
         if (!url) return '#';
-        const parsedUrl = new URL(url.startsWith('http') ? url : 'https://' + url);
+        if (/^[a-z][a-z\d+.-]*:/i.test(url) && !/^https?:\/\//i.test(url)) return '#';
+        const parsedUrl = new URL(/^https?:\/\//i.test(url) ? url : 'https://' + url);
         if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return '#';
         return parsedUrl.href;
     } catch {

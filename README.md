@@ -2,6 +2,8 @@
 
 一个带账号登录、快捷搜索、导航链接管理和自定义背景的个人首页。
 
+> 重要：当前版本重建了服务端目录和 SQLite 初始化逻辑。旧版 `data/my-home.sqlite` 没有自动迁移保证；首次启动如果检测不到新 schema 版本，会重建应用表。升级前请先备份 `data/` 和 `uploads/`。
+
 ## 功能
 
 - 账号密码登录，使用服务端 httpOnly session 保持登录状态
@@ -11,6 +13,7 @@
 - 背景图片支持上传文件或填写图片链接
 - SQLite 保存用户设置和链接数据
 - 上传的背景图片保存到服务器 `uploads/backgrounds/`，数据库只保存图片路径
+- 自动 favicon 缓存，服务端抓取带 SSRF 防护、重定向校验和响应大小限制
 
 ## 运行方式
 
@@ -54,6 +57,12 @@ LOGIN_LOCKOUT_MS=900000
 npm start
 ```
 
+运行测试：
+
+```bash
+npm test
+```
+
 5. 浏览器访问
 
 ```text
@@ -62,7 +71,7 @@ http://localhost:3000
 
 ## 容器运行
 
-项目已经可以直接打包成 Docker 镜像。推荐用 `docker compose` 启动，这样 `data/` 和 `uploads/` 会自动持久化到卷里。
+项目已经可以直接打包成 Docker 镜像。推荐用 `docker compose` 启动，这样 `data/` 和 `uploads/` 会自动持久化到宿主目录里。镜像使用非 root 用户运行。
 
 1. 准备环境变量
 
@@ -105,6 +114,13 @@ docker compose logs -f
 docker build -t my-home:latest .
 ```
 
+在容器里运行测试：
+
+```bash
+docker compose build
+docker compose run --rm my-home npm test
+```
+
 然后手动运行：
 
 ```bash
@@ -123,6 +139,7 @@ docker run -d \
 
 - SQLite 数据库：默认 `data/my-home.sqlite`
 - 背景图片文件：默认 `uploads/backgrounds/`
+- favicon 缓存：默认 `data/icon-cache/`
 - 自定义搜索引擎保存在 SQLite 中
 - 数据库不会保存图片二进制或 base64，只保存背景图片路径或外部图片 URL
 
@@ -130,10 +147,28 @@ docker run -d \
 
 ```text
 .
-├── index.html
-├── script.js
-├── style.css
+├── public/
+│   ├── index.html
+│   ├── login.html
+│   ├── style.css
+│   ├── login.js
+│   └── js/
+│       ├── main.js
+│       ├── api.js
+│       ├── state.js
+│       ├── icons.js
+│       ├── links.js
+│       ├── search.js
+│       └── settings.js
+├── src/server/
+│   ├── app.js
+│   ├── config.js
+│   ├── db/
+│   ├── middleware/
+│   ├── routes/
+│   └── services/
 ├── server.js
+├── test/
 ├── package.json
 ├── .env.example
 ├── data/                 # 运行时生成，已忽略
@@ -144,6 +179,7 @@ docker run -d \
 
 - 第一次启动会根据 `.env` 创建单个管理员账号。
 - 后续修改 `.env` 里的账号或密码并重启服务，会更新管理员账号。
+- 当前 schema 版本不匹配时会重建应用表；升级前务必备份 `data/my-home.sqlite`。
 - 旧版浏览器 `localStorage` 里的链接和背景不会自动迁移。
 - 登录防爆破默认规则：15 分钟内同一 IP + 用户名失败 5 次后锁定 15 分钟。
 - 生产环境请使用 HTTPS，设置足够强的 `SESSION_SECRET` 和管理员密码，并把 `SESSION_COOKIE_SECURE` 设为 `true`。
