@@ -39,7 +39,7 @@ function createDatabase(config, options = {}) {
   const stores = createStores(db, config);
 
   if (!options.skipSeed) {
-    seedDatabase(stores, config);
+    seedDatabase(stores);
   }
 
   return {

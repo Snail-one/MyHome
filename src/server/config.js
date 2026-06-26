@@ -116,7 +116,7 @@ function resolveSessionSecret(envSecret, secretPath) {
 }
 
 function loadConfig(env = process.env, options = {}) {
-  const { requireSecrets = true, rootDir = path.resolve(__dirname, '../..') } = options;
+  const { rootDir = path.resolve(__dirname, '../..') } = options;
   const dataDir = resolveFromRoot(rootDir, env.DATA_DIR || './data');
   const uploadsDirOverridden = env.UPLOADS_DIR !== undefined && String(env.UPLOADS_DIR).trim() !== '';
   const uploadsDir = resolveFromRoot(rootDir, uploadsDirOverridden ? env.UPLOADS_DIR : path.join(dataDir, 'uploads'));
@@ -160,8 +160,6 @@ function loadConfig(env = process.env, options = {}) {
     host: env.HOST || '127.0.0.1',
     port: parseIntegerEnv(env.PORT, 3000, 1),
     nodeEnv,
-    adminUsername: env.ADMIN_USERNAME,
-    adminPassword: env.ADMIN_PASSWORD,
     sessionSecret: '',
     sessionSecretPath,
     sessionCookieName: 'my_home_sid',
@@ -192,18 +190,6 @@ function loadConfig(env = process.env, options = {}) {
     requiredSearchEngineKeys: REQUIRED_SEARCH_ENGINE_KEYS,
     requiredLinkKeys: REQUIRED_LINK_KEYS
   };
-
-  if (requireSecrets) {
-    const missing = [];
-    if (!config.adminUsername) missing.push('ADMIN_USERNAME');
-    if (!config.adminPassword) missing.push('ADMIN_PASSWORD');
-    if (missing.length) {
-      const error = new Error(`Missing required environment variables: ${missing.join(', ')}`);
-      error.code = 'CONFIG_MISSING_REQUIRED_ENV';
-      error.missing = missing;
-      throw error;
-    }
-  }
 
   config.sessionSecret = resolveSessionSecret(env.SESSION_SECRET, sessionSecretPath);
   return config;

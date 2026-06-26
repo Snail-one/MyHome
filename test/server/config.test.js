@@ -20,18 +20,16 @@ test('parseIntegerEnv enforces minimum and fallback', () => {
   assert.equal(parseIntegerEnv('abc', 5, 1), 5);
 });
 
-test('loadConfig reports missing required secrets', () => {
-  assert.throws(() => loadConfig({}, { rootDir: process.cwd() }), (error) => {
-    assert.equal(error.code, 'CONFIG_MISSING_REQUIRED_ENV');
-    assert.deepEqual(error.missing, ['ADMIN_USERNAME', 'ADMIN_PASSWORD']);
-    return true;
-  });
+test('loadConfig does not require administrator credentials from env', () => {
+  const config = loadConfig({
+    SESSION_SECRET: 'session-secret'
+  }, { rootDir: process.cwd() });
+
+  assert.equal(config.sessionSecret, 'session-secret');
 });
 
 test('loadConfig builds expected runtime paths', () => {
   const config = loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     SESSION_SECRET: 'session-secret',
     DATABASE_PATH: './tmp/app.sqlite',
     PORT: '8080',
@@ -52,8 +50,6 @@ test('loadConfig builds expected runtime paths', () => {
 
 test('loadConfig builds icon fetch proxy settings', () => {
   const config = loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     SESSION_SECRET: 'session-secret',
     ICON_FETCH_PROXY: 'http://127.0.0.1:7890',
     ICON_FETCH_LOG: 'true',
@@ -68,8 +64,6 @@ test('loadConfig builds icon fetch proxy settings', () => {
 
 test('loadConfig allows explicit uploads directory override', () => {
   const config = loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     SESSION_SECRET: 'session-secret',
     DATA_DIR: './data',
     UPLOADS_DIR: './legacy-uploads'
@@ -83,8 +77,6 @@ test('loadConfig allows explicit uploads directory override', () => {
 test('loadConfig generates and reuses session secret when not configured', () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-home-config-'));
   const env = {
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     DATA_DIR: './data'
   };
 
@@ -106,8 +98,6 @@ test('loadConfig uses configured session secret before generated file', () => {
   fs.writeFileSync(generatedPath, 'generated-secret\n');
 
   const config = loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     SESSION_SECRET: 'configured-secret',
     DATA_DIR: './data'
   }, { rootDir });
@@ -122,8 +112,6 @@ test('loadConfig replaces an empty generated session secret file', () => {
   fs.writeFileSync(generatedPath, '\n');
 
   const config = loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     DATA_DIR: './data'
   }, { rootDir });
 
@@ -138,8 +126,6 @@ test('ensureRuntimeDirectories copies legacy background uploads into data upload
   fs.writeFileSync(path.join(legacyBackgroundsDir, 'legacy.txt'), 'legacy');
 
   const config = loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     SESSION_SECRET: 'session-secret',
     DATA_DIR: './data'
   }, { rootDir });
@@ -159,8 +145,6 @@ test('ensureRuntimeDirectories does not copy legacy uploads when uploads dir is 
   fs.writeFileSync(path.join(legacyBackgroundsDir, 'legacy.txt'), 'legacy');
 
   const config = loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     SESSION_SECRET: 'session-secret',
     DATA_DIR: './data',
     UPLOADS_DIR: './custom-uploads'

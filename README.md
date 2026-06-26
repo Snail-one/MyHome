@@ -36,11 +36,9 @@ npm install
 cp .env.example .env
 ```
 
-然后编辑 `.env`：
+然后按需编辑 `.env`：
 
 ```bash
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=换成你的强密码
 SESSION_COOKIE_SECURE=false
 HOST=127.0.0.1
 PORT=3000
@@ -55,6 +53,8 @@ ICON_MAX_CANDIDATES=40
 ICON_FETCH_LOG=false
 #ICON_FETCH_PROXY=http://127.0.0.1:7890
 ```
+
+管理员账号不再写在 `.env` 里。首次访问服务时，登录页会引导创建管理员账号；后续可以在管理弹窗里修改账号和密码。
 
 `SESSION_SECRET` 可以不填；服务端会自动生成并复用 `data/session-secret`。如需使用外部密钥管理，可手动设置 `SESSION_SECRET` 或 `SESSION_SECRET_FILE`。
 
@@ -109,13 +109,13 @@ http://localhost:3000
 cp .env.example .env
 ```
 
-按需修改 `.env`，至少保证这几个值可用：
+按需修改 `.env`，常用配置如下：
 
 ```bash
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=换成你的强密码
 SESSION_COOKIE_SECURE=false
 ```
+
+管理员账号会在首次访问 Web 页面时创建，不需要在 `.env` 中配置。
 
 `SESSION_SECRET` 默认自动生成到 `data/session-secret`；如果你希望固定为外部提供的值，可以在 `.env` 中显式设置。
 
@@ -209,8 +209,8 @@ docker run -d \
 
 ## 注意
 
-- 第一次启动会根据 `.env` 创建单个管理员账号。
-- 后续修改 `.env` 里的账号或密码并重启服务，会更新管理员账号。
+- 第一次访问会在登录页引导创建单个管理员账号。
+- 后续在管理弹窗中修改管理员账号或密码；密码只以 bcrypt 哈希形式保存。
 - 当前 schema 版本不匹配时会重建应用表；升级前务必备份 `data/my-home.sqlite`。
 - 旧版浏览器 `localStorage` 里的链接和背景不会自动迁移。
 - 登录防爆破默认规则：15 分钟内同一 IP + 用户名失败 5 次后锁定 15 分钟。

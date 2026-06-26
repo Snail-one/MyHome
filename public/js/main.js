@@ -1003,8 +1003,59 @@ function escapeAttribute(text) {
 }
 
 // ==================== 菜单管理 ====================
+function setAccountFormMessage(message, type = '') {
+    const messageEl = document.getElementById('account-form-message');
+    if (!messageEl) return;
+    messageEl.textContent = message || '';
+    messageEl.classList.toggle('is-error', type === 'error');
+    messageEl.classList.toggle('is-success', type === 'success');
+}
+
+function resetAccountForm() {
+    const form = document.getElementById('account-form');
+    const usernameInput = document.getElementById('account-username');
+    if (!form || !usernameInput) return;
+    form.reset();
+    usernameInput.value = appState.user?.username || '';
+    setAccountFormMessage('');
+}
+
+async function submitAccountForm(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitBtn = document.getElementById('account-form-submit');
+    const username = document.getElementById('account-username')?.value.trim() || '';
+    const currentPassword = document.getElementById('account-current-password')?.value || '';
+    const newPassword = document.getElementById('account-new-password')?.value || '';
+    const newPasswordConfirm = document.getElementById('account-new-password-confirm')?.value || '';
+
+    setAccountFormMessage('');
+    if (newPassword !== newPasswordConfirm) {
+        setAccountFormMessage('两次输入的新密码不一致', 'error');
+        return;
+    }
+
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+        const data = await apiRequest('/api/account', {
+            method: 'PUT',
+            body: { username, currentPassword, newPassword }
+        });
+        appState.user = data.user || appState.user;
+        form.reset();
+        const usernameInput = document.getElementById('account-username');
+        if (usernameInput) usernameInput.value = appState.user?.username || username;
+        setAccountFormMessage('账号已保存', 'success');
+    } catch (error) {
+        setAccountFormMessage(error.message, 'error');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
 function openManageModal() {
     openModal('manage-modal');
+    resetAccountForm();
     renderLayoutButtons();
     renderSearchEngineList();
 }
@@ -1670,6 +1721,7 @@ function bindMenuManagement() {
     const manageBtn = document.querySelector('.manage-menu-btn');
     const editModeBtn = document.getElementById('edit-mode-btn');
     const form = document.getElementById('link-form');
+    const accountForm = document.getElementById('account-form');
     const emailLinksContainer = document.getElementById('email-links-container');
     const projectLinksContainer = document.getElementById('project-links-container');
     const searchEngineForm = document.getElementById('search-engine-form');
@@ -1685,6 +1737,7 @@ function bindMenuManagement() {
     if (iconRefreshBtn) iconRefreshBtn.addEventListener('click', refreshIconCache);
     cancelBtn.addEventListener('click', closeLinkModal);
     if (searchEngineCancelBtn) searchEngineCancelBtn.addEventListener('click', resetSearchEngineForm);
+    if (accountForm) accountForm.addEventListener('submit', submitAccountForm);
 
     if (emailLinksContainer) {
         emailLinksContainer.addEventListener('click', (event) => {

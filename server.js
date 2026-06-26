@@ -4,17 +4,7 @@ const { createDatabase } = require('./src/server/db');
 const { clearProxyAgents } = require('./src/server/services/httpSafety');
 
 function main() {
-  let config;
-  try {
-    config = loadConfig();
-  } catch (error) {
-    if (error.code === 'CONFIG_MISSING_REQUIRED_ENV') {
-      console.error(error.message);
-      console.error('Copy .env.example to .env and set ADMIN_USERNAME and ADMIN_PASSWORD before starting the server.');
-      process.exit(1);
-    }
-    throw error;
-  }
+  const config = loadConfig();
 
   if (config.iconFetchLogEnabled) {
     console.log('[icon-fetch] detailed logging enabled (set ICON_FETCH_LOG=false to disable)');

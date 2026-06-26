@@ -9,9 +9,14 @@ function createUserStore(db, config) {
     findAdmin: db.prepare('SELECT * FROM users WHERE id = ?'),
     findByUsername: db.prepare('SELECT * FROM users WHERE id = ? AND username = ?'),
     insertAdmin: db.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)'),
-    updateAdmin: db.prepare(`
+    updateAdminCredentials: db.prepare(`
       UPDATE users
       SET username = ?, password_hash = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `),
+    updateAdminUsername: db.prepare(`
+      UPDATE users
+      SET username = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `),
     getMe: db.prepare('SELECT username FROM users WHERE id = ?')
@@ -30,8 +35,11 @@ function createUserStore(db, config) {
     insertAdmin(username, passwordHash) {
       return statements.insertAdmin.run(config.userId, username, passwordHash);
     },
-    updateAdmin(username, passwordHash) {
-      return statements.updateAdmin.run(username, passwordHash, config.userId);
+    updateAdminCredentials(username, passwordHash) {
+      return statements.updateAdminCredentials.run(username, passwordHash, config.userId);
+    },
+    updateAdminUsername(username) {
+      return statements.updateAdminUsername.run(username, config.userId);
     }
   };
 }

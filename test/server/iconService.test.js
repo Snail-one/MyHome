@@ -11,8 +11,6 @@ function makeIconConfig() {
   const rootDir = path.resolve(__dirname, '../..');
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-home-icon-service-'));
   return loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'password',
     SESSION_SECRET: 'session-secret-for-tests',
     DATA_DIR: path.join(tmpDir, 'data'),
     UPLOADS_DIR: path.join(tmpDir, 'uploads'),

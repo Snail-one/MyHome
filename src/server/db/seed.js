@@ -1,28 +1,16 @@
-const bcrypt = require('bcryptjs');
-
-function seedDatabase(stores, config) {
-  const existing = stores.users.findAdmin();
-  const passwordMatches = existing
-    ? bcrypt.compareSync(config.adminPassword, existing.password_hash)
-    : false;
-
-  if (!existing) {
-    stores.users.insertAdmin(
-      config.adminUsername,
-      bcrypt.hashSync(config.adminPassword, config.bcryptRounds)
-    );
-  } else if (existing.username !== config.adminUsername || !passwordMatches) {
-    stores.users.updateAdmin(
-      config.adminUsername,
-      bcrypt.hashSync(config.adminPassword, config.bcryptRounds)
-    );
-  }
-
+function ensureUserDefaults(stores) {
   stores.settings.ensure();
   stores.links.ensureDefaultEmailLink();
   stores.searchEngines.ensureDefaults();
 }
 
+function seedDatabase(stores) {
+  const existing = stores.users.findAdmin();
+  if (!existing) return;
+  ensureUserDefaults(stores);
+}
+
 module.exports = {
+  ensureUserDefaults,
   seedDatabase
 };

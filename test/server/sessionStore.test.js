@@ -12,8 +12,6 @@ const { SQLiteSessionStore } = require('../../src/server/services/sessionStore')
 function createTestDatabase() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-home-session-'));
   const config = loadConfig({
-    ADMIN_USERNAME: 'admin',
-    ADMIN_PASSWORD: 'secret',
     SESSION_SECRET: 'session-secret',
     DATA_DIR: path.join(tmpDir, 'data'),
     UPLOADS_DIR: path.join(tmpDir, 'uploads'),

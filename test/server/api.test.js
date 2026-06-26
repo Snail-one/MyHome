@@ -5,9 +5,12 @@ const path = require('node:path');
 const test = require('node:test');
 const { once } = require('node:events');
 
+const bcrypt = require('bcryptjs');
+
 const { createApp } = require('../../src/server/app');
 const { loadConfig } = require('../../src/server/config');
 const { createDatabase } = require('../../src/server/db');
+const { seedDatabase } = require('../../src/server/db/seed');
 
 function makeConfig(overrides = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-home-api-'));
@@ -15,8 +18,6 @@ function makeConfig(overrides = {}) {
   return {
     tmpDir,
     config: loadConfig({
-      ADMIN_USERNAME: 'admin',
-      ADMIN_PASSWORD: 'correct-password',
       SESSION_SECRET: 'session-secret-for-tests',
       DATA_DIR: path.join(tmpDir, 'data'),
       UPLOADS_DIR: path.join(tmpDir, 'uploads'),
@@ -31,9 +32,17 @@ function makeConfig(overrides = {}) {
   };
 }
 
-async function startApp(overrides) {
+async function startApp(overrides, options = {}) {
+  const { seedAdmin = true } = options;
   const { config } = makeConfig(overrides);
-  const database = createDatabase(config);
+  const database = createDatabase(config, { skipSeed: true });
+  if (seedAdmin) {
+    database.stores.users.insertAdmin(
+      'admin',
+      bcrypt.hashSync('correct-password', config.bcryptRounds)
+    );
+    seedDatabase(database.stores);
+  }
   const app = createApp({
     config,
     db: database.db,
@@ -77,10 +86,10 @@ async function startApp(overrides) {
     return { response, data };
   }
 
-  async function login(password = 'correct-password') {
+  async function login(password = 'correct-password', username = 'admin') {
     return requestJson('/api/login', {
       method: 'POST',
-      body: { username: 'admin', password }
+      body: { username, password }
     });
   }
 
@@ -92,8 +101,49 @@ async function startApp(overrides) {
     database.close();
   }
 
-  return { baseUrl, close, login, request, requestJson };
+  return { baseUrl, close, database, login, request, requestJson };
 }
+
+test('first deployment registration creates hashed admin and authenticated defaults', async (t) => {
+  const app = await startApp(undefined, { seedAdmin: false });
+  t.after(app.close);
+
+  let result = await app.requestJson('/api/me');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.authenticated, false);
+  assert.equal(result.data.setupRequired, true);
+
+  result = await app.requestJson('/api/settings');
+  assert.equal(result.response.status, 401);
+
+  result = await app.requestJson('/api/setup/register', {
+    method: 'POST',
+    body: { username: 'owner', password: 'setup-password' }
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.user.username, 'owner');
+
+  const user = app.database.stores.users.findAdmin();
+  assert.equal(user.username, 'owner');
+  assert.notEqual(user.password_hash, 'setup-password');
+  assert.match(user.password_hash, /^\$2[aby]\$/);
+  assert.equal(bcrypt.compareSync('setup-password', user.password_hash), true);
+
+  result = await app.requestJson('/api/me');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.authenticated, true);
+  assert.equal(result.data.user.username, 'owner');
+
+  result = await app.requestJson('/api/settings');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.settings.bookmarkLinkDisplayMode, 'centered');
+
+  result = await app.requestJson('/api/setup/register', {
+    method: 'POST',
+    body: { username: 'other', password: 'another-password' }
+  });
+  assert.equal(result.response.status, 409);
+});
 
 test('protected APIs require login and authenticated user can manage settings, links, and engines', async (t) => {
   const app = await startApp();
@@ -185,6 +235,48 @@ test('protected APIs require login and authenticated user can manage settings, l
   const docsEngine = result.data.engines.find((engine) => engine.name === 'Docs');
   assert.ok(docsEngine);
   assert.equal(docsEngine.iconVersion, 1);
+});
+
+test('authenticated user can update username and password hash', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+
+  await app.login();
+
+  let result = await app.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'owner',
+      currentPassword: 'wrong-password',
+      newPassword: 'new-correct-password'
+    }
+  });
+  assert.equal(result.response.status, 401);
+
+  result = await app.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'owner',
+      currentPassword: 'correct-password',
+      newPassword: 'new-correct-password'
+    }
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.user.username, 'owner');
+
+  const user = app.database.stores.users.findAdmin();
+  assert.equal(user.username, 'owner');
+  assert.notEqual(user.password_hash, 'new-correct-password');
+  assert.equal(bcrypt.compareSync('new-correct-password', user.password_hash), true);
+
+  result = await app.requestJson('/api/logout', { method: 'POST' });
+  assert.equal(result.response.status, 200);
+
+  result = await app.login('correct-password');
+  assert.equal(result.response.status, 401);
+
+  result = await app.login('new-correct-password', 'owner');
+  assert.equal(result.response.status, 200);
 });
 
 test('failed login lockout returns 429 and Retry-After', async (t) => {

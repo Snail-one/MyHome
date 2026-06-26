@@ -11,8 +11,8 @@
     <div class="auth-screen" id="auth-screen" aria-hidden="false">
         <form class="auth-card" id="login-form">
             <div class="auth-card-header">
-                <h1>个人导航登录</h1>
-                <p>请登录后使用</p>
+                <h1 id="auth-title">个人导航登录</h1>
+                <p id="auth-subtitle">请登录后使用</p>
             </div>
             <div class="auth-form-group">
                 <label for="login-username">账号</label>
@@ -22,8 +22,12 @@
                 <label for="login-password">密码</label>
                 <input type="password" id="login-password" name="password" autocomplete="current-password" required>
             </div>
+            <div class="auth-form-group" id="register-confirm-group" hidden>
+                <label for="register-password-confirm">确认密码</label>
+                <input type="password" id="register-password-confirm" name="passwordConfirm" autocomplete="new-password">
+            </div>
             <p class="auth-error" id="login-error" role="alert" aria-live="polite"></p>
-            <button type="submit" class="btn btn-primary auth-submit">登录</button>
+            <button type="submit" class="btn btn-primary auth-submit" id="auth-submit">登录</button>
         </form>
     </div>
 

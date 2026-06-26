@@ -5,7 +5,7 @@
 ## 当前架构
 
 - 前端通过同源 API 读取和保存数据，不再把链接和背景设置写入 `localStorage`。
-- 单管理员账号由 `.env` 配置，服务启动时写入 SQLite。
+- 单管理员账号由首次访问时的注册引导创建，后续可在界面中修改。
 - 密码使用 bcrypt 哈希保存，数据库不保存明文密码。
 - 登录状态使用 httpOnly session cookie。
 - 登录接口按 IP + 用户名做失败次数限制，超过阈值会临时锁定。
@@ -13,7 +13,7 @@
 
 ## 已实现的保护
 
-- API 均要求登录，除了 `POST /api/login` 和 `GET /api/me`。
+- API 均要求登录，除了 `POST /api/login`、`GET /api/me`、`GET /api/setup` 和仅在无管理员时可用的 `POST /api/setup/register`。
 - `POST /api/login` 默认 15 分钟内失败 5 次后返回 429，并带 `Retry-After`。
 - 链接 URL 只允许 `http://` 和 `https://`。
 - 自定义搜索引擎 URL 只允许 `http://` 和 `https://`。
@@ -28,7 +28,7 @@
 - 生产环境必须使用 HTTPS。
 - `.env` 不要提交到仓库。
 - `SESSION_SECRET` 默认自动生成到 `data/session-secret`；生产环境需要持久化 `data/`，或显式设置外部 secret。
-- `ADMIN_PASSWORD` 应使用强密码。
+- 管理员密码应使用强密码，修改密码时会重新生成 bcrypt 哈希。
 - `data/` 是运行时数据目录，需要纳入服务器备份策略。
 
 ## 建议测试

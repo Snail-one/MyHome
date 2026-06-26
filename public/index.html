@@ -158,10 +158,35 @@
     <div class="modal-overlay" id="manage-modal" aria-hidden="true">
         <div class="modal">
             <div class="modal-header">
-                <h2 class="modal-title">布局与搜索引擎</h2>
+                <h2 class="modal-title">设置</h2>
                 <button type="button" class="modal-close" data-close="manage-modal" title="关闭">&times;</button>
             </div>
             <div class="modal-body">
+                <div class="account-settings-section">
+                    <h3>管理员账号</h3>
+                    <form class="account-form" id="account-form">
+                        <div class="form-group">
+                            <label for="account-username">账号</label>
+                            <input type="text" id="account-username" name="username" autocomplete="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="account-current-password">当前密码</label>
+                            <input type="password" id="account-current-password" name="currentPassword" autocomplete="current-password" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="account-new-password">新密码</label>
+                            <input type="password" id="account-new-password" name="newPassword" autocomplete="new-password" placeholder="留空则不修改密码">
+                        </div>
+                        <div class="form-group">
+                            <label for="account-new-password-confirm">确认新密码</label>
+                            <input type="password" id="account-new-password-confirm" name="newPasswordConfirm" autocomplete="new-password">
+                        </div>
+                        <p class="form-message" id="account-form-message" role="status" aria-live="polite"></p>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="account-form-submit">保存账号</button>
+                        </div>
+                    </form>
+                </div>
                 <div class="layout-settings-section">
                     <h3>布局设置</h3>
                     <div class="layout-options">
