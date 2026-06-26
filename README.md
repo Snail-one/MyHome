@@ -13,7 +13,7 @@
 - 背景图片支持上传文件或填写图片链接
 - SQLite 保存用户设置和链接数据
 - 上传的背景图片保存到服务器 `uploads/backgrounds/`，数据库只保存图片路径
-- 图标支持服务器获取、浏览器辅助上传、手动上传和不显示
+- 邮箱入口使用默认图标；其他链接图标统一由服务器获取
 - 自动 favicon 抓取由服务端完成，带登录鉴权、协议/凭据校验、重定向次数、响应大小和文件类型限制
 
 ## 运行方式
@@ -50,7 +50,10 @@ TRUST_PROXY=false
 LOGIN_MAX_FAILED_ATTEMPTS=5
 LOGIN_WINDOW_MS=900000
 LOGIN_LOCKOUT_MS=900000
+#ICON_FETCH_PROXY=http://127.0.0.1:7890
 ```
+
+如果 Google、X 等站点无法直连，给服务端图标抓取配置代理。图标请求默认先直连，直连失败或拿不到可用图标时再使用代理。`ICON_FETCH_PROXY` 会同时用于 HTTP/HTTPS 图标请求；也兼容 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`。`ICON_FETCH_NO_PROXY` 或 `NO_PROXY` 可指定不走代理的地址，默认已绕过 localhost 和常见内网网段。Docker 部署时，代理地址必须是容器内可访问的地址。
 
 4. 启动服务
 
@@ -142,7 +145,7 @@ docker run -d \
 - 背景图片文件：默认 `uploads/backgrounds/`
 - favicon 缓存：默认 `data/icon-cache-v2/`
 - 自定义搜索引擎保存在 SQLite 中
-- 数据库不会保存图片二进制或 base64，只保存背景图片路径、外部图片 URL 和链接图标策略
+- 数据库不会保存图片二进制或 base64，只保存背景图片路径、外部图片 URL 和图标版本信息
 
 ## 目录结构
 

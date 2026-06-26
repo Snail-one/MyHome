@@ -22,7 +22,7 @@ function normalizeIconMode(iconMode) {
     return getDefaultIconMode();
   }
 
-  if (['server', 'local', 'upload', 'none'].includes(iconMode)) return iconMode;
+  if (iconMode === 'server' || iconMode === 'none') return iconMode;
   return getDefaultIconMode();
 }
 

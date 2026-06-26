@@ -39,3 +39,17 @@ test('loadConfig builds expected runtime paths', () => {
   assert.equal(config.trustProxy, true);
   assert.equal(config.sessionCookieName, 'my_home_sid');
 });
+
+test('loadConfig builds icon fetch proxy settings', () => {
+  const config = loadConfig({
+    ADMIN_USERNAME: 'admin',
+    ADMIN_PASSWORD: 'secret',
+    SESSION_SECRET: 'session-secret',
+    ICON_FETCH_PROXY: 'http://127.0.0.1:7890',
+    ICON_FETCH_NO_PROXY: 'localhost,.internal'
+  }, { rootDir: '/repo' });
+
+  assert.equal(config.iconFetchProxy.httpProxy, 'http://127.0.0.1:7890');
+  assert.equal(config.iconFetchProxy.httpsProxy, 'http://127.0.0.1:7890');
+  assert.equal(config.iconFetchProxy.noProxy, 'localhost,.internal');
+});

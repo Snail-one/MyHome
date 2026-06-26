@@ -1,7 +1,14 @@
 const dns = require('node:dns').promises;
 const net = require('node:net');
 
+const { ProxyAgent } = require('undici');
+
 const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
+const DEFAULT_PORTS = {
+  'http:': 80,
+  'https:': 443
+};
+const proxyAgents = new Map();
 
 function parseIPv4(address) {
   const parts = String(address).split('.');
@@ -111,6 +118,97 @@ function isBlockedAddress(address) {
   return true;
 }
 
+function normalizeHostname(value) {
+  return String(value || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+}
+
+function parseProxyUrl(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+
+  const parsedUrl = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error('Proxy protocol is not allowed');
+  }
+  if (!parsedUrl.hostname) {
+    throw new Error('Proxy host is not allowed');
+  }
+
+  return parsedUrl.href;
+}
+
+function getProxyAgent(proxyUrl) {
+  const normalizedProxyUrl = parseProxyUrl(proxyUrl);
+  if (!normalizedProxyUrl) return null;
+
+  if (!proxyAgents.has(normalizedProxyUrl)) {
+    proxyAgents.set(normalizedProxyUrl, new ProxyAgent(normalizedProxyUrl));
+  }
+
+  return proxyAgents.get(normalizedProxyUrl);
+}
+
+function splitNoProxyEntry(entry) {
+  const normalized = normalizeHostname(entry);
+  if (!normalized) return null;
+  if (normalized === '*') return { wildcard: true };
+
+  const cidrMatch = normalized.match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/);
+  if (cidrMatch) {
+    const prefix = parseIPv4(cidrMatch[1]);
+    const bits = Number.parseInt(cidrMatch[2], 10);
+    if (prefix !== null && bits >= 0 && bits <= 32) {
+      return { cidr: true, prefix, bits };
+    }
+  }
+
+  const portMatch = normalized.match(/^(.+):(\d+)$/);
+  const hostname = portMatch && !portMatch[1].includes(':') ? portMatch[1] : normalized;
+  const port = portMatch && !portMatch[1].includes(':') ? Number.parseInt(portMatch[2], 10) : 0;
+  return { hostname, port };
+}
+
+function hostnameMatchesNoProxy(hostname, noProxyHostname) {
+  if (!hostname || !noProxyHostname) return false;
+  if (hostname === noProxyHostname) return true;
+  if (noProxyHostname.startsWith('*.')) return hostname.endsWith(noProxyHostname.slice(1));
+  if (noProxyHostname.startsWith('.')) return hostname.endsWith(noProxyHostname);
+  if (noProxyHostname.startsWith('*')) return hostname.endsWith(noProxyHostname.slice(1));
+  return false;
+}
+
+function shouldBypassProxy(parsedUrl, noProxy) {
+  const noProxyValue = String(noProxy || '').trim();
+  if (!noProxyValue) return false;
+
+  const hostname = normalizeHostname(parsedUrl.hostname);
+  const port = Number.parseInt(parsedUrl.port, 10) || DEFAULT_PORTS[parsedUrl.protocol] || 0;
+  const hostnameIPv4 = parseIPv4(hostname);
+
+  return noProxyValue
+    .split(/[,\s]+/)
+    .map(splitNoProxyEntry)
+    .filter(Boolean)
+    .some((entry) => {
+      if (entry.wildcard) return true;
+      if (entry.port && entry.port !== port) return false;
+      if (entry.cidr) {
+        return hostnameIPv4 !== null && ipv4InRange(hostnameIPv4, entry.prefix, entry.bits);
+      }
+      return hostnameMatchesNoProxy(hostname, entry.hostname);
+    });
+}
+
+function getProxyDispatcherForUrl(parsedUrl, proxy) {
+  if (!proxy || shouldBypassProxy(parsedUrl, proxy.noProxy)) return null;
+
+  const proxyUrl = parsedUrl.protocol === 'https:'
+    ? (proxy.httpsProxy || proxy.httpProxy)
+    : proxy.httpProxy;
+
+  return getProxyAgent(proxyUrl);
+}
+
 function parsePublicHttpUrl(value, baseUrl, options = {}) {
   const parsedUrl = new URL(value, baseUrl);
   const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
@@ -160,16 +258,29 @@ async function assertPublicHttpUrl(value, options = {}) {
 function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-  const fetchOptions = {
-    ...options,
-    signal: controller.signal
-  };
-  delete fetchOptions.timeoutMs;
-  delete fetchOptions.maxRedirects;
-  delete fetchOptions.lookup;
-  delete fetchOptions.allowPrivateNetwork;
+  let fetchPromise;
 
-  return fetch(url, fetchOptions).finally(() => {
+  try {
+    const parsedUrl = new URL(url);
+    const fetchOptions = {
+      ...options,
+      signal: controller.signal
+    };
+    const dispatcher = fetchOptions.dispatcher || getProxyDispatcherForUrl(parsedUrl, fetchOptions.proxy);
+    if (dispatcher) fetchOptions.dispatcher = dispatcher;
+
+    delete fetchOptions.timeoutMs;
+    delete fetchOptions.maxRedirects;
+    delete fetchOptions.lookup;
+    delete fetchOptions.allowPrivateNetwork;
+    delete fetchOptions.proxy;
+    fetchPromise = fetch(url, fetchOptions);
+  } catch (error) {
+    clearTimeout(timeout);
+    throw error;
+  }
+
+  return fetchPromise.finally(() => {
     clearTimeout(timeout);
   });
 }
@@ -213,5 +324,6 @@ module.exports = {
   isPrivateIPv4,
   isPrivateIPv6,
   parsePublicHttpUrl,
+  parseProxyUrl,
   safeFetch
 };

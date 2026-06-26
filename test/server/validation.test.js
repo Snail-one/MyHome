@@ -23,12 +23,42 @@ test('validateLinkPayload normalizes link type and requires http URLs', () => {
   assert.deepEqual(validateLinkPayload({
     title: 'Bilibili',
     url: 'https://www.bilibili.com',
-    iconMode: 'upload'
+    iconMode: 'none'
   }).value, {
     title: 'Bilibili',
     url: 'https://www.bilibili.com',
     linkType: 'website',
+    iconMode: 'none'
+  });
+
+  assert.equal(validateLinkPayload({
+    title: 'GitHub',
+    url: 'https://github.com',
     iconMode: 'upload'
+  }).value.iconMode, 'server');
+
+  assert.equal(validateLinkPayload({
+    title: 'Docs',
+    url: 'https://example.com',
+    iconMode: 'local'
+  }).value.iconMode, 'server');
+
+  assert.equal(validateLinkPayload({
+    title: 'Mail',
+    url: 'https://mail.example.com',
+    type: 'email',
+    iconMode: 'server'
+  }).value.iconMode, 'server');
+
+  assert.deepEqual(validateLinkPayload({
+    title: 'Bad mode',
+    url: 'https://example.com',
+    iconMode: 'unknown'
+  }).value, {
+    title: 'Bad mode',
+    url: 'https://example.com',
+    linkType: 'website',
+    iconMode: 'server'
   });
 
   assert.equal(validateLinkPayload({

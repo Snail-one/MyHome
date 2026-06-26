@@ -126,6 +126,17 @@ function createLinksStore(db, config) {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `),
     findByKey: db.prepare('SELECT id FROM nav_links WHERE user_id = ? AND link_key = ?'),
+    normalizeRequiredEmailLink: db.prepare(`
+      UPDATE nav_links
+      SET link_type = 'email',
+          icon_mode = 'none',
+          icon_version = CASE
+            WHEN icon_mode = 'none' THEN icon_version
+            ELSE icon_version + 1
+          END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND link_key = ? AND (link_type != 'email' OR icon_mode != 'none')
+    `),
     findById: db.prepare(`
       SELECT
         id,
@@ -150,7 +161,7 @@ function createLinksStore(db, config) {
       SET link_key = ?,
           title = ?,
           link_type = 'email',
-          icon_mode = 'server',
+          icon_mode = 'none',
           icon_version = icon_version + 1,
           updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND id = ?
@@ -203,20 +214,24 @@ function createLinksStore(db, config) {
     },
     create(payload) {
       const row = statements.nextSortOrder.get(config.userId, payload.linkType);
+      const iconMode = payload.linkType === 'email' ? 'none' : payload.iconMode;
       statements.insert.run(
         config.userId,
         payload.linkKey || null,
         payload.linkType,
         payload.title,
         payload.url,
-        payload.iconMode,
+        iconMode,
         row.next_order
       );
       return this.getResponse();
     },
     ensureDefaultEmailLink() {
       const emailLink = config.defaultEmailLink;
-      if (statements.findByKey.get(config.userId, emailLink.linkKey)) return;
+      if (statements.findByKey.get(config.userId, emailLink.linkKey)) {
+        statements.normalizeRequiredEmailLink.run(config.userId, emailLink.linkKey);
+        return;
+      }
 
       const existingEmailRow = statements.findRequiredEmailCandidate.get(config.userId, emailLink.url);
       if (existingEmailRow) {
@@ -236,7 +251,7 @@ function createLinksStore(db, config) {
         'email',
         emailLink.title,
         emailLink.url,
-        'server',
+        'none',
         row.next_order
       );
     },
@@ -248,7 +263,7 @@ function createLinksStore(db, config) {
       if (!existing) return { notFound: true };
 
       const nextLinkType = config.requiredLinkKeys.has(existing.link_key) ? 'email' : payload.linkType;
-      const iconMode = config.requiredLinkKeys.has(existing.link_key) ? 'server' : payload.iconMode;
+      const iconMode = nextLinkType === 'email' ? 'none' : payload.iconMode;
       const iconChanged = existing.url !== payload.url || existing.icon_mode !== iconMode;
       const iconVersion = iconChanged ? Number(existing.icon_version || 1) + 1 : Number(existing.icon_version || 1);
       const result = statements.update.run(

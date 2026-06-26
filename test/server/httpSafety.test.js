@@ -70,3 +70,53 @@ test('safeFetch allows private network only when explicitly requested', async (t
   });
   assert.equal(response.status, 200);
 });
+
+test('safeFetch applies proxy dispatcher when proxy is configured', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  let fetchOptions;
+  global.fetch = async (url, options) => {
+    fetchOptions = options;
+    return new Response('ok', { status: 200 });
+  };
+
+  const response = await safeFetch('https://service.test/icon.svg', {
+    lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    proxy: {
+      httpsProxy: 'http://127.0.0.1:7890',
+      noProxy: ''
+    },
+    timeoutMs: 1000
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(fetchOptions.dispatcher);
+});
+
+test('safeFetch honors no_proxy entries before applying proxy dispatcher', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  let fetchOptions;
+  global.fetch = async (url, options) => {
+    fetchOptions = options;
+    return new Response('ok', { status: 200 });
+  };
+
+  const response = await safeFetch('http://10.1.2.3/icon.svg', {
+    allowPrivateNetwork: true,
+    proxy: {
+      httpProxy: 'http://127.0.0.1:7890',
+      noProxy: '127.0.0.1,10.0.0.0/8'
+    },
+    timeoutMs: 1000
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(fetchOptions.dispatcher, undefined);
+});

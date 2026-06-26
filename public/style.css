@@ -694,49 +694,6 @@ body::before {
     border-color: rgba(255, 255, 255, 0.3);
 }
 
-.icon-source-options {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-}
-
-.icon-source-option {
-    display: flex !important;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    min-height: 38px;
-    margin: 0 !important;
-    padding: 9px 10px;
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--text-secondary) !important;
-    cursor: pointer;
-}
-
-/* Make the "不显示" option span full width and center itself on the second row */
-.icon-source-option.icon-option-none {
-    grid-column: 1 / -1;
-    justify-self: center;
-    width: calc(50% - 4px);
-}
-
-.icon-source-option:has(input:checked) {
-    border-color: rgba(255, 255, 255, 0.32);
-    background: rgba(255, 255, 255, 0.13);
-    color: var(--text-primary) !important;
-}
-
-.icon-source-option input {
-    margin: 0;
-    accent-color: #fff;
-}
-
-.icon-detail-group[hidden] {
-    display: none;
-}
-
 .form-hint {
     font-size: 12px;
     color: var(--text-tertiary);

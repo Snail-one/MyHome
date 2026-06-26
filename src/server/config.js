@@ -35,6 +35,15 @@ const REQUIRED_SEARCH_ENGINE_KEYS = new Set(['google']);
 const REQUIRED_LINK_KEYS = new Set([DEFAULT_EMAIL_LINK.linkKey]);
 const USER_ID = 1;
 const SCHEMA_VERSION = '2026-06-26.1';
+const DEFAULT_ICON_FETCH_NO_PROXY = [
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '10.0.0.0/8',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  '.local'
+].join(',');
 
 function parseIntegerEnv(value, fallback, minimum) {
   const parsed = Number.parseInt(value, 10);
@@ -52,6 +61,16 @@ function parseBooleanEnv(value, fallback) {
   return fallback;
 }
 
+function firstNonEmptyEnv(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const normalized = String(value).trim();
+    if (normalized) return normalized;
+  }
+
+  return '';
+}
+
 function resolveFromRoot(rootDir, value) {
   if (!value) return value;
   return path.isAbsolute(value) ? value : path.resolve(rootDir, value);
@@ -64,6 +83,27 @@ function loadConfig(env = process.env, options = {}) {
   const publicDir = resolveFromRoot(rootDir, env.PUBLIC_DIR || './public');
   const databasePath = resolveFromRoot(rootDir, env.DATABASE_PATH || './data/my-home.sqlite');
   const nodeEnv = env.NODE_ENV || 'development';
+  const iconFetchProxy = firstNonEmptyEnv(env.ICON_FETCH_PROXY);
+  const iconFetchHttpProxy = firstNonEmptyEnv(
+    env.ICON_FETCH_HTTP_PROXY,
+    iconFetchProxy,
+    env.http_proxy,
+    env.HTTP_PROXY,
+    env.all_proxy,
+    env.ALL_PROXY
+  );
+  const iconFetchHttpsProxy = firstNonEmptyEnv(
+    env.ICON_FETCH_HTTPS_PROXY,
+    iconFetchProxy,
+    env.https_proxy,
+    env.HTTPS_PROXY,
+    env.all_proxy,
+    env.ALL_PROXY,
+    iconFetchHttpProxy
+  );
+  const iconFetchNoProxy = env.ICON_FETCH_NO_PROXY !== undefined
+    ? String(env.ICON_FETCH_NO_PROXY).trim()
+    : firstNonEmptyEnv(env.no_proxy, env.NO_PROXY, DEFAULT_ICON_FETCH_NO_PROXY);
 
   const config = {
     rootDir,
@@ -94,6 +134,11 @@ function loadConfig(env = process.env, options = {}) {
     iconHtmlSampleSize: 128 * 1024,
     iconMaxRedirects: parseIntegerEnv(env.ICON_MAX_REDIRECTS, 3, 0),
     iconMaxCandidates: parseIntegerEnv(env.ICON_MAX_CANDIDATES, 12, 1),
+    iconFetchProxy: {
+      httpProxy: iconFetchHttpProxy,
+      httpsProxy: iconFetchHttpsProxy,
+      noProxy: iconFetchNoProxy
+    },
     userId: USER_ID,
     schemaVersion: SCHEMA_VERSION,
     defaultSearchEngines: DEFAULT_SEARCH_ENGINES,
@@ -119,12 +164,14 @@ function loadConfig(env = process.env, options = {}) {
 }
 
 module.exports = {
+  DEFAULT_ICON_FETCH_NO_PROXY,
   DEFAULT_EMAIL_LINK,
   DEFAULT_SEARCH_ENGINES,
   REQUIRED_LINK_KEYS,
   REQUIRED_SEARCH_ENGINE_KEYS,
   SCHEMA_VERSION,
   USER_ID,
+  firstNonEmptyEnv,
   loadConfig,
   parseBooleanEnv,
   parseIntegerEnv

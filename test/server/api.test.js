@@ -118,6 +118,14 @@ test('protected APIs require login and authenticated user can manage settings, l
   assert.equal(result.response.status, 200);
   assert.equal(result.data.settings.bookmarkLinkDisplayMode, 'centered');
 
+  result = await app.requestJson('/api/links');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.emailLinks[0].iconMode, 'none');
+  const defaultEmailLink = result.data.emailLinks[0];
+  result = await app.requestJson(`/api/icons/links/${defaultEmailLink.id}/resolve`, { method: 'POST' });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.status, 'none');
+
   result = await app.requestJson('/api/settings', {
     method: 'PUT',
     body: { layoutColumns: 2, editMode: true }
@@ -145,6 +153,29 @@ test('protected APIs require login and authenticated user can manage settings, l
   });
   assert.equal(result.response.status, 201);
   assert.equal(result.data.links[0].iconMode, 'none');
+
+  result = await app.requestJson('/api/links', {
+    method: 'POST',
+    body: {
+      title: 'Legacy Upload',
+      url: 'https://upload-mode.example.com',
+      iconMode: 'upload'
+    }
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.links.find((link) => link.title === 'Legacy Upload').iconMode, 'server');
+
+  result = await app.requestJson('/api/links', {
+    method: 'POST',
+    body: {
+      title: 'Mail',
+      url: 'https://mail.example.com',
+      type: 'email',
+      iconMode: 'server'
+    }
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.emailLinks.find((link) => link.title === 'Mail').iconMode, 'none');
 
   result = await app.requestJson('/api/search-engines', {
     method: 'POST',
@@ -208,35 +239,18 @@ test('server icon resolve allows private targets for configured links', async (t
   assert.match(response.headers.get('content-type') || '', /image\/svg\+xml/);
 });
 
-test('link icon upload stores v2 entity icon and bumps version', async (t) => {
+test('link icon upload route is not exposed', async (t) => {
   const app = await startApp();
   t.after(app.close);
   await app.login();
 
-  const targetUrl = 'http://10.0.0.1/';
   let result = await app.requestJson('/api/links', {
     method: 'POST',
-    body: { title: 'Private', url: targetUrl, iconMode: 'upload' }
+    body: { title: 'Private', url: 'https://example.com' }
   });
   assert.equal(result.response.status, 201);
   const link = result.data.links.find((item) => item.title === 'Private');
 
-  const formData = new FormData();
-  formData.append('sourceUrl', 'icon.svg');
-  formData.append('icon', new Blob([
-    Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>')
-  ], { type: 'image/svg+xml' }), 'icon.svg');
-
-  let response = await app.request(`/api/icons/links/${link.id}/upload`, {
-    method: 'POST',
-    body: formData
-  });
-  assert.equal(response.status, 201);
-  const status = await response.json();
-  assert.equal(status.status, 'ready');
-  assert.equal(status.iconVersion, 2);
-
-  response = await app.request(`/api/icons/links/${link.id}/file?v=2`);
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get('content-type') || '', /image\/svg\+xml/);
+  const response = await app.request(`/api/icons/links/${link.id}/upload`, { method: 'POST' });
+  assert.equal(response.status, 404);
 });

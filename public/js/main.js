@@ -1,14 +1,12 @@
 import { buildSearchUrl as buildSearchUrlFromTemplate } from './search.js';
 import {
     getIconFileUrl,
-    getIconResolveUrl,
-    getIconStatusUrl
+    getIconResolveUrl
 } from './icons.js';
 import {
     DEFAULT_SETTINGS,
     LINK_SIZE_CONFIG,
     LINK_SIZE_OPTIONS,
-    MAX_ICON_UPLOAD_SIZE,
     REQUIRED_EMAIL_LINK_KEYS,
     createAppState,
     defaultSearchEngines
@@ -427,8 +425,7 @@ function getLinkEmptyState(linkType) {
 }
 
 function normalizeLinkIconMode(iconMode) {
-    if (['server', 'upload', 'none'].includes(iconMode)) return iconMode;
-    if (iconMode === 'local') return 'server';
+    if (['server', 'upload', 'local', 'none'].includes(iconMode)) return iconMode;
     return 'server';
 }
 
@@ -449,42 +446,6 @@ function resolveIconOnServer(descriptor) {
         });
     iconRefreshPromises.set(refreshKey, promise);
     return promise;
-}
-
-function updateLinkIconVersion(linkId, version) {
-    if (!version) return;
-    [appState.links, appState.emailLinks, appState.projectLinks].forEach(collection => {
-        const link = collection.find(item => String(item.id) === String(linkId));
-        if (link) link.iconVersion = version;
-    });
-}
-
-function getIconUploadFilename(iconUrl, blob) {
-    const extensionByType = {
-        'image/x-icon': '.ico',
-        'image/vnd.microsoft.icon': '.ico',
-        'image/png': '.png',
-        'image/svg+xml': '.svg',
-        'image/jpeg': '.jpg',
-        'image/webp': '.webp',
-        'image/gif': '.gif'
-    };
-
-    try {
-        const extension = new URL(iconUrl).pathname.match(/\.(ico|png|svg|jpg|jpeg|webp|gif)$/i)?.[0];
-        if (extension) return `icon${extension.toLowerCase()}`;
-    } catch {
-        const extension = String(iconUrl || '').match(/\.(ico|png|svg|jpg|jpeg|webp|gif)$/i)?.[0];
-        if (extension) return `icon${extension.toLowerCase()}`;
-    }
-
-    return `icon${extensionByType[blob?.type] || '.ico'}`;
-}
-
-function isUploadableIconBlob(blob, iconUrl) {
-    if (!blob || !blob.size || blob.size > MAX_ICON_UPLOAD_SIZE) return false;
-    if (blob.type && blob.type.startsWith('image/')) return true;
-    return /\.(ico|png|svg|jpg|jpeg|webp|gif)(\?|#|$)/i.test(iconUrl);
 }
 
 function getIconFallbackElement(img) {
@@ -511,6 +472,7 @@ function setIconImageUrl(img, url) {
 
 function getLinkIconDescriptor(link, linkType = 'website') {
     if (!link?.id) return null;
+    if (linkType === 'email') return null;
 
     const mode = normalizeLinkIconMode(link.iconMode);
     const version = getEntityIconVersion(link);
@@ -608,15 +570,11 @@ function getMailIconSvg(className = 'email-link-icon') {
 function createEmailLinkElement(link, index, total) {
     const wrapper = document.createElement('div');
     const isRequired = REQUIRED_EMAIL_LINK_KEYS.has(link.linkKey);
-    const iconDescriptor = getLinkIconDescriptor(link, 'email');
-    const iconMarkup = iconDescriptor?.mode === 'none'
-        ? ''
-        : `<img alt="" class="email-link-favicon" style="display:none">${getMailIconSvg()}`;
     wrapper.className = 'email-link-wrapper';
     wrapper.dataset.index = index;
     wrapper.innerHTML = `
         <a href="${escapeAttribute(getEffectiveEmailUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" data-link-type="email" draggable="${editMode ? 'true' : 'false'}" title="${escapeAttribute(link.title || '邮箱登录')}">
-            ${iconMarkup}
+            ${getMailIconSvg()}
             <span class="email-link-label">${escapeHtml(link.title || '邮箱登录')}</span>
         </a>
         <div class="email-link-actions">
@@ -635,8 +593,6 @@ function createEmailLinkElement(link, index, total) {
     `;
 
     const emailLink = wrapper.querySelector('.email-link');
-    const faviconImg = wrapper.querySelector('.email-link-favicon');
-    if (faviconImg && iconDescriptor) hydrateIconElement(faviconImg, iconDescriptor);
 
     if (emailLink && editMode) {
         emailLink.addEventListener('dragstart', handleDragStart);
@@ -963,68 +919,6 @@ function getLinkCollection(linkType) {
     return getLinks();
 }
 
-function getSelectedIconMode() {
-    const selected = document.querySelector('input[name="iconMode"]:checked')?.value;
-    return normalizeLinkIconMode(selected);
-}
-
-function setSelectedIconMode(iconMode) {
-    const normalizedMode = normalizeLinkIconMode(iconMode);
-    const input = document.querySelector(`input[name="iconMode"][value="${normalizedMode}"]`);
-    if (input) input.checked = true;
-    syncLinkIconControls();
-}
-
-function syncLinkIconControls() {
-    const iconMode = getSelectedIconMode();
-    const uploadGroup = document.getElementById('link-custom-icon-group');
-    if (uploadGroup) uploadGroup.hidden = iconMode !== 'upload';
-}
-
-function getSelectedLinkIconPayload() {
-    return {
-        iconMode: getSelectedIconMode()
-    };
-}
-
-function getSelectedCustomIconFile(iconMode) {
-    if (iconMode !== 'upload') return null;
-    return document.getElementById('link-custom-icon')?.files?.[0] || null;
-}
-
-async function uploadCustomLinkIcon(linkId, file) {
-    if (!file) return;
-    if (file.size > MAX_ICON_UPLOAD_SIZE) {
-        throw new Error('图标文件不能超过 1MB');
-    }
-
-    const formData = new FormData();
-    formData.append('source', 'upload');
-    formData.append('sourceUrl', file.name || '');
-    formData.append('icon', file, getIconUploadFilename(file.name || 'icon', file));
-    return apiRequest(`/api/icons/links/${encodeURIComponent(String(linkId))}/upload`, {
-        method: 'POST',
-        body: formData
-    });
-}
-
-function getLinksFromResponse(data, linkType) {
-    if (linkType === 'email') return Array.isArray(data.emailLinks) ? data.emailLinks : [];
-    if (linkType === 'project') return Array.isArray(data.projectLinks) ? data.projectLinks : [];
-    return Array.isArray(data.links) ? data.links : [];
-}
-
-function findSavedLinkInResponse(data, linkType, editingLink, title, url) {
-    const responseLinks = getLinksFromResponse(data, linkType);
-    if (editingLink) {
-        return responseLinks.find(link => String(link.id) === String(editingLink.id)) || null;
-    }
-
-    return [...responseLinks]
-        .reverse()
-        .find(link => link.title === title && link.url === url) || responseLinks.at(-1) || null;
-}
-
 function openLinkModal(editIndex, linkType = 'website') {
     const form = document.getElementById('link-form');
     const modalTitle = document.getElementById('link-modal-title');
@@ -1042,17 +936,17 @@ function openLinkModal(editIndex, linkType = 'website') {
         urlInput.type = 'url';
         urlLabel.textContent = '邮箱登录地址';
         urlInput.placeholder = 'https://mail.google.com/';
-        hint.textContent = '默认由服务器获取邮箱站点图标，也可以上传自定义图标。';
+        hint.textContent = '邮箱入口使用默认图标。';
     } else if (linkType === 'project') {
         urlInput.type = 'url';
         urlLabel.textContent = '项目地址';
         urlInput.placeholder = 'https://example.com';
-        hint.textContent = '个人项目默认由服务器获取图标，失败时可使用浏览器辅助或上传图标。';
+        hint.textContent = '个人项目图标默认由服务器获取。';
     } else {
         urlInput.type = 'url';
         urlLabel.textContent = '链接地址';
         urlInput.placeholder = 'https://example.com';
-        hint.textContent = '默认由服务器获取网页图标，失败时可使用浏览器辅助或上传图标。';
+        hint.textContent = '默认由服务器获取网页图标。';
     }
 
     if (editingLink) {
@@ -1074,8 +968,6 @@ function openLinkModal(editIndex, linkType = 'website') {
             ? '添加邮箱'
             : linkType === 'project' ? '添加项目' : '添加链接';
     }
-
-    setSelectedIconMode(editingLink ? normalizeLinkIconMode(editingLink.iconMode) : 'server');
 
     setTimeout(() => document.getElementById('link-title')?.focus(), 0);
 }
@@ -1583,14 +1475,12 @@ function bindMenuManagement() {
     const layoutSettingsSection = document.querySelector('.layout-settings-section');
     const iconRefreshBtn = document.getElementById('icon-refresh-btn');
     const cancelBtn = document.getElementById('link-form-cancel');
-    const iconModeOptions = document.getElementById('link-icon-source-options');
     const searchEngineCancelBtn = document.getElementById('search-engine-form-cancel');
 
     manageBtn.addEventListener('click', () => openManageModal());
     if (editModeBtn) editModeBtn.addEventListener('click', toggleEditMode);
     if (iconRefreshBtn) iconRefreshBtn.addEventListener('click', refreshIconCache);
     cancelBtn.addEventListener('click', closeLinkModal);
-    if (iconModeOptions) iconModeOptions.addEventListener('change', syncLinkIconControls);
     if (searchEngineCancelBtn) searchEngineCancelBtn.addEventListener('click', resetSearchEngineForm);
 
     if (emailLinksContainer) {
@@ -1664,33 +1554,15 @@ function bindMenuManagement() {
 
         const links = getLinkCollection(linkType);
         const editingLink = editIndex !== null && links[editIndex] ? links[editIndex] : null;
-        const iconPayload = getSelectedLinkIconPayload();
-        const customIconFile = getSelectedCustomIconFile(iconPayload.iconMode);
         submitBtn.disabled = true;
 
         try {
             const data = await apiRequest(editingLink ? `/api/links/${editingLink.id}` : '/api/links', {
                 method: editingLink ? 'PUT' : 'POST',
-                body: { title, url, type: linkType, ...iconPayload }
+                body: { title, url, type: linkType }
             });
-            let iconUploadError = null;
-            if (customIconFile) {
-                try {
-                    const savedLink = findSavedLinkInResponse(data, linkType, editingLink, title, url);
-                    if (!savedLink) throw new Error('链接已保存，但无法定位图标记录');
-                    const uploadStatus = await uploadCustomLinkIcon(savedLink.id, customIconFile);
-                    if (uploadStatus?.iconVersion) {
-                        savedLink.iconVersion = uploadStatus.iconVersion;
-                    }
-                } catch (error) {
-                    iconUploadError = error;
-                }
-            }
             applyLinksResponse(data);
             closeLinkModal();
-            if (iconUploadError) {
-                alert(`链接已保存，但图标上传失败：${iconUploadError.message}`);
-            }
         } catch (error) {
             alert(error.message);
         } finally {

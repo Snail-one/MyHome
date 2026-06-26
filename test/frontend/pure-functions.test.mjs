@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   getIconFileUrl,
-  getParsedHttpUrl,
+  getIconResolveUrl,
 } from '../../public/js/icons.js';
 import { buildSearchUrl } from '../../public/js/search.js';
 import { calculateMaxAvailableLayoutColumns, getLayoutColumnOptions, isValidBackgroundUrl } from '../../public/js/settings.js';
@@ -23,14 +23,14 @@ test('buildSearchUrl fills query placeholders or appends q parameter', () => {
   );
 });
 
-test('icon URL helpers normalize http URLs', () => {
-  assert.equal(getParsedHttpUrl('example.com').href, 'https://example.com/');
-  assert.equal(getParsedHttpUrl('https://example.com/#/app').href, 'https://example.com/');
-  assert.equal(getParsedHttpUrl('ftp://example.com'), null);
-  assert.equal(getParsedHttpUrl('https://user:pass@example.com'), null);
+test('icon URL helpers build server endpoints', () => {
   assert.equal(
     getIconFileUrl('links', 12, 3),
     '/api/icons/links/12/file?v=3'
+  );
+  assert.equal(
+    getIconResolveUrl('search-engines', 7),
+    '/api/icons/search-engines/7/resolve'
   );
 });
 

@@ -33,7 +33,6 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const REQUIRED_EMAIL_LINK_KEYS = new Set(['google-mail']);
-export const MAX_ICON_UPLOAD_SIZE = 1024 * 1024;
 
 export const LINK_SIZE_OPTIONS = [
     { size: 'small', label: '小' },
