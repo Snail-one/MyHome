@@ -703,6 +703,7 @@ body::before {
 .icon-source-option {
     display: flex !important;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     min-height: 38px;
     margin: 0 !important;
@@ -712,6 +713,13 @@ body::before {
     background: rgba(255, 255, 255, 0.05);
     color: var(--text-secondary) !important;
     cursor: pointer;
+}
+
+/* Make the "不显示" option span full width and center itself on the second row */
+.icon-source-option.icon-option-none {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: calc(50% - 4px);
 }
 
 .icon-source-option:has(input:checked) {
@@ -980,35 +988,20 @@ body::before {
 }
 
 /* 导航卡片内 favicon 图片：铺满图标区，无外框 ==================== */
-.nav-icon .nav-favicon,
-.nav-icon .nav-favicon-fallback {
+.nav-icon .nav-favicon {
     width: 100%;
     height: 100%;
     object-fit: contain;
-}
-
-.nav-icon .nav-favicon {
     display: block;
 }
 
+/* 后备符号图标（文字图标/SVG fallback）：缩小并居中在图标区内 */
 .nav-icon .nav-favicon-fallback {
+    width: 65%;
+    height: 65%;
     color: rgba(255, 255, 255, 0.8);
-}
-
-.nav-favicon-loading {
-    opacity: 0;
-    animation: faviconFadeIn 0.4s ease forwards;
-}
-
-@keyframes faviconFadeIn {
-    from {
-        opacity: 0;
-        transform: scale(0.8);
-    }
-    to {
-        opacity: 1;
-        transform: scale(1);
-    }
+    display: block;
+    margin: auto; /* 配合 .nav-icon 的 flex 实现水平垂直居中 */
 }
 
 .nav-icon {
@@ -1029,7 +1022,7 @@ body::before {
     pointer-events: none;
 }
 
-.nav-icon:has(.nav-favicon:not(.nav-favicon-loading))::after {
+.nav-icon:has(.nav-favicon)::after {
     display: none;
 }
 
@@ -1521,11 +1514,6 @@ body::before {
 
 .nav-card:hover .nav-icon {
     transform: rotate(5deg) scale(1.1);
-}
-
-.nav-icon svg {
-    width: 100%;
-    height: 100%;
 }
 
 .nav-info {

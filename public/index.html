@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>个人导航首页</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body class="app-loading">
     <div class="corner-controls corner-email email-links-panel" id="email-links-container" aria-label="邮箱链接">
@@ -152,14 +152,10 @@
                                 <span>服务器获取</span>
                             </label>
                             <label class="icon-source-option">
-                                <input type="radio" name="iconMode" value="local">
-                                <span>浏览器辅助</span>
-                            </label>
-                            <label class="icon-source-option">
                                 <input type="radio" name="iconMode" value="upload">
                                 <span>上传图标</span>
                             </label>
-                            <label class="icon-source-option">
+                            <label class="icon-source-option icon-option-none">
                                 <input type="radio" name="iconMode" value="none">
                                 <span>不显示</span>
                             </label>
@@ -169,7 +165,7 @@
                         <label for="link-custom-icon">上传图标</label>
                         <input type="file" id="link-custom-icon" accept="image/png,image/svg+xml,image/jpeg,image/webp,image/gif,image/x-icon">
                     </div>
-                    <p class="form-hint" id="link-form-hint">默认由服务器获取网页图标，失败时可使用浏览器辅助或上传图标。</p>
+                    <p class="form-hint" id="link-form-hint">默认由服务器获取网页图标，可上传图标或选择不显示。</p>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary" id="link-form-submit">添加链接</button>
                         <button type="button" class="btn btn-secondary" id="link-form-cancel">取消</button>

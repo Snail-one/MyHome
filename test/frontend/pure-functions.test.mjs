@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  buildFaviconCandidates,
-  getDomainFromUrl,
   getIconFileUrl,
   getParsedHttpUrl,
 } from '../../public/js/icons.js';
@@ -30,17 +28,9 @@ test('icon URL helpers normalize http URLs', () => {
   assert.equal(getParsedHttpUrl('https://example.com/#/app').href, 'https://example.com/');
   assert.equal(getParsedHttpUrl('ftp://example.com'), null);
   assert.equal(getParsedHttpUrl('https://user:pass@example.com'), null);
-  assert.equal(getDomainFromUrl('https://sub.example.com/path'), 'sub.example.com');
   assert.equal(
     getIconFileUrl('links', 12, 3),
     '/api/icons/links/12/file?v=3'
-  );
-});
-
-test('extended favicon candidates prioritize app subpath icons', () => {
-  assert.equal(
-    buildFaviconCandidates('https://joker.dantapi.top/ui/#/overview', { extended: true })[0],
-    'https://joker.dantapi.top/ui/favicon.svg'
   );
 });
 

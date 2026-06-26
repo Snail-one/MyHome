@@ -33,8 +33,6 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const REQUIRED_EMAIL_LINK_KEYS = new Set(['google-mail']);
-export const FRONTEND_ICON_CACHE_NAME = 'my-home-icon-cache-v2';
-export const FRONTEND_ICON_CACHE_STORAGE_KEY = 'my-home-icon-cache-index-v2';
 export const MAX_ICON_UPLOAD_SIZE = 1024 * 1024;
 
 export const LINK_SIZE_OPTIONS = [
