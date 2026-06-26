@@ -10,7 +10,7 @@ RUN npm ci --omit=dev
 
 COPY --chown=node:node . .
 
-RUN mkdir -p data uploads/backgrounds && chown -R node:node /app
+RUN mkdir -p data/uploads/backgrounds && chown -R node:node /app
 
 USER node
 

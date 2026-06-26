@@ -225,3 +225,34 @@ test('icon fetcher tries direct requests before proxy fallback', async () => {
   assert.equal(icon.contentType, 'image/svg+xml');
   assert.deepEqual(calls.map((call) => call.hasProxy), [false]);
 });
+
+test('icon fetcher logs only when enabled', async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
+  const logs = [];
+  const logger = {
+    log(line) {
+      logs.push(line);
+    }
+  };
+  const safeFetch = async () => new Response(svg, {
+    status: 200,
+    headers: { 'content-type': 'image/svg+xml' }
+  });
+
+  let fetcher = createIconFetcher(makeIconConfig({ iconFetchLogEnabled: true }), {
+    logger,
+    safeFetch
+  });
+  const icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
+  assert.equal(icon.contentType, 'image/svg+xml');
+  assert.ok(logs.some((line) => line.includes('[icon-fetch] event=request:start') && line.includes('mode=direct')));
+  assert.ok(logs.some((line) => line.includes('event=icon:accepted')));
+
+  logs.length = 0;
+  fetcher = createIconFetcher(makeIconConfig({ iconFetchLogEnabled: false }), {
+    logger,
+    safeFetch
+  });
+  await fetcher.fetchIconCandidate('https://example.com/icon.svg');
+  assert.deepEqual(logs, []);
+});

@@ -9,7 +9,7 @@
 - 密码使用 bcrypt 哈希保存，数据库不保存明文密码。
 - 登录状态使用 httpOnly session cookie。
 - 登录接口按 IP + 用户名做失败次数限制，超过阈值会临时锁定。
-- 背景图片文件保存到 `uploads/backgrounds/`，SQLite 只保存图片路径或外部图片 URL。
+- 背景图片文件保存到 `data/uploads/backgrounds/`，SQLite 只保存图片路径或外部图片 URL。
 
 ## 已实现的保护
 
@@ -20,16 +20,16 @@
 - 背景 URL 只允许 `http://`、`https://` 或 `/uploads/backgrounds/` 路径。
 - 上传背景限制为 JPG、PNG、WebP、GIF，大小上限 5MB。
 - 上传文件使用随机文件名，不信任原始文件名。
-- 静态文件不直接暴露项目根目录，只显式提供页面、样式、脚本和 uploads。
+- 静态文件不直接暴露项目根目录，只显式提供页面、样式、脚本和 `/uploads` 路径。
 - CSP 限制默认资源来源，图片允许 `blob:` 用于本地上传预览。
 
 ## 部署注意
 
 - 生产环境必须使用 HTTPS。
 - `.env` 不要提交到仓库。
-- `SESSION_SECRET` 应使用足够长的随机字符串。
+- `SESSION_SECRET` 默认自动生成到 `data/session-secret`；生产环境需要持久化 `data/`，或显式设置外部 secret。
 - `ADMIN_PASSWORD` 应使用强密码。
-- `data/` 和 `uploads/` 是运行时数据目录，需要纳入服务器备份策略。
+- `data/` 是运行时数据目录，需要纳入服务器备份策略。
 
 ## 建议测试
 

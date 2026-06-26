@@ -39,8 +39,34 @@ function hasIconFetchProxy(config) {
   return Boolean(config?.iconFetchProxy?.httpProxy || config?.iconFetchProxy?.httpsProxy);
 }
 
+function getIconFetchMode(useProxy) {
+  return useProxy ? 'proxy' : 'direct';
+}
+
+function formatLogValue(value) {
+  return String(value ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 500);
+}
+
+function logIconFetch(config, event, details = {}, deps = {}) {
+  if (!config?.iconFetchLogEnabled) return;
+
+  const logger = deps.logger || console;
+  const fields = Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${formatLogValue(value)}`)
+    .join(' ');
+  const line = `[icon-fetch] event=${event}${fields ? ` ${fields}` : ''}`;
+
+  if (typeof logger.log === 'function') {
+    logger.log(line);
+  }
+}
+
 function getIconFetchOptions(config, requestOptions = {}, useProxy = false) {
-  const { proxy, ...fetchOptions } = requestOptions;
+  const { proxy, phase, ...fetchOptions } = requestOptions;
   return {
     ...fetchOptions,
     timeoutMs: config.iconFetchTimeoutMs,
@@ -52,7 +78,31 @@ function getIconFetchOptions(config, requestOptions = {}, useProxy = false) {
 
 async function safeFetchIconResource(config, resourceUrl, requestOptions, useProxy = false, deps = {}) {
   const fetchImpl = deps.safeFetch || safeFetch;
-  return fetchImpl(resourceUrl, getIconFetchOptions(config, requestOptions, useProxy));
+  const mode = getIconFetchMode(useProxy);
+  const phase = requestOptions.phase || 'request';
+  const fetchOptions = getIconFetchOptions(config, requestOptions, useProxy);
+
+  logIconFetch(config, 'request:start', { phase, mode, url: resourceUrl }, deps);
+
+  try {
+    const response = await fetchImpl(resourceUrl, fetchOptions);
+    logIconFetch(config, 'request:response', {
+      phase,
+      mode,
+      status: response.status,
+      ok: response.ok,
+      url: resourceUrl
+    }, deps);
+    return response;
+  } catch (error) {
+    logIconFetch(config, 'request:error', {
+      phase,
+      mode,
+      url: resourceUrl,
+      error: error.message
+    }, deps);
+    throw error;
+  }
 }
 
 async function readResponseBuffer(response, maxBytes, allowTruncate = false) {
@@ -169,20 +219,35 @@ function getManifestIconCandidates(manifest, manifestUrl) {
 }
 
 async function readManifestIconCandidates(config, manifestUrl, useProxy = false, deps = {}) {
+  const mode = getIconFetchMode(useProxy);
   const response = await safeFetchIconResource(config, manifestUrl, {
+    phase: 'manifest',
     headers: {
       Accept: 'application/manifest+json,application/json,*/*;q=0.8'
     }
   }, useProxy, deps);
 
-  if (!response.ok) return null;
+  if (!response.ok) {
+    logIconFetch(config, 'manifest:skip', { mode, status: response.status, url: manifestUrl }, deps);
+    return null;
+  }
 
   const buffer = await readResponseBuffer(response, config.iconHtmlSampleSize, true);
-  if (!buffer.length) return null;
+  if (!buffer.length) {
+    logIconFetch(config, 'manifest:empty', { mode, url: manifestUrl }, deps);
+    return null;
+  }
 
   try {
-    return getManifestIconCandidates(JSON.parse(buffer.toString('utf8')), manifestUrl);
+    const candidates = getManifestIconCandidates(JSON.parse(buffer.toString('utf8')), manifestUrl);
+    logIconFetch(config, 'manifest:candidates', {
+      mode,
+      count: candidates.length,
+      url: manifestUrl
+    }, deps);
+    return candidates;
   } catch {
+    logIconFetch(config, 'manifest:invalid-json', { mode, url: manifestUrl }, deps);
     return null;
   }
 }
@@ -198,6 +263,7 @@ async function fetchManifestIconCandidates(config, manifestUrl, deps = {}) {
   }
 
   if (hasIconFetchProxy(config)) {
+    logIconFetch(config, 'manifest:proxy-fallback', { url: manifestUrl }, deps);
     try {
       const proxyCandidates = await readManifestIconCandidates(config, manifestUrl, true, deps);
       if (proxyCandidates?.length) return proxyCandidates;
@@ -211,7 +277,9 @@ async function fetchManifestIconCandidates(config, manifestUrl, deps = {}) {
 }
 
 async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps = {}) {
+  const mode = getIconFetchMode(useProxy);
   const response = await safeFetchIconResource(config, parsedUrl.href, {
+    phase: 'html',
     headers: {
       Accept: 'text/html,application/xhtml+xml'
     }
@@ -219,13 +287,27 @@ async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps 
 
   const contentType = normalizeContentType(response.headers.get('content-type') || '');
   if (!response.ok || (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml'))) {
+    logIconFetch(config, 'html:skip', {
+      mode,
+      status: response.status,
+      contentType,
+      url: parsedUrl.href
+    }, deps);
     return null;
   }
 
   const html = (await readResponseBuffer(response, config.iconHtmlSampleSize, true)).toString('utf8');
+  const iconCandidates = extractIconLinksFromHtml(html, parsedUrl.href);
+  const manifestUrls = extractManifestLinksFromHtml(html, parsedUrl.href);
+  logIconFetch(config, 'html:candidates', {
+    mode,
+    icons: iconCandidates.length,
+    manifests: manifestUrls.length,
+    url: parsedUrl.href
+  }, deps);
   return {
-    iconCandidates: extractIconLinksFromHtml(html, parsedUrl.href),
-    manifestUrls: extractManifestLinksFromHtml(html, parsedUrl.href)
+    iconCandidates,
+    manifestUrls
   };
 }
 
@@ -240,6 +322,7 @@ async function discoverDocumentIconHints(config, parsedUrl, deps = {}) {
   }
 
   if (hasIconFetchProxy(config)) {
+    logIconFetch(config, 'html:proxy-fallback', { url: parsedUrl.href }, deps);
     try {
       const proxyHints = await fetchDocumentIconHints(config, parsedUrl, true, deps);
       if (proxyHints?.iconCandidates?.length || proxyHints?.manifestUrls?.length) return proxyHints;
@@ -252,21 +335,44 @@ async function discoverDocumentIconHints(config, parsedUrl, deps = {}) {
 }
 
 async function readIconCandidate(config, candidateUrl, useProxy = false, deps = {}) {
+  const mode = getIconFetchMode(useProxy);
   const response = await safeFetchIconResource(config, candidateUrl, {
+    phase: 'icon',
     headers: {
       Accept: 'image/avif,image/webp,image/svg+xml,image/png,image/*,*/*;q=0.8'
     }
   }, useProxy, deps);
 
-  if (!response.ok) return null;
+  if (!response.ok) {
+    logIconFetch(config, 'icon:skip', { mode, status: response.status, url: candidateUrl }, deps);
+    return null;
+  }
 
   const buffer = await readResponseBuffer(response, config.maxIconSize);
-  if (!buffer.length) return null;
+  if (!buffer.length) {
+    logIconFetch(config, 'icon:empty', { mode, url: candidateUrl }, deps);
+    return null;
+  }
 
   const contentType = response.headers.get('content-type') || '';
-  if (!isSupportedIconBuffer(contentType, candidateUrl, buffer)) return null;
+  if (!isSupportedIconBuffer(contentType, candidateUrl, buffer)) {
+    logIconFetch(config, 'icon:unsupported', {
+      mode,
+      contentType,
+      bytes: buffer.length,
+      url: candidateUrl
+    }, deps);
+    return null;
+  }
 
   const extension = getIconExtension(contentType, candidateUrl, buffer);
+  logIconFetch(config, 'icon:accepted', {
+    mode,
+    contentType: getIconContentType(extension),
+    extension,
+    bytes: buffer.length,
+    url: candidateUrl
+  }, deps);
   return {
     buffer,
     extension,
@@ -285,6 +391,7 @@ async function fetchIconCandidate(config, candidateUrl, deps = {}) {
   }
 
   if (hasIconFetchProxy(config)) {
+    logIconFetch(config, 'icon:proxy-fallback', { url: candidateUrl }, deps);
     try {
       return await readIconCandidate(config, candidateUrl, true, deps);
     } catch (error) {
@@ -451,8 +558,19 @@ function uniqueIconCandidates(candidates, maxCandidates = 40) {
 async function discoverIconCandidates(config, parsedUrl, deps = {}) {
   const candidates = getKnownHighResolutionIconCandidates(parsedUrl);
   if (candidates.length) {
+    logIconFetch(config, 'candidates:known-site', {
+      host: parsedUrl.hostname,
+      count: candidates.length,
+      url: parsedUrl.href
+    }, deps);
     candidates.push(...getConventionalIconCandidates(parsedUrl).map((url) => ({ url })));
-    return uniqueIconCandidates(candidates, config.iconMaxCandidates);
+    const uniqueCandidates = uniqueIconCandidates(candidates, config.iconMaxCandidates);
+    logIconFetch(config, 'candidates:ready', {
+      host: parsedUrl.hostname,
+      count: uniqueCandidates.length,
+      url: parsedUrl.href
+    }, deps);
+    return uniqueCandidates;
   }
 
   const manifestUrls = [];
@@ -474,14 +592,24 @@ async function discoverIconCandidates(config, parsedUrl, deps = {}) {
   }
 
   candidates.push(...getConventionalIconCandidates(parsedUrl).map((url) => ({ url })));
-  return uniqueIconCandidates(candidates, config.iconMaxCandidates);
+  const uniqueCandidates = uniqueIconCandidates(candidates, config.iconMaxCandidates);
+  logIconFetch(config, 'candidates:ready', {
+    host: parsedUrl.hostname,
+    count: uniqueCandidates.length,
+    url: parsedUrl.href
+  }, deps);
+  return uniqueCandidates;
 }
 
 async function resolveIconForUrl(config, targetUrl, deps = {}) {
   const normalizedTargetUrl = normalizeIconTargetUrl(targetUrl);
-  if (!normalizedTargetUrl) return null;
+  if (!normalizedTargetUrl) {
+    logIconFetch(config, 'resolve:invalid-url', { url: targetUrl }, deps);
+    return null;
+  }
 
   const parsedUrl = new URL(normalizedTargetUrl);
+  logIconFetch(config, 'resolve:start', { url: normalizedTargetUrl }, deps);
   const candidates = await discoverIconCandidates(config, parsedUrl, deps);
 
   for (const candidateUrl of candidates) {
@@ -489,12 +617,26 @@ async function resolveIconForUrl(config, targetUrl, deps = {}) {
       const icon = await fetchIconCandidate(config, candidateUrl, deps);
       if (!icon) continue;
 
+      logIconFetch(config, 'resolve:hit', {
+        target: normalizedTargetUrl,
+        source: candidateUrl,
+        contentType: icon.contentType
+      }, deps);
       return { icon, sourceUrl: candidateUrl, targetUrl: normalizedTargetUrl };
-    } catch {
+    } catch (error) {
+      logIconFetch(config, 'resolve:candidate-error', {
+        target: normalizedTargetUrl,
+        source: candidateUrl,
+        error: error.message
+      }, deps);
       // Try the next candidate.
     }
   }
 
+  logIconFetch(config, 'resolve:miss', {
+    target: normalizedTargetUrl,
+    candidates: candidates.length
+  }, deps);
   return { icon: null, sourceUrl: '', targetUrl: normalizedTargetUrl };
 }
 

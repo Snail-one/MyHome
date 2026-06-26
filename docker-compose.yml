@@ -11,9 +11,4 @@ services:
       DATABASE_PATH: /app/data/my-home.sqlite
     volumes:
       - ./data:/app/data
-      - ./uploads:/app/uploads
     restart: unless-stopped
-
-volumes:
-  my-home-data:
-  my-home-uploads:

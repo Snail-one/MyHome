@@ -9,7 +9,7 @@ function main() {
   } catch (error) {
     if (error.code === 'CONFIG_MISSING_REQUIRED_ENV') {
       console.error(error.message);
-      console.error('Copy .env.example to .env and set secure values before starting the server.');
+      console.error('Copy .env.example to .env and set ADMIN_USERNAME and ADMIN_PASSWORD before starting the server.');
       process.exit(1);
     }
     throw error;

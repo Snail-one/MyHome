@@ -11,6 +11,22 @@ function ensureRuntimeDirectories(config) {
   fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
   fs.mkdirSync(config.backgroundsDir, { recursive: true });
   fs.mkdirSync(config.iconCacheDir, { recursive: true });
+  copyLegacyBackgroundUploads(config);
+}
+
+function copyLegacyBackgroundUploads(config) {
+  if (config.uploadsDirOverridden) return;
+
+  const legacyBackgroundsDir = path.join(config.legacyUploadsDir, 'backgrounds');
+  const currentBackgroundsDir = path.resolve(config.backgroundsDir);
+  if (path.resolve(legacyBackgroundsDir) === currentBackgroundsDir) return;
+  if (!fs.existsSync(legacyBackgroundsDir)) return;
+
+  fs.cpSync(legacyBackgroundsDir, currentBackgroundsDir, {
+    recursive: true,
+    force: false,
+    errorOnExist: false
+  });
 }
 
 function createDatabase(config, options = {}) {
@@ -36,6 +52,7 @@ function createDatabase(config, options = {}) {
 }
 
 module.exports = {
+  copyLegacyBackgroundUploads,
   createDatabase,
   ensureRuntimeDirectories
 };

@@ -2,7 +2,7 @@
 
 一个带账号登录、快捷搜索、导航链接管理和自定义背景的个人首页。
 
-> 重要：当前版本重建了服务端目录和 SQLite 初始化逻辑。旧版 `data/my-home.sqlite` 没有自动迁移保证；首次启动如果检测不到新 schema 版本，会重建应用表。升级前请先备份 `data/` 和 `uploads/`。
+> 重要：当前版本重建了服务端目录和 SQLite 初始化逻辑。旧版 `data/my-home.sqlite` 没有自动迁移保证；首次启动如果检测不到新 schema 版本，会重建应用表。升级前请先备份 `data/`，从旧版升级时也建议备份旧的 `uploads/`。
 
 ## 功能
 
@@ -12,7 +12,7 @@
 - 布局列数和编辑模式持久化保存
 - 背景图片支持上传文件或填写图片链接
 - SQLite 保存用户设置和链接数据
-- 上传的背景图片保存到服务器 `uploads/backgrounds/`，数据库只保存图片路径
+- 上传的背景图片保存到服务器 `data/uploads/backgrounds/`，数据库只保存图片路径
 - 邮箱入口使用默认图标；其他链接图标统一由服务器获取
 - 自动 favicon 抓取由服务端完成，带登录鉴权、协议/凭据校验、重定向次数、响应大小和文件类型限制
 
@@ -41,7 +41,6 @@ cp .env.example .env
 ```bash
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=换成你的强密码
-SESSION_SECRET=换成一串足够长的随机字符串
 SESSION_COOKIE_SECURE=false
 HOST=127.0.0.1
 PORT=3000
@@ -50,10 +49,15 @@ TRUST_PROXY=false
 LOGIN_MAX_FAILED_ATTEMPTS=5
 LOGIN_WINDOW_MS=900000
 LOGIN_LOCKOUT_MS=900000
+ICON_FETCH_LOG=false
 #ICON_FETCH_PROXY=http://127.0.0.1:7890
 ```
 
+`SESSION_SECRET` 可以不填；服务端会自动生成并复用 `data/session-secret`。如需使用外部密钥管理，可手动设置 `SESSION_SECRET` 或 `SESSION_SECRET_FILE`。
+
 如果 Google、X 等站点无法直连，给服务端图标抓取配置代理。图标请求默认先直连，直连失败或拿不到可用图标时再使用代理。`ICON_FETCH_PROXY` 会同时用于 HTTP/HTTPS 图标请求；也兼容 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`。`ICON_FETCH_NO_PROXY` 或 `NO_PROXY` 可指定不走代理的地址，默认已绕过 localhost 和常见内网网段。Docker 部署时，代理地址必须是容器内可访问的地址。
+
+需要排查图标获取时，可设置 `ICON_FETCH_LOG=true`。服务端会向标准输出打印 `[icon-fetch]` 前缀的抓取日志，包含直连/代理、请求阶段、URL、HTTP 状态、候选数量和最终命中/失败结果。
 
 4. 启动服务
 
@@ -75,7 +79,7 @@ http://localhost:3000
 
 ## 容器运行
 
-项目已经可以直接打包成 Docker 镜像。推荐用 `docker compose` 启动，这样 `data/` 和 `uploads/` 会自动持久化到宿主目录里。镜像使用非 root 用户运行。
+项目已经可以直接打包成 Docker 镜像。推荐用 `docker compose` 启动，这样 `data/` 会自动持久化到宿主目录里。镜像使用非 root 用户运行。
 
 1. 准备环境变量
 
@@ -88,9 +92,10 @@ cp .env.example .env
 ```bash
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=换成你的强密码
-SESSION_SECRET=换成一串足够长的随机字符串
 SESSION_COOKIE_SECURE=false
 ```
+
+`SESSION_SECRET` 默认自动生成到 `data/session-secret`；如果你希望固定为外部提供的值，可以在 `.env` 中显式设置。
 
 如果通过 HTTPS 域名和反向代理访问容器，把 `SESSION_COOKIE_SECURE=true`，并按需设置 `TRUST_PROXY=true`。如果直接用 `http://localhost:3000` 或 `http://服务器IP:3000` 访问，保持 `SESSION_COOKIE_SECURE=false`，否则浏览器不会保存登录 Cookie。
 
@@ -135,17 +140,18 @@ docker run -d \
 	-e DATABASE_PATH=/app/data/my-home.sqlite \
 	-p 3000:3000 \
 	-v my-home-data:/app/data \
-	-v my-home-uploads:/app/uploads \
 	my-home:latest
 ```
 
 ## 数据保存位置
 
 - SQLite 数据库：默认 `data/my-home.sqlite`
-- 背景图片文件：默认 `uploads/backgrounds/`
+- 背景图片文件：默认 `data/uploads/backgrounds/`，访问路径仍为 `/uploads/backgrounds/...`
 - favicon 缓存：默认 `data/icon-cache-v2/`
 - 自定义搜索引擎保存在 SQLite 中
 - 数据库不会保存图片二进制或 base64，只保存背景图片路径、外部图片 URL 和图标版本信息
+
+旧版默认保存在项目根目录 `uploads/backgrounds/` 的背景图片，启动时会自动复制到 `data/uploads/backgrounds/`。如果显式设置了 `UPLOADS_DIR`，则按该目录保存，不执行默认目录迁移。
 
 ## 目录结构
 
@@ -175,8 +181,7 @@ docker run -d \
 ├── test/
 ├── package.json
 ├── .env.example
-├── data/                 # 运行时生成，已忽略
-└── uploads/              # 运行时生成，已忽略
+└── data/                 # 运行时生成，已忽略，包含 SQLite、图标缓存和上传背景
 ```
 
 ## 注意
@@ -186,5 +191,5 @@ docker run -d \
 - 当前 schema 版本不匹配时会重建应用表；升级前务必备份 `data/my-home.sqlite`。
 - 旧版浏览器 `localStorage` 里的链接和背景不会自动迁移。
 - 登录防爆破默认规则：15 分钟内同一 IP + 用户名失败 5 次后锁定 15 分钟。
-- 生产环境请使用 HTTPS，设置足够强的 `SESSION_SECRET` 和管理员密码，并把 `SESSION_COOKIE_SECURE` 设为 `true`。
+- 生产环境请使用 HTTPS，设置强管理员密码，并把 `SESSION_COOKIE_SECURE` 设为 `true`。默认生成的 `data/session-secret` 需要随数据目录一起持久化。
 - 容器里如果要换端口，只改 `docker-compose.yml` 的端口映射和 `PORT` 环境变量即可。

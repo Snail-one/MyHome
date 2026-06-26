@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 
 require('dotenv').config();
@@ -76,12 +78,52 @@ function resolveFromRoot(rootDir, value) {
   return path.isAbsolute(value) ? value : path.resolve(rootDir, value);
 }
 
+function generateSessionSecret() {
+  return crypto.randomBytes(48).toString('hex');
+}
+
+function readGeneratedSessionSecret(secretPath) {
+  try {
+    const secret = fs.readFileSync(secretPath, 'utf8').trim();
+    return secret || '';
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return '';
+  }
+}
+
+function createGeneratedSessionSecret(secretPath) {
+  const secret = generateSessionSecret();
+  fs.mkdirSync(path.dirname(secretPath), { recursive: true });
+
+  try {
+    fs.writeFileSync(secretPath, `${secret}\n`, { mode: 0o600, flag: 'wx' });
+    return secret;
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    const existingSecret = readGeneratedSessionSecret(secretPath);
+    if (existingSecret) return existingSecret;
+    fs.writeFileSync(secretPath, `${secret}\n`, { mode: 0o600 });
+    return secret;
+  }
+}
+
+function resolveSessionSecret(envSecret, secretPath) {
+  const configuredSecret = firstNonEmptyEnv(envSecret);
+  if (configuredSecret) return configuredSecret;
+
+  return readGeneratedSessionSecret(secretPath) || createGeneratedSessionSecret(secretPath);
+}
+
 function loadConfig(env = process.env, options = {}) {
   const { requireSecrets = true, rootDir = path.resolve(__dirname, '../..') } = options;
   const dataDir = resolveFromRoot(rootDir, env.DATA_DIR || './data');
-  const uploadsDir = resolveFromRoot(rootDir, env.UPLOADS_DIR || './uploads');
+  const uploadsDirOverridden = env.UPLOADS_DIR !== undefined && String(env.UPLOADS_DIR).trim() !== '';
+  const uploadsDir = resolveFromRoot(rootDir, uploadsDirOverridden ? env.UPLOADS_DIR : path.join(dataDir, 'uploads'));
+  const legacyUploadsDir = resolveFromRoot(rootDir, './uploads');
   const publicDir = resolveFromRoot(rootDir, env.PUBLIC_DIR || './public');
   const databasePath = resolveFromRoot(rootDir, env.DATABASE_PATH || './data/my-home.sqlite');
+  const sessionSecretPath = resolveFromRoot(rootDir, env.SESSION_SECRET_FILE || path.join(dataDir, 'session-secret'));
   const nodeEnv = env.NODE_ENV || 'development';
   const iconFetchProxy = firstNonEmptyEnv(env.ICON_FETCH_PROXY);
   const iconFetchHttpProxy = firstNonEmptyEnv(
@@ -110,6 +152,8 @@ function loadConfig(env = process.env, options = {}) {
     publicDir,
     dataDir,
     uploadsDir,
+    legacyUploadsDir,
+    uploadsDirOverridden,
     backgroundsDir: path.join(uploadsDir, 'backgrounds'),
     iconCacheDir: path.join(dataDir, 'icon-cache-v2'),
     databasePath,
@@ -118,7 +162,8 @@ function loadConfig(env = process.env, options = {}) {
     nodeEnv,
     adminUsername: env.ADMIN_USERNAME,
     adminPassword: env.ADMIN_PASSWORD,
-    sessionSecret: env.SESSION_SECRET,
+    sessionSecret: '',
+    sessionSecretPath,
     sessionCookieName: 'my_home_sid',
     sessionCookieSecure: parseBooleanEnv(env.SESSION_COOKIE_SECURE, nodeEnv === 'production'),
     sessionMaxAgeMs: 1000 * 60 * 60 * 24 * 30,
@@ -131,6 +176,7 @@ function loadConfig(env = process.env, options = {}) {
     maxBackgroundSize: 10 * 1024 * 1024,
     maxIconSize: 1024 * 1024,
     iconFetchTimeoutMs: parseIntegerEnv(env.ICON_FETCH_TIMEOUT_MS, 2500, 100),
+    iconFetchLogEnabled: parseBooleanEnv(env.ICON_FETCH_LOG, false),
     iconHtmlSampleSize: 128 * 1024,
     iconMaxRedirects: parseIntegerEnv(env.ICON_MAX_REDIRECTS, 3, 0),
     iconMaxCandidates: parseIntegerEnv(env.ICON_MAX_CANDIDATES, 12, 1),
@@ -151,7 +197,6 @@ function loadConfig(env = process.env, options = {}) {
     const missing = [];
     if (!config.adminUsername) missing.push('ADMIN_USERNAME');
     if (!config.adminPassword) missing.push('ADMIN_PASSWORD');
-    if (!config.sessionSecret) missing.push('SESSION_SECRET');
     if (missing.length) {
       const error = new Error(`Missing required environment variables: ${missing.join(', ')}`);
       error.code = 'CONFIG_MISSING_REQUIRED_ENV';
@@ -160,6 +205,7 @@ function loadConfig(env = process.env, options = {}) {
     }
   }
 
+  config.sessionSecret = resolveSessionSecret(env.SESSION_SECRET, sessionSecretPath);
   return config;
 }
 
@@ -172,7 +218,9 @@ module.exports = {
   SCHEMA_VERSION,
   USER_ID,
   firstNonEmptyEnv,
+  generateSessionSecret,
   loadConfig,
   parseBooleanEnv,
-  parseIntegerEnv
+  parseIntegerEnv,
+  resolveSessionSecret
 };
