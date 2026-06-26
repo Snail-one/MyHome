@@ -1259,6 +1259,20 @@ body::before {
     overflow: hidden;
 }
 
+#nav-links-container.glass-off .nav-card {
+    background: rgba(255, 255, 255, 0.148) !important;
+    border-color: rgba(232, 223, 223, 0.187) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+/* 毛玻璃关闭时的 hover 也要保持扁平效果 */
+#nav-links-container.glass-off .nav-card:hover {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    box-shadow: var(--shadow-xl);
+}
+
 .nav-add-card {
     width: 100%;
     min-height: var(--link-add-card-min-height, 92px);
@@ -1293,14 +1307,14 @@ body::before {
     background: rgba(255, 255, 255, 0.16);
 }
 
-/* 拖拽时的样式 */
+/* 拖拽时的样式（拖拽反馈优先显示毛玻璃提升效果） */
 .nav-card.drag-over,
 .email-link.drag-over {
     transform: translateY(-4px) scale(1.02);
-    border-color: rgba(255, 255, 255, 0.4);
-    background: var(--glass-bg-card);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    border-color: rgba(255, 255, 255, 0.4) !important;
+    background: var(--glass-bg-card) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
     box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
 }
 

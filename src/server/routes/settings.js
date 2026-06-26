@@ -59,6 +59,10 @@ function createSettingsRouter(deps) {
       next.bookmarkLinkSize = normalizeLinkSize(req.body.bookmarkLinkSize, 'medium');
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body, 'bookmarkGlass')) {
+      next.bookmarkGlass = Boolean(req.body.bookmarkGlass);
+    }
+
     if (Object.prototype.hasOwnProperty.call(req.body, 'backgroundUrl')) {
       const backgroundUrl = normalizeUrl(req.body.backgroundUrl || '');
       if (!isBackgroundUrl(backgroundUrl)) {

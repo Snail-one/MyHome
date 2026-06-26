@@ -29,6 +29,7 @@ export const DEFAULT_SETTINGS = {
     bookmarkLinkDisplayMode: 'centered',
     projectLinkSize: 'medium',
     bookmarkLinkSize: 'medium',
+    bookmarkGlass: true,
     backgroundUrl: ''
 };
 

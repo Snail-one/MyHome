@@ -55,6 +55,7 @@ function createSchema(db, schemaVersion) {
       bookmark_link_display_mode TEXT NOT NULL DEFAULT 'centered',
       project_link_size TEXT NOT NULL DEFAULT 'medium',
       bookmark_link_size TEXT NOT NULL DEFAULT 'medium',
+      bookmark_glass INTEGER NOT NULL DEFAULT 1,
       background_url TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -147,6 +148,13 @@ function migrateBookmarkDisplayDefault(db) {
   });
 }
 
+function migrateBookmarkGlass(db) {
+  if (!tableExists(db, 'user_settings')) return;
+  if (!columnExists(db, 'user_settings', 'bookmark_glass')) {
+    db.exec('ALTER TABLE user_settings ADD COLUMN bookmark_glass INTEGER NOT NULL DEFAULT 1');
+  }
+}
+
 function initializeSchema(db, schemaVersion) {
   db.exec('PRAGMA foreign_keys = ON');
   const existingVersion = getSchemaVersion(db);
@@ -156,6 +164,7 @@ function initializeSchema(db, schemaVersion) {
   createSchema(db, schemaVersion);
   ensureIconColumns(db);
   migrateBookmarkDisplayDefault(db);
+  migrateBookmarkGlass(db);
 }
 
 module.exports = {
@@ -166,5 +175,6 @@ module.exports = {
   getSchemaVersion,
   initializeSchema,
   migrateBookmarkDisplayDefault,
+  migrateBookmarkGlass,
   tableExists
 };

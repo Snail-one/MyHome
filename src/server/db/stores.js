@@ -45,6 +45,7 @@ function serializeSettings(row) {
     bookmarkLinkDisplayMode: normalizeDisplayMode(row.bookmark_link_display_mode, 'centered'),
     projectLinkSize: normalizeLinkSize(row.project_link_size, 'medium'),
     bookmarkLinkSize: normalizeLinkSize(row.bookmark_link_size, 'medium'),
+    bookmarkGlass: row.bookmark_glass !== undefined ? Boolean(row.bookmark_glass) : true,
     backgroundUrl: row.background_url || ''
   };
 }
@@ -62,6 +63,7 @@ function createSettingsStore(db, config) {
           bookmark_link_display_mode = ?,
           project_link_size = ?,
           bookmark_link_size = ?,
+          bookmark_glass = ?,
           background_url = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ?
@@ -89,6 +91,7 @@ function createSettingsStore(db, config) {
         next.bookmarkLinkDisplayMode,
         next.projectLinkSize,
         next.bookmarkLinkSize,
+        next.bookmarkGlass ? 1 : 0,
         next.backgroundUrl,
         config.userId
       );

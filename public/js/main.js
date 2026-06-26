@@ -24,6 +24,7 @@ let projectLinkDisplayMode = 'centered';
 let bookmarkLinkDisplayMode = 'centered';
 let projectLinkSize = 'medium';
 let bookmarkLinkSize = 'medium';
+let bookmarkGlass = true;
 let editMode = false;
 let draggedCard = null;
 let draggedIndex = null;
@@ -1355,6 +1356,12 @@ function applyLinkSizes() {
     applyLinkSize('website', bookmarkLinkSize);
 }
 
+function applyBookmarkGlass() {
+    const container = document.getElementById('nav-links-container');
+    if (!container) return;
+    container.classList.toggle('glass-off', !bookmarkGlass);
+}
+
 function updateDisplayModeButtonState() {
     document.querySelectorAll('.display-mode-btn').forEach(btn => {
         const linkType = btn.dataset.linkType || 'website';
@@ -1411,12 +1418,48 @@ function renderLinkSizeButtons() {
     updateLinkSizeButtonState();
 }
 
+function renderBookmarkGlassToggle() {
+    const container = document.getElementById('bookmark-glass-toggle');
+    if (!container) return;
+    container.innerHTML = `
+        <button type="button" class="layout-btn glass-btn" data-enabled="true">开启</button>
+        <button type="button" class="layout-btn glass-btn" data-enabled="false">关闭</button>
+    `;
+    updateGlassToggleState();
+}
+
+function updateGlassToggleState() {
+    document.querySelectorAll('.glass-btn').forEach(btn => {
+        const enabled = btn.dataset.enabled === 'true';
+        btn.classList.toggle('active', enabled === bookmarkGlass);
+    });
+}
+
+async function setBookmarkGlass(enabled) {
+    const previous = bookmarkGlass;
+    bookmarkGlass = enabled;
+    appState.settings.bookmarkGlass = enabled;
+    applyBookmarkGlass();
+    updateGlassToggleState();
+
+    try {
+        await saveSettingsPatch({ bookmarkGlass: enabled });
+    } catch (error) {
+        bookmarkGlass = previous;
+        appState.settings.bookmarkGlass = previous;
+        applyBookmarkGlass();
+        updateGlassToggleState();
+        alert(error.message);
+    }
+}
+
 function renderLayoutButtons() {
     renderLayoutButtonGroup('project-layout-buttons', 'project-layout-options-hint', 'project');
     renderLayoutButtonGroup('layout-buttons', 'layout-options-hint', 'website');
     updateLayoutButtonState();
     renderDisplayModeButtons();
     renderLinkSizeButtons();
+    renderBookmarkGlassToggle();
 }
 
 function renderLayoutButtonGroup(containerId, hintId, linkType = 'website') {
@@ -1671,9 +1714,18 @@ function bindMenuManagement() {
             }
 
             const layoutBtn = event.target.closest('.layout-btn[data-columns]');
-            if (!layoutBtn) return;
-            const columns = parseInt(layoutBtn.dataset.columns, 10);
-            setLinkLayoutColumns(layoutBtn.dataset.linkType || 'website', columns);
+            if (layoutBtn) {
+                const columns = parseInt(layoutBtn.dataset.columns, 10);
+                setLinkLayoutColumns(layoutBtn.dataset.linkType || 'website', columns);
+                return;
+            }
+
+            const glassBtn = event.target.closest('.glass-btn');
+            if (glassBtn) {
+                const enabled = glassBtn.dataset.enabled === 'true';
+                setBookmarkGlass(enabled);
+                return;
+            }
         });
     }
 
@@ -1825,6 +1877,7 @@ function applySettings(settings) {
     bookmarkLinkDisplayMode = appState.settings.bookmarkLinkDisplayMode === 'default' ? 'default' : 'centered';
     projectLinkSize = normalizeLinkSize(appState.settings.projectLinkSize);
     bookmarkLinkSize = normalizeLinkSize(appState.settings.bookmarkLinkSize);
+    bookmarkGlass = appState.settings.bookmarkGlass !== false;
     editMode = Boolean(appState.settings.editMode);
     applyLinkSizes();
     applyLayoutColumns(layoutColumns);
@@ -1832,6 +1885,8 @@ function applySettings(settings) {
     applyLinkDisplayModes();
     updateDisplayModeButtonState();
     updateLinkSizeButtonState();
+    applyBookmarkGlass();
+    updateGlassToggleState();
     updateEditModeUI();
     applyCustomBackground(appState.settings.backgroundUrl || '');
 }
