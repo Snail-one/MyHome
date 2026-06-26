@@ -47,6 +47,14 @@ function createIconService(config, deps = {}) {
     return labels.slice(-rootLabelCount).join('.');
   }
 
+  function formatHostnameForUrl(hostname) {
+    return net.isIP(hostname) === 6 ? `[${hostname}]` : hostname;
+  }
+
+  function formatRootTargetUrl(protocol, hostname, port = '') {
+    return `${protocol}//${formatHostnameForUrl(hostname)}${port ? `:${port}` : ''}/`;
+  }
+
   function getTargetUrlCandidates(value) {
     const normalizedUrl = normalizeFetcherTargetUrl(value);
     if (!normalizedUrl) return [];
@@ -56,9 +64,9 @@ function createIconService(config, deps = {}) {
       const rootHostname = getRootHostname(parsedUrl.hostname);
       if (!rootHostname) return [];
 
-      const candidates = [`${parsedUrl.protocol}//${rootHostname}/`];
+      const candidates = [formatRootTargetUrl(parsedUrl.protocol, rootHostname, parsedUrl.port)];
       if (!net.isIP(rootHostname) && rootHostname !== 'localhost' && rootHostname.includes('.')) {
-        const wwwTargetUrl = `${parsedUrl.protocol}//www.${rootHostname}/`;
+        const wwwTargetUrl = formatRootTargetUrl(parsedUrl.protocol, `www.${rootHostname}`, parsedUrl.port);
         if (!candidates.includes(wwwTargetUrl)) candidates.push(wwwTargetUrl);
       }
       return candidates;

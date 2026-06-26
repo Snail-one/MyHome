@@ -246,6 +246,12 @@ test('search engine target URLs use root domain only and reject credentials', ()
   );
   assert.equal(
     service.getSearchEngineTargetUrl({
+      urlTemplate: 'http://127.0.0.1:3456/search?q={query}'
+    }),
+    'http://127.0.0.1:3456/'
+  );
+  assert.equal(
+    service.getSearchEngineTargetUrl({
       urlTemplate: 'https://user:pass@example.com/search?q={query}'
     }),
     null
