@@ -44,7 +44,6 @@ function getIconFetchMode(useProxy) {
 }
 
 const LOG_FIELD_ORDER = [
-  'target',
   'host',
   'phase',
   'mode',
@@ -57,9 +56,18 @@ const LOG_FIELD_ORDER = [
   'extension',
   'bytes',
   'source',
-  'url',
   'error'
 ];
+
+const LOG_COLORS = {
+  reset: '\x1b[0m',
+  gray: '\x1b[90m',
+  cyan: '\x1b[36m',
+  blue: '\x1b[34m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m'
+};
 
 function formatLogValue(value) {
   const normalized = String(value ?? '')
@@ -88,15 +96,50 @@ function getOrderedLogEntries(details) {
   return orderedEntries;
 }
 
+function getLogSubject(details) {
+  return details.target || details.url || details.source || '';
+}
+
+function shouldColorIconFetchLog(logger, deps = {}) {
+  if (typeof deps.colorLogs === 'boolean') return deps.colorLogs;
+  return logger === console && Boolean(process.stdout?.isTTY) && !process.env.NO_COLOR;
+}
+
+function colorLogValue(value, color, enabled) {
+  if (!enabled || !color) return value;
+  return `${color}${value}${LOG_COLORS.reset}`;
+}
+
+function getLogEventColor(event) {
+  if (event.includes('error') || event.includes('invalid')) return LOG_COLORS.red;
+  if (event.includes('hit') || event.includes('accepted')) return LOG_COLORS.green;
+  if (event.includes('miss') || event.includes('skip') || event.includes('empty') || event.includes('unsupported') || event.includes('fallback')) {
+    return LOG_COLORS.yellow;
+  }
+  if (event.startsWith('request:')) return LOG_COLORS.blue;
+  return LOG_COLORS.gray;
+}
+
 function logIconFetch(config, event, details = {}, deps = {}) {
   if (!config?.iconFetchLogEnabled) return;
 
   const logger = deps.logger || console;
+  const subject = getLogSubject(details);
+  const colorEnabled = shouldColorIconFetchLog(logger, deps);
   const fields = getOrderedLogEntries(details)
-    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .filter(([key, value]) => (
+      key !== 'target' &&
+      key !== 'url' &&
+      value !== undefined &&
+      value !== null &&
+      value !== ''
+    ))
     .map(([key, value]) => `${key}=${formatLogValue(value)}`)
     .join(' ');
-  const line = `[icon-fetch] ${event}${fields ? ` | ${fields}` : ''}`;
+  const label = colorLogValue('[icon-fetch]', LOG_COLORS.gray, colorEnabled);
+  const subjectPrefix = subject ? `${colorLogValue(formatLogValue(subject), LOG_COLORS.cyan, colorEnabled)} | ` : '';
+  const eventName = colorLogValue(event, getLogEventColor(event), colorEnabled);
+  const line = `${label} ${subjectPrefix}${eventName}${fields ? ` | ${fields}` : ''}`;
 
   if (typeof logger.log === 'function') {
     logger.log(line);

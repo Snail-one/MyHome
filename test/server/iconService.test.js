@@ -128,14 +128,14 @@ test('legacy upload and local icon modes read cache state without resolving', as
   assert.equal(resolved, false);
 });
 
-test('search engine target URLs strip hash and reject credentials', () => {
+test('search engine target URLs use origin only and reject credentials', () => {
   const service = createIconService(makeIconConfig());
 
   assert.equal(
     service.getSearchEngineTargetUrl({
       urlTemplate: 'https://example.com/search?q={query}#/result'
     }),
-    'https://example.com/search?q=test'
+    'https://example.com/'
   );
   assert.equal(
     service.getSearchEngineTargetUrl({

@@ -207,7 +207,15 @@ function createIconService(config, deps = {}) {
   function getSearchEngineTargetUrl(engine) {
     if (!engine?.urlTemplate) return null;
     const sampleUrl = engine.urlTemplate.replaceAll('{query}', 'test');
-    return normalizeFetcherTargetUrl(sampleUrl);
+    const normalizedUrl = normalizeFetcherTargetUrl(sampleUrl);
+    if (!normalizedUrl) return null;
+
+    try {
+      const parsedUrl = new URL(normalizedUrl);
+      return `${parsedUrl.origin}/`;
+    } catch {
+      return null;
+    }
   }
 
   async function resolveSearchEngineIcon(engine) {

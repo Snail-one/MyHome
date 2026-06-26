@@ -250,8 +250,11 @@ test('icon fetcher logs only when enabled', async () => {
   });
   const icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
   assert.equal(icon.contentType, 'image/svg+xml');
-  assert.ok(logs.some((line) => line.includes('[icon-fetch] request:start') && line.includes('mode=direct')));
-  assert.ok(logs.some((line) => line.includes('[icon-fetch] icon:accepted')));
+  assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/icon.svg | request:start') &&
+    line.includes('mode=direct')
+  )));
+  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://example.com/icon.svg | icon:accepted')));
 
   logs.length = 0;
   fetcher = createIconFetcher(makeIconConfig({ iconFetchLogEnabled: false }), {
