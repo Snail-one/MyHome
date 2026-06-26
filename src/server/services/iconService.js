@@ -61,13 +61,27 @@ function createIconService(config, deps = {}) {
 
     try {
       const parsedUrl = new URL(normalizedUrl);
-      const rootHostname = getRootHostname(parsedUrl.hostname);
-      if (!rootHostname) return [];
+      const originalHostname = parsedUrl.hostname;
+      const protocol = parsedUrl.protocol;
+      const port = parsedUrl.port;
+      if (!originalHostname) return [];
 
-      const candidates = [formatRootTargetUrl(parsedUrl.protocol, rootHostname, parsedUrl.port)];
-      if (!net.isIP(rootHostname) && rootHostname !== 'localhost' && rootHostname.includes('.')) {
-        const wwwTargetUrl = formatRootTargetUrl(parsedUrl.protocol, `www.${rootHostname}`, parsedUrl.port);
-        if (!candidates.includes(wwwTargetUrl)) candidates.push(wwwTargetUrl);
+      const candidates = [];
+
+      // First try with the original hostname (preserve subdomains like www.)
+      // Only fall back to stripping to root domain after these fail.
+      const originalTarget = formatRootTargetUrl(protocol, originalHostname, port);
+      candidates.push(originalTarget);
+
+      const rootHostname = getRootHostname(originalHostname);
+      if (rootHostname && rootHostname !== originalHostname) {
+        const rootTarget = formatRootTargetUrl(protocol, rootHostname, port);
+        if (!candidates.includes(rootTarget)) candidates.push(rootTarget);
+
+        if (!net.isIP(rootHostname) && rootHostname !== 'localhost' && rootHostname.includes('.')) {
+          const wwwRootTarget = formatRootTargetUrl(protocol, `www.${rootHostname}`, port);
+          if (!candidates.includes(wwwRootTarget)) candidates.push(wwwRootTarget);
+        }
       }
       return candidates;
     } catch {

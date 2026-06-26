@@ -84,7 +84,7 @@ test('resolveLinkIcon records miss metadata when fetcher finds no icon', async (
   assert.equal(await service.findCachedEntityIcon('links', link.id, link.iconVersion), null);
 });
 
-test('same-root-domain icon resolutions share one fetch result', async () => {
+test('subdomain targets are preferred before falling back to root domain stripping', async () => {
   const resolvedTargets = [];
   const service = createIconService(makeIconConfig(), {
     iconFetcher: {
@@ -126,7 +126,11 @@ test('same-root-domain icon resolutions share one fetch result', async () => {
   ]);
 
   assert.deepEqual(statuses.map((status) => status.status), ['ready', 'ready', 'ready']);
-  assert.deepEqual(resolvedTargets, ['https://example.com/']);
+  assert.deepEqual(resolvedTargets, [
+    'https://docs.example.com/',
+    'https://search.example.com/',
+    'https://www.example.com/'
+  ]);
 
   const thirdStatus = await service.resolveLinkIcon({
     id: 23,
@@ -136,7 +140,12 @@ test('same-root-domain icon resolutions share one fetch result', async () => {
     iconVersion: 1
   });
   assert.equal(thirdStatus.status, 'ready');
-  assert.deepEqual(resolvedTargets, ['https://example.com/']);
+  assert.deepEqual(resolvedTargets, [
+    'https://docs.example.com/',
+    'https://search.example.com/',
+    'https://www.example.com/',
+    'https://cdn.example.com/'
+  ]);
 });
 
 test('root domain miss falls back to www target', async () => {
@@ -145,7 +154,7 @@ test('root domain miss falls back to www target', async () => {
     iconFetcher: {
       resolveIconForUrl: async (targetUrl) => {
         resolvedTargets.push(targetUrl);
-        if (targetUrl === 'https://example.com/') {
+        if (targetUrl === 'https://example.com/' || targetUrl === 'https://app.example.com/') {
           return {
             icon: null,
             sourceUrl: '',
@@ -173,7 +182,11 @@ test('root domain miss falls back to www target', async () => {
   const status = await service.resolveLinkIcon(link);
   assert.equal(status.status, 'ready');
   assert.equal(status.sourceUrl, 'https://www.example.com/favicon.svg');
-  assert.deepEqual(resolvedTargets, ['https://example.com/', 'https://www.example.com/']);
+  assert.deepEqual(resolvedTargets, [
+    'https://app.example.com/',
+    'https://example.com/',
+    'https://www.example.com/'
+  ]);
 
   const cached = await service.findCachedEntityIcon('links', link.id, link.iconVersion);
   assert.equal(cached.metadata.targetUrl, 'https://www.example.com/');
@@ -223,26 +236,26 @@ test('legacy upload and local icon modes read cache state without resolving', as
   assert.equal(resolved, false);
 });
 
-test('search engine target URLs use root domain only and reject credentials', () => {
+test('search engine target URLs prefer original hostname and fall back to root domain stripping', () => {
   const service = createIconService(makeIconConfig());
 
   assert.equal(
     service.getSearchEngineTargetUrl({
       urlTemplate: 'https://www.google.com/search?q={query}#/result'
     }),
-    'https://google.com/'
+    'https://www.google.com/'
   );
   assert.equal(
     service.getSearchEngineTargetUrl({
       urlTemplate: 'https://search.bilibili.com/all?keyword={query}'
     }),
-    'https://bilibili.com/'
+    'https://search.bilibili.com/'
   );
   assert.equal(
     service.getSearchEngineTargetUrl({
       urlTemplate: 'https://news.example.co.uk/search?q={query}'
     }),
-    'https://example.co.uk/'
+    'https://news.example.co.uk/'
   );
   assert.equal(
     service.getSearchEngineTargetUrl({
