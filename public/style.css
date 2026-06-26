@@ -278,7 +278,7 @@ body::before {
     font: inherit;
     font-size: 13px;
     font-weight: 500;
-    cursor: pointer;
+    cursor: default !important;
     box-shadow: var(--shadow-md);
     transition: all var(--transition-normal);
 }
@@ -329,7 +329,6 @@ body::before {
     transform: translateY(0) scale(1);
 }
 
-.email-link-move,
 .email-link-delete {
     width: 26px;
     height: 26px;
@@ -342,25 +341,13 @@ body::before {
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     color: var(--text-primary);
-    cursor: pointer;
+    cursor: default !important;
     transition: all var(--transition-fast);
 }
 
-.email-link-move svg,
 .email-link-delete svg {
     width: 15px;
     height: 15px;
-}
-
-.email-link-move:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-}
-
-.email-link-move:not(:disabled):hover {
-    background: rgba(102, 126, 234, 0.6);
-    border-color: rgba(102, 126, 234, 0.8);
-    transform: scale(1.05);
 }
 
 .email-link-delete:hover {
@@ -382,7 +369,7 @@ body::before {
     color: var(--text-primary);
     font-size: 13px;
     font-weight: 500;
-    cursor: pointer;
+    cursor: default !important;
     transition: all var(--transition-normal);
     box-shadow: var(--shadow-md);
 }
@@ -841,7 +828,7 @@ body::before {
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-sm);
-    cursor: pointer;
+    cursor: default !important;
     transition: all var(--transition-fast);
 }
 
@@ -1027,7 +1014,7 @@ body::before {
     color: var(--text-secondary);
     font-size: 13px;
     font-weight: 500;
-    cursor: pointer;
+    cursor: default !important;
     transition: all var(--transition-normal);
     position: relative;
     overflow: hidden;
@@ -1197,7 +1184,7 @@ body::before {
     font-weight: 500;
     color: var(--text-primary);
     white-space: nowrap;
-    cursor: pointer;
+    cursor: default !important;
     transition: all var(--transition-fast);
 }
 
@@ -1248,7 +1235,6 @@ body::before {
 /* 导航卡片包装器 */
 .nav-card-wrapper {
     position: relative;
-    animation: fadeInUp 0.6s ease both;
 }
 
 .nav-card {
@@ -1268,7 +1254,7 @@ body::before {
     text-decoration: none;
     color: var(--text-primary);
     transition: all var(--transition-normal);
-    cursor: default;
+    cursor: default !important;
     position: relative;
     overflow: hidden;
 }
@@ -1278,7 +1264,11 @@ body::before {
     min-height: var(--link-add-card-min-height, 92px);
     border-style: dashed;
     font: inherit;
-    cursor: pointer;
+    cursor: default !important;
+}
+
+.nav-add-icon {
+    cursor: default !important;
 }
 
 .nav-add-icon {
@@ -1326,7 +1316,7 @@ body::before {
     transition: none !important;
 }
 
-/* 交错动画效果由 JS 设置，避免 nth-child 与 nav-empty-state 冲突 */
+/* 移除卡片渐出动画，所有卡片和图标同步立即出现 */
 
 /* 卡片操作按钮 */
 .nav-card-actions {
@@ -1360,7 +1350,7 @@ body::before {
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     color: var(--text-primary);
-    cursor: pointer;
+    cursor: default !important;
     transition: all var(--transition-fast);
 }
 
@@ -1377,10 +1367,11 @@ body::before {
 }
 
 /* 编辑模式激活时的样式 */
+/* Cursor is always default (normal mouse) for cards and icons. No hand/pointer ever. */
+
 .edit-mode-active .nav-card {
     border-color: rgba(255, 255, 255, 0.35);
     box-shadow: 0 0 0 1px rgba(102, 126, 234, 0.2);
-    cursor: pointer;
 }
 
 .edit-mode-active .nav-card-wrapper:hover .nav-card {
@@ -1467,6 +1458,12 @@ body::before {
     flex-shrink: 0;
     transition: transform var(--transition-normal);
     overflow: hidden;
+    cursor: default !important;
+}
+
+.nav-favicon,
+.nav-favicon-fallback {
+    cursor: default !important;
 }
 
 .nav-card:hover .nav-icon {

@@ -29,6 +29,7 @@ let draggedCard = null;
 let draggedIndex = null;
 let draggedLinkType = 'website';
 let isDragging = false;
+let draggedWrapper = null;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let layoutResizeTimer = null;
@@ -93,6 +94,29 @@ async function loadAppData() {
     appState.links = Array.isArray(linksData.links) ? linksData.links : [];
     appState.emailLinks = Array.isArray(linksData.emailLinks) ? linksData.emailLinks : [];
     appState.projectLinks = Array.isArray(linksData.projectLinks) ? linksData.projectLinks : [];
+
+    // Proactively resolve icons in background on load/refresh.
+    // This warms the server cache (in parallel with page render) so favicons appear faster
+    // without waiting for on-error resolve + retry.
+    // Deduped by iconRefreshPromises.
+    try {
+        const allLinks = [...(appState.links || []), ...(appState.projectLinks || [])];
+        allLinks.forEach(link => {
+            const desc = getLinkIconDescriptor(link);
+            if (desc && desc.mode === 'server') {
+                resolveIconOnServer(desc).catch(() => {});
+            }
+        });
+
+        // Also for search engines
+        (appState.searchEngineRecords || []).forEach(engine => {
+            const desc = getSearchEngineIconDescriptor(engine);
+            if (desc) {
+                resolveIconOnServer(desc).catch(() => {});
+            }
+        });
+    } catch (_) {}
+
     applySearchEnginesResponse(searchEnginesData.engines);
     applySettings(settingsData.settings || DEFAULT_SETTINGS);
     renderEmailLinks();
@@ -510,6 +534,8 @@ function hydrateIconElement(img, descriptor) {
     // Use direct image source; browser performs the fetch.
     // On error for server mode, attempt a one-time server resolve then retry.
     img.iconDescriptor = descriptor;
+    img.loading = 'lazy';
+    img.decoding = 'async';
     const fileUrl = descriptor.fileUrl;
 
     const attemptLoad = (bust = false) => {
@@ -578,12 +604,6 @@ function createEmailLinkElement(link, index, total) {
             <span class="email-link-label">${escapeHtml(link.title || '邮箱登录')}</span>
         </a>
         <div class="email-link-actions">
-            <button type="button" class="email-link-move" data-index="${index}" data-direction="up" title="上移" aria-label="上移" ${index === 0 ? 'disabled' : ''}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m18 15-6-6-6 6"/></svg>
-            </button>
-            <button type="button" class="email-link-move" data-index="${index}" data-direction="down" title="下移" aria-label="下移" ${index >= total - 1 ? 'disabled' : ''}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
             ${isRequired ? '' : `
                 <button type="button" class="email-link-delete" data-index="${index}" title="删除邮箱链接">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
@@ -613,8 +633,12 @@ function createAddEmailLinkElement() {
     button.title = '添加邮箱登录';
     button.setAttribute('aria-label', '添加邮箱登录');
     button.innerHTML = `
-        ${getMailIconSvg()}
-        <span class="email-link-label">添加邮箱</span>
+        <span class="nav-add-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+        </span>
     `;
     return button;
 }
@@ -646,17 +670,14 @@ function createNavCardElement(link, index, options = {}) {
     card.className = 'nav-card-wrapper' + (noAnimation ? ' no-animation' : '');
     card.dataset.index = index;
     card.dataset.linkType = linkType;
-
-    if (!noAnimation) {
-        card.style.animationDelay = `${0.3 + (index * 0.05)}s`;
-    }
+    card.dataset.id = link.id;
 
     card.innerHTML = `
         <a href="${href}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" data-link-type="${linkType}" draggable="true">
             <div class="nav-icon${iconDescriptor?.mode === 'none' ? ' nav-icon-empty' : ''}">
                 ${iconDescriptor?.mode === 'none'
                     ? ''
-                    : `<img alt="" class="nav-favicon">${fallbackFavicon}`
+                    : `<img alt="" class="nav-favicon" loading="lazy" decoding="async">${fallbackFavicon}`
                 }
             </div>
             <div class="nav-info">
@@ -754,8 +775,6 @@ function renderLinkCards(linkType = 'website', options = {}) {
         const card = createNavCardElement(link, index, { linkType, refreshIcon });
         container.insertBefore(card, emptyState);
     });
-
-    updateEditModeUI();
 }
 
 function renderNavCards(options = {}) {
@@ -809,45 +828,50 @@ async function persistLinkOrder(linkType, links, previousLinks) {
     }
 }
 
-async function moveLink(index, direction, linkType = 'website') {
-    const links = [...getLinkCollection(linkType)];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (index < 0 || index >= links.length || targetIndex < 0 || targetIndex >= links.length) return;
-
-    const previousLinks = [...links];
-    [links[index], links[targetIndex]] = [links[targetIndex], links[index]];
-    setLinkCollection(linkType, links);
-    renderLinkCollection(linkType);
-    await persistLinkOrder(linkType, links, previousLinks);
-}
-
 function handleDragStart(event) {
     draggedCard = this;
+    draggedWrapper = this.closest ? this.closest('.nav-card-wrapper') : null;
     draggedIndex = parseInt(this.dataset.index, 10);
     draggedLinkType = this.dataset.linkType || 'website';
     isDragging = true;
-    this.style.transform = 'scale(0.98)';
-    this.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.3)';
+    this.style.transform = 'scale(0.95)';
+    this.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.4)';
+    this.style.opacity = '0.9';
+    // No cursor change even during drag - always default mouse
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', draggedIndex);
 
-    const dragImage = document.createElement('div');
-    dragImage.style.width = '0px';
-    dragImage.style.height = '0px';
-    document.body.appendChild(dragImage);
-    event.dataTransfer.setDragImage(dragImage, 0, 0);
-    setTimeout(() => document.body.removeChild(dragImage), 0);
+    // Use a visual clone for better free-move feedback
+    try {
+        const dragImage = this.cloneNode(true);
+        dragImage.style.width = this.offsetWidth + 'px';
+        dragImage.style.height = this.offsetHeight + 'px';
+        dragImage.style.opacity = '0.85';
+        dragImage.style.pointerEvents = 'none';
+        dragImage.style.position = 'absolute';
+        dragImage.style.top = '-9999px';
+        document.body.appendChild(dragImage);
+        event.dataTransfer.setDragImage(dragImage, event.offsetX || 20, event.offsetY || 20);
+        setTimeout(() => {
+            if (dragImage.parentNode) dragImage.parentNode.removeChild(dragImage);
+        }, 0);
+    } catch (_) {
+        // fallback to invisible if clone fails
+    }
 }
 
 function handleDragEnd() {
     this.style.transform = '';
     this.style.boxShadow = '';
+    this.style.opacity = '';
+    // No cursor reset needed since we never change it
     document.querySelectorAll('.nav-card, .email-link').forEach(card => {
         card.classList.remove('drag-over');
     });
     draggedCard = null;
     draggedIndex = null;
     draggedLinkType = 'website';
+    draggedWrapper = null;
     setTimeout(() => { isDragging = false; }, 100);
 }
 
@@ -859,6 +883,24 @@ function handleDragOver(event) {
 function handleDragEnter(event) {
     event.preventDefault();
     if (this !== draggedCard) this.classList.add('drag-over');
+
+    // Live reorder in DOM for real-time position feedback (normal mode)
+    const linkType = this.dataset.linkType || 'website';
+    const dragType = draggedLinkType || 'website';
+    if (linkType !== dragType || linkType === 'email' || !draggedWrapper) return;
+
+    const targetWrapper = this.closest('.nav-card-wrapper');
+    if (targetWrapper && draggedWrapper !== targetWrapper && targetWrapper.parentNode) {
+        const parent = targetWrapper.parentNode;
+        const rect = targetWrapper.getBoundingClientRect();
+        // Decide before/after based on mouse position (horizontal grid assumption)
+        const before = event.clientX < rect.left + rect.width / 2;
+        if (before) {
+            parent.insertBefore(draggedWrapper, targetWrapper);
+        } else {
+            parent.insertBefore(draggedWrapper, targetWrapper.nextSibling);
+        }
+    }
 }
 
 function handleDragLeave() {
@@ -867,21 +909,69 @@ function handleDragLeave() {
 
 async function handleDrop(event) {
     event.preventDefault();
+
+    document.querySelectorAll('.nav-card, .email-link').forEach(card => {
+        card.classList.remove('drag-over');
+    });
+
+    if (draggedCard) {
+        draggedCard.style.transform = '';
+        draggedCard.style.boxShadow = '';
+        draggedCard.style.opacity = '';
+        // No cursor reset needed
+    }
+
     if (this === draggedCard) return;
 
     const linkType = this.dataset.linkType || 'website';
     if (linkType !== draggedLinkType) return;
 
+    const container = getLinkContainer(linkType);
+    if (!container) return;
+
+    const links = getLinkCollection(linkType);
+    const previousLinks = [...links];
+
+    // Rebuild order from current DOM (after live inserts during drag)
+    const wrappers = Array.from(container.querySelectorAll('.nav-card-wrapper'));
+    if (wrappers.length > 0 && linkType !== 'email') {
+        const linkMap = new Map(links.map(l => [l.id, l]));
+        const newLinks = [];
+        wrappers.forEach(w => {
+            const id = parseInt(w.dataset.id, 10);
+            if (linkMap.has(id)) {
+                newLinks.push(linkMap.get(id));
+            }
+        });
+
+        if (newLinks.length === links.length) {
+            setLinkCollection(linkType, newLinks);
+            // update indices in place, no re-render to avoid "reloading" cards
+            wrappers.forEach((w, i) => { w.dataset.index = i; });
+            try {
+                await apiRequest('/api/links/reorder', {
+                    method: 'PUT',
+                    body: { ids: newLinks.map(link => link.id), type: linkType }
+                });
+                // success: DOM already updated, no re-render
+            } catch (error) {
+                setLinkCollection(linkType, previousLinks);
+                renderLinkCollection(linkType); // rollback
+                alert(error.message);
+            }
+            draggedWrapper = null;
+            return;
+        }
+    }
+
+    // Fallback for email or if DOM rebuild failed: use original index logic
     const dropIndex = parseInt(this.dataset.index, 10);
     if (draggedIndex === null || dropIndex === draggedIndex) return;
 
-    const previousLinks = [...getLinkCollection(linkType)];
-    const links = [...getLinkCollection(linkType)];
     const [draggedItem] = links.splice(draggedIndex, 1);
     links.splice(dropIndex, 0, draggedItem);
     setLinkCollection(linkType, links);
 
-    const container = getLinkContainer(linkType);
     if (container) {
         container.style.transition = 'none';
     }
@@ -894,6 +984,7 @@ async function handleDrop(event) {
         });
     }
     await persistLinkOrder(linkType, links, previousLinks);
+    draggedWrapper = null;
 }
 
 function escapeHtml(text) {
@@ -1139,9 +1230,11 @@ function updateEditModeUI() {
     document.body.classList.toggle('edit-mode-active', editMode);
     if (editModeBtn) editModeBtn.classList.toggle('active', editMode);
     renderEmailLinks();
+    renderNavCards();
     syncAddLinkCard();
     const projectSection = document.getElementById('project-links-section');
     if (projectSection) projectSection.hidden = !getProjectLinks().length && !editMode;
+    renderProjectCards();
     syncAddLinkCard('project');
 }
 
@@ -1486,19 +1579,12 @@ function bindMenuManagement() {
     if (emailLinksContainer) {
         emailLinksContainer.addEventListener('click', (event) => {
             const addBtn = event.target.closest('.email-add-link');
-            const moveBtn = event.target.closest('.email-link-move');
             const deleteBtn = event.target.closest('.email-link-delete');
             const emailLink = event.target.closest('.email-link:not(.email-add-link)');
 
             if (addBtn) {
                 event.preventDefault();
                 openLinkModal(undefined, 'email');
-            } else if (moveBtn) {
-                event.preventDefault();
-                event.stopPropagation();
-                if (!moveBtn.disabled) {
-                    moveLink(parseInt(moveBtn.dataset.index, 10), moveBtn.dataset.direction, 'email');
-                }
             } else if (deleteBtn) {
                 event.preventDefault();
                 event.stopPropagation();
