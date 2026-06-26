@@ -27,7 +27,7 @@
 
 - 生产环境必须使用 HTTPS。
 - `.env` 不要提交到仓库。
-- `SESSION_SECRET` 默认自动生成到 `data/session-secret`；生产环境需要持久化 `data/`，或显式设置外部 secret。
+- `SESSION_SECRET` 默认自动生成到 SQLite 的 `schema_meta.session_secret`；生产环境需要持久化 `data/`，或显式设置外部 secret。
 - 管理员密码应使用强密码，修改密码时会重新生成 bcrypt 哈希。
 - `data/` 是运行时数据目录，需要纳入服务器备份策略。
 

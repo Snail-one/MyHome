@@ -56,7 +56,7 @@ ICON_FETCH_LOG=false
 
 管理员账号不再写在 `.env` 里。首次访问服务时，登录页会引导创建管理员账号；后续可以在管理弹窗里修改账号和密码。
 
-`SESSION_SECRET` 可以不填；服务端会自动生成并复用 `data/session-secret`。如需使用外部密钥管理，可手动设置 `SESSION_SECRET` 或 `SESSION_SECRET_FILE`。
+`SESSION_SECRET` 可以不填；服务端会自动生成并保存到 SQLite 的 `schema_meta.session_secret`。如需使用外部密钥管理，可手动设置 `SESSION_SECRET`，启动时会同步写入数据库。旧版 `data/session-secret` 如果存在，会在首次启动时导入数据库。
 
 如果 Google、X 等站点无法直连，给服务端图标抓取配置代理。图标请求默认先直连，直连失败或拿不到可用图标时再使用代理。解析图标时会先把网址归到主域名根路径，例如 `search.bilibili.com` 先尝试 `bilibili.com`；主域名失败后再尝试 `www.` 主域名。最后兜底还会用用户保存的**完整地址**（包含路径）去请求该页面，提取 HTML 里的图标声明（适用于某些只在具体页面声明 favicon 的站点）。图标来源优先使用 HTML 里声明的 favicon；如果 HTML 没有声明图标，只兜底尝试同源 `/favicon.ico`，不会请求 manifest 或其他常规猜测路径。`ICON_FETCH_PROXY` 会同时用于 HTTP/HTTPS 图标请求；也兼容 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`。`ICON_FETCH_NO_PROXY` 或 `NO_PROXY` 可指定不走代理的地址，默认已绕过 localhost 和常见内网网段。Docker 部署时，代理地址必须是容器内可访问的地址。
 
@@ -117,7 +117,7 @@ SESSION_COOKIE_SECURE=false
 
 管理员账号会在首次访问 Web 页面时创建，不需要在 `.env` 中配置。
 
-`SESSION_SECRET` 默认自动生成到 `data/session-secret`；如果你希望固定为外部提供的值，可以在 `.env` 中显式设置。
+`SESSION_SECRET` 默认自动生成到 SQLite 数据库；如果你希望固定为外部提供的值，可以在 `.env` 中显式设置。
 
 如果通过 HTTPS 域名和反向代理访问容器，把 `SESSION_COOKIE_SECURE=true`，并按需设置 `TRUST_PROXY=true`。如果直接用 `http://localhost:3000` 或 `http://服务器IP:3000` 访问，保持 `SESSION_COOKIE_SECURE=false`，否则浏览器不会保存登录 Cookie。
 
@@ -214,6 +214,6 @@ docker run -d \
 - 当前 schema 版本不匹配时会重建应用表；升级前务必备份 `data/my-home.sqlite`。
 - 旧版浏览器 `localStorage` 里的链接和背景不会自动迁移。
 - 登录防爆破默认规则：15 分钟内同一 IP + 用户名失败 5 次后锁定 15 分钟。
-- 生产环境请使用 HTTPS，设置强管理员密码，并把 `SESSION_COOKIE_SECURE` 设为 `true`。默认生成的 `data/session-secret` 需要随数据目录一起持久化。
+- 生产环境请使用 HTTPS，设置强管理员密码，并把 `SESSION_COOKIE_SECURE` 设为 `true`。默认生成的 session 签名密钥保存在 SQLite 中，需要随 `data/` 一起持久化。
 - 容器里如果要换端口，只改 `docker-compose.yml` 的端口映射和 `PORT` 环境变量即可。
 - 使用 Nginx 反代时，务必把 `TRUST_PROXY=true` 写入 `.env`。

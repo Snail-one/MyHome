@@ -1,5 +1,4 @@
 const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
 
 require('dotenv').config();
@@ -82,39 +81,6 @@ function generateSessionSecret() {
   return crypto.randomBytes(48).toString('hex');
 }
 
-function readGeneratedSessionSecret(secretPath) {
-  try {
-    const secret = fs.readFileSync(secretPath, 'utf8').trim();
-    return secret || '';
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    return '';
-  }
-}
-
-function createGeneratedSessionSecret(secretPath) {
-  const secret = generateSessionSecret();
-  fs.mkdirSync(path.dirname(secretPath), { recursive: true });
-
-  try {
-    fs.writeFileSync(secretPath, `${secret}\n`, { mode: 0o600, flag: 'wx' });
-    return secret;
-  } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    const existingSecret = readGeneratedSessionSecret(secretPath);
-    if (existingSecret) return existingSecret;
-    fs.writeFileSync(secretPath, `${secret}\n`, { mode: 0o600 });
-    return secret;
-  }
-}
-
-function resolveSessionSecret(envSecret, secretPath) {
-  const configuredSecret = firstNonEmptyEnv(envSecret);
-  if (configuredSecret) return configuredSecret;
-
-  return readGeneratedSessionSecret(secretPath) || createGeneratedSessionSecret(secretPath);
-}
-
 function loadConfig(env = process.env, options = {}) {
   const { rootDir = path.resolve(__dirname, '../..') } = options;
   const dataDir = resolveFromRoot(rootDir, env.DATA_DIR || './data');
@@ -123,7 +89,6 @@ function loadConfig(env = process.env, options = {}) {
   const legacyUploadsDir = resolveFromRoot(rootDir, './uploads');
   const publicDir = resolveFromRoot(rootDir, env.PUBLIC_DIR || './public');
   const databasePath = resolveFromRoot(rootDir, env.DATABASE_PATH || './data/my-home.sqlite');
-  const sessionSecretPath = resolveFromRoot(rootDir, env.SESSION_SECRET_FILE || path.join(dataDir, 'session-secret'));
   const nodeEnv = env.NODE_ENV || 'development';
   const iconFetchProxy = firstNonEmptyEnv(env.ICON_FETCH_PROXY);
   const iconFetchHttpProxy = firstNonEmptyEnv(
@@ -160,8 +125,7 @@ function loadConfig(env = process.env, options = {}) {
     host: env.HOST || '127.0.0.1',
     port: parseIntegerEnv(env.PORT, 3000, 1),
     nodeEnv,
-    sessionSecret: '',
-    sessionSecretPath,
+    sessionSecret: firstNonEmptyEnv(env.SESSION_SECRET),
     sessionCookieName: 'my_home_sid',
     sessionCookieSecure: parseBooleanEnv(env.SESSION_COOKIE_SECURE, nodeEnv === 'production'),
     sessionMaxAgeMs: 1000 * 60 * 60 * 24 * 30,
@@ -191,7 +155,6 @@ function loadConfig(env = process.env, options = {}) {
     requiredLinkKeys: REQUIRED_LINK_KEYS
   };
 
-  config.sessionSecret = resolveSessionSecret(env.SESSION_SECRET, sessionSecretPath);
   return config;
 }
 
@@ -207,6 +170,5 @@ module.exports = {
   generateSessionSecret,
   loadConfig,
   parseBooleanEnv,
-  parseIntegerEnv,
-  resolveSessionSecret
+  parseIntegerEnv
 };

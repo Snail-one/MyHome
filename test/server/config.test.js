@@ -5,7 +5,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { loadConfig, parseBooleanEnv, parseIntegerEnv } = require('../../src/server/config');
-const { ensureRuntimeDirectories } = require('../../src/server/db');
+const { createDatabase, ensureRuntimeDirectories } = require('../../src/server/db');
 
 test('parseBooleanEnv accepts common boolean values and falls back on invalid input', () => {
   assert.equal(parseBooleanEnv('true', false), true);
@@ -74,49 +74,59 @@ test('loadConfig allows explicit uploads directory override', () => {
   assert.equal(config.uploadsDirOverridden, true);
 });
 
-test('loadConfig generates and reuses session secret when not configured', () => {
+test('createDatabase generates and reuses database session secret when not configured', () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-home-config-'));
   const env = {
-    DATA_DIR: './data'
+    DATA_DIR: './data',
+    DATABASE_PATH: './data/app.sqlite'
   };
 
   const firstConfig = loadConfig(env, { rootDir });
-  const secondConfig = loadConfig(env, { rootDir });
+  const firstDatabase = createDatabase(firstConfig, { skipSeed: true });
+  const firstSecret = firstConfig.sessionSecret;
+  const firstMeta = firstDatabase.db.prepare("SELECT value FROM schema_meta WHERE key = 'session_secret'").get();
+  firstDatabase.close();
 
-  assert.equal(firstConfig.sessionSecret.length, 96);
-  assert.equal(secondConfig.sessionSecret, firstConfig.sessionSecret);
-  assert.equal(
-    fs.readFileSync(path.join(rootDir, 'data/session-secret'), 'utf8').trim(),
-    firstConfig.sessionSecret
-  );
+  const secondConfig = loadConfig(env, { rootDir });
+  const secondDatabase = createDatabase(secondConfig, { skipSeed: true });
+  secondDatabase.close();
+
+  assert.equal(firstSecret.length, 96);
+  assert.equal(firstMeta.value, firstSecret);
+  assert.equal(secondConfig.sessionSecret, firstSecret);
 });
 
-test('loadConfig uses configured session secret before generated file', () => {
+test('createDatabase stores configured session secret in database', () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-home-config-'));
-  const generatedPath = path.join(rootDir, 'data/session-secret');
-  fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
-  fs.writeFileSync(generatedPath, 'generated-secret\n');
-
   const config = loadConfig({
     SESSION_SECRET: 'configured-secret',
-    DATA_DIR: './data'
+    DATA_DIR: './data',
+    DATABASE_PATH: './data/app.sqlite'
   }, { rootDir });
+  const database = createDatabase(config, { skipSeed: true });
+  const meta = database.db.prepare("SELECT value FROM schema_meta WHERE key = 'session_secret'").get();
+  database.close();
 
   assert.equal(config.sessionSecret, 'configured-secret');
+  assert.equal(meta.value, 'configured-secret');
 });
 
-test('loadConfig replaces an empty generated session secret file', () => {
+test('createDatabase imports legacy session secret file into database', () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'my-home-config-'));
-  const generatedPath = path.join(rootDir, 'data/session-secret');
-  fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
-  fs.writeFileSync(generatedPath, '\n');
+  const secretPath = path.join(rootDir, 'data/session-secret');
+  fs.mkdirSync(path.dirname(secretPath), { recursive: true });
+  fs.writeFileSync(secretPath, 'legacy-secret\n');
 
   const config = loadConfig({
-    DATA_DIR: './data'
+    DATA_DIR: './data',
+    DATABASE_PATH: './data/app.sqlite'
   }, { rootDir });
+  const database = createDatabase(config, { skipSeed: true });
+  const meta = database.db.prepare("SELECT value FROM schema_meta WHERE key = 'session_secret'").get();
+  database.close();
 
-  assert.equal(config.sessionSecret.length, 96);
-  assert.equal(fs.readFileSync(generatedPath, 'utf8').trim(), config.sessionSecret);
+  assert.equal(config.sessionSecret, 'legacy-secret');
+  assert.equal(meta.value, 'legacy-secret');
 });
 
 test('ensureRuntimeDirectories copies legacy background uploads into data uploads', () => {
