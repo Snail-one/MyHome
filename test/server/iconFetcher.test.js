@@ -93,15 +93,21 @@ test('discoverIconCandidates returns only icons declared in HTML', async (t) => 
 });
 
 test('discoverIconCandidates ranks only HTML-declared icons', async () => {
+  const logs = [];
   const html = [
     '<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">',
     '<link rel="apple-touch-icon" href="/apple-192.png" sizes="192x192" type="image/png">',
     '<link rel="manifest" href="/manifest.json">'
   ].join('');
   const candidates = await discoverIconCandidates(
-    makeIconConfig({ iconMaxCandidates: 8 }),
+    makeIconConfig({ iconFetchLogEnabled: true, iconMaxCandidates: 8 }),
     new URL('https://x.com/'),
     {
+      logger: {
+        log(line) {
+          logs.push(line);
+        }
+      },
       safeFetch: async (url) => {
         if (url === 'https://x.com/') {
           return new Response(html, {
@@ -131,6 +137,59 @@ test('discoverIconCandidates ranks only HTML-declared icons', async () => {
     'https://x.com/apple-192.png',
     'https://x.com/favicon-32.png'
   ]);
+  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://x.com/ | direct | html:fetch:success')));
+  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://x.com/ | direct | html:parse:success')));
+});
+
+test('discoverIconCandidates logs HTML parse failure when no icon links are found', async () => {
+  const logs = [];
+  const candidates = await discoverIconCandidates(
+    makeIconConfig({ iconFetchLogEnabled: true }),
+    new URL('https://example.com/'),
+    {
+      logger: {
+        log(line) {
+          logs.push(line);
+        }
+      },
+      safeFetch: async () => new Response('<html><head><title>No icons</title></head></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' }
+      })
+    }
+  );
+
+  assert.deepEqual(candidates, []);
+  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://example.com/ | direct | html:fetch:success')));
+  assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/ | direct | html:parse:fail') &&
+    line.includes('reason=no-icon-link')
+  )));
+});
+
+test('discoverIconCandidates logs HTML fetch failure on request errors', async () => {
+  const logs = [];
+  const candidates = await discoverIconCandidates(
+    makeIconConfig({ iconFetchLogEnabled: true }),
+    new URL('https://example.com/'),
+    {
+      logger: {
+        log(line) {
+          logs.push(line);
+        }
+      },
+      safeFetch: async () => {
+        throw new Error('network down');
+      }
+    }
+  );
+
+  assert.deepEqual(candidates, []);
+  assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/ | direct | html:fetch:fail') &&
+    line.includes('reason=request-error') &&
+    line.includes('error="network down"')
+  )));
 });
 
 test('fetchIconCandidate accepts valid image magic and rejects forged image data', async (t) => {
@@ -251,10 +310,10 @@ test('icon fetcher logs only when enabled', async () => {
   const icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
   assert.equal(icon.contentType, 'image/svg+xml');
   assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/icon.svg | request:start') &&
-    line.includes('mode=direct')
+    line.startsWith('[icon-fetch] https://example.com/icon.svg | direct | request:start') &&
+    line.includes('phase=icon')
   )));
-  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://example.com/icon.svg | icon:accepted')));
+  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://example.com/icon.svg | direct | icon:accepted')));
 
   logs.length = 0;
   fetcher = createIconFetcher(makeIconConfig({ iconFetchLogEnabled: false }), {

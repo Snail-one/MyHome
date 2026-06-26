@@ -46,9 +46,9 @@ function getIconFetchMode(useProxy) {
 const LOG_FIELD_ORDER = [
   'host',
   'phase',
-  'mode',
   'status',
   'ok',
+  'reason',
   'icons',
   'count',
   'candidates',
@@ -111,8 +111,8 @@ function colorLogValue(value, color, enabled) {
 }
 
 function getLogEventColor(event) {
-  if (event.includes('error') || event.includes('invalid')) return LOG_COLORS.red;
-  if (event.includes('hit') || event.includes('accepted')) return LOG_COLORS.green;
+  if (event.includes('error') || event.includes('invalid') || event.includes('fail')) return LOG_COLORS.red;
+  if (event.includes('hit') || event.includes('accepted') || event.includes('success')) return LOG_COLORS.green;
   if (event.includes('miss') || event.includes('skip') || event.includes('empty') || event.includes('unsupported') || event.includes('fallback')) {
     return LOG_COLORS.yellow;
   }
@@ -125,11 +125,13 @@ function logIconFetch(config, event, details = {}, deps = {}) {
 
   const logger = deps.logger || console;
   const subject = getLogSubject(details);
+  const mode = details.mode || '-';
   const colorEnabled = shouldColorIconFetchLog(logger, deps);
   const fields = getOrderedLogEntries(details)
     .filter(([key, value]) => (
       key !== 'target' &&
       key !== 'url' &&
+      key !== 'mode' &&
       value !== undefined &&
       value !== null &&
       value !== ''
@@ -138,8 +140,9 @@ function logIconFetch(config, event, details = {}, deps = {}) {
     .join(' ');
   const label = colorLogValue('[icon-fetch]', LOG_COLORS.gray, colorEnabled);
   const subjectPrefix = subject ? `${colorLogValue(formatLogValue(subject), LOG_COLORS.cyan, colorEnabled)} | ` : '';
+  const modePart = colorLogValue(formatLogValue(mode), mode === 'proxy' ? LOG_COLORS.yellow : LOG_COLORS.blue, colorEnabled);
   const eventName = colorLogValue(event, getLogEventColor(event), colorEnabled);
-  const line = `${label} ${subjectPrefix}${eventName}${fields ? ` | ${fields}` : ''}`;
+  const line = `${label} ${subjectPrefix}${modePart} | ${eventName}${fields ? ` ${fields}` : ''}`;
 
   if (typeof logger.log === 'function') {
     logger.log(line);
@@ -256,29 +259,74 @@ function extractIconLinksFromHtml(html, pageUrl) {
 
 async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps = {}) {
   const mode = getIconFetchMode(useProxy);
-  const response = await safeFetchIconResource(config, parsedUrl.href, {
-    phase: 'html',
-    headers: {
-      Accept: 'text/html,application/xhtml+xml'
-    }
-  }, useProxy, deps);
+  let response;
+
+  try {
+    response = await safeFetchIconResource(config, parsedUrl.href, {
+      phase: 'html',
+      headers: {
+        Accept: 'text/html,application/xhtml+xml'
+      }
+    }, useProxy, deps);
+  } catch (error) {
+    logIconFetch(config, 'html:fetch:fail', {
+      mode,
+      reason: 'request-error',
+      url: parsedUrl.href,
+      error: error.message
+    }, deps);
+    throw error;
+  }
 
   const contentType = normalizeContentType(response.headers.get('content-type') || '');
-  if (!response.ok || (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml'))) {
-    logIconFetch(config, 'html:skip', {
+  if (!response.ok) {
+    logIconFetch(config, 'html:fetch:fail', {
       mode,
       status: response.status,
       contentType,
+      reason: 'http-status',
       url: parsedUrl.href
     }, deps);
     return null;
   }
 
-  const html = (await readResponseBuffer(response, config.iconHtmlSampleSize, true)).toString('utf8');
+  if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+    logIconFetch(config, 'html:fetch:fail', {
+      mode,
+      status: response.status,
+      contentType,
+      reason: 'not-html',
+      url: parsedUrl.href
+    }, deps);
+    return null;
+  }
+
+  logIconFetch(config, 'html:fetch:success', {
+    mode,
+    status: response.status,
+    contentType,
+    url: parsedUrl.href
+  }, deps);
+
+  let buffer;
+  try {
+    buffer = await readResponseBuffer(response, config.iconHtmlSampleSize, true);
+  } catch (error) {
+    logIconFetch(config, 'html:parse:fail', {
+      mode,
+      reason: 'read-error',
+      url: parsedUrl.href,
+      error: error.message
+    }, deps);
+    throw error;
+  }
+
+  const html = buffer.toString('utf8');
   const iconCandidates = extractIconLinksFromHtml(html, parsedUrl.href);
-  logIconFetch(config, 'html:candidates', {
+  logIconFetch(config, iconCandidates.length ? 'html:parse:success' : 'html:parse:fail', {
     mode,
     icons: iconCandidates.length,
+    ...(iconCandidates.length ? {} : { reason: 'no-icon-link' }),
     url: parsedUrl.href
   }, deps);
   return {

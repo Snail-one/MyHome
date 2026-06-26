@@ -10,11 +10,37 @@ const {
 
 function createIconService(config, deps = {}) {
   const iconFetcher = deps.iconFetcher || createIconFetcher(config);
+  const iconResolutionCache = new Map();
 
   function normalizeFetcherTargetUrl(value) {
     return typeof iconFetcher.normalizeIconTargetUrl === 'function'
       ? iconFetcher.normalizeIconTargetUrl(value)
       : normalizeIconTargetUrl(value);
+  }
+
+  function getOriginTargetUrl(value) {
+    const normalizedUrl = normalizeFetcherTargetUrl(value);
+    if (!normalizedUrl) return null;
+
+    try {
+      const parsedUrl = new URL(normalizedUrl);
+      return `${parsedUrl.origin}/`;
+    } catch {
+      return null;
+    }
+  }
+
+  async function resolveIconForTarget(targetUrl) {
+    const originTargetUrl = getOriginTargetUrl(targetUrl);
+    if (!originTargetUrl) return { icon: null, sourceUrl: '', targetUrl: '' };
+    if (iconResolutionCache.has(originTargetUrl)) return iconResolutionCache.get(originTargetUrl);
+
+    const resolutionPromise = iconFetcher.resolveIconForUrl(originTargetUrl).catch((error) => {
+      iconResolutionCache.delete(originTargetUrl);
+      throw error;
+    });
+    iconResolutionCache.set(originTargetUrl, resolutionPromise);
+    return resolutionPromise;
   }
 
   function getEntityCachePrefix(entityType, entityId) {
@@ -79,6 +105,7 @@ function createIconService(config, deps = {}) {
   }
 
   async function clearIconCache() {
+    iconResolutionCache.clear();
     const entries = await fs.promises.readdir(config.iconCacheDir, { withFileTypes: true }).catch(() => []);
     await Promise.all(entries
       .filter((entry) => entry.isFile())
@@ -187,7 +214,7 @@ function createIconService(config, deps = {}) {
     if (link.iconMode === 'upload') return getEntityIconStatus('links', link, { iconMode: 'upload' });
     if (link.iconMode === 'local') return getEntityIconStatus('links', link, { iconMode: 'local' });
 
-    const resolved = await iconFetcher.resolveIconForUrl(link.url);
+    const resolved = await resolveIconForTarget(link.url);
     if (resolved?.icon) {
       await writeEntityIcon('links', link.id, link.iconVersion, resolved.icon, {
         source: 'server',
@@ -199,7 +226,7 @@ function createIconService(config, deps = {}) {
 
     await markEntityIconMiss('links', link.id, link.iconVersion, {
       source: 'server',
-      targetUrl: resolved?.targetUrl || normalizeFetcherTargetUrl(link.url) || ''
+      targetUrl: resolved?.targetUrl || getOriginTargetUrl(link.url) || ''
     });
     return getEntityIconStatus('links', link);
   }
@@ -207,21 +234,13 @@ function createIconService(config, deps = {}) {
   function getSearchEngineTargetUrl(engine) {
     if (!engine?.urlTemplate) return null;
     const sampleUrl = engine.urlTemplate.replaceAll('{query}', 'test');
-    const normalizedUrl = normalizeFetcherTargetUrl(sampleUrl);
-    if (!normalizedUrl) return null;
-
-    try {
-      const parsedUrl = new URL(normalizedUrl);
-      return `${parsedUrl.origin}/`;
-    } catch {
-      return null;
-    }
+    return getOriginTargetUrl(sampleUrl);
   }
 
   async function resolveSearchEngineIcon(engine) {
     if (!engine) return { notFound: true };
     const targetUrl = getSearchEngineTargetUrl(engine);
-    const resolved = await iconFetcher.resolveIconForUrl(targetUrl);
+    const resolved = await resolveIconForTarget(targetUrl);
     if (resolved?.icon) {
       await writeEntityIcon('search-engines', engine.id, engine.iconVersion, resolved.icon, {
         source: 'server',

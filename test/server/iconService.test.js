@@ -84,6 +84,61 @@ test('resolveLinkIcon records miss metadata when fetcher finds no icon', async (
   assert.equal(await service.findCachedEntityIcon('links', link.id, link.iconVersion), null);
 });
 
+test('same-origin icon resolutions share one fetch result', async () => {
+  const resolvedTargets = [];
+  const service = createIconService(makeIconConfig(), {
+    iconFetcher: {
+      resolveIconForUrl: async (targetUrl) => {
+        resolvedTargets.push(targetUrl);
+        return {
+          icon: makeSvgIcon(),
+          sourceUrl: `${targetUrl}favicon.svg`,
+          targetUrl
+        };
+      }
+    }
+  });
+
+  const firstLink = {
+    id: 20,
+    linkType: 'website',
+    url: 'https://example.com/docs',
+    iconMode: 'server',
+    iconVersion: 1
+  };
+  const secondLink = {
+    id: 21,
+    linkType: 'website',
+    url: 'https://example.com/search?q=abc',
+    iconMode: 'server',
+    iconVersion: 1
+  };
+  const engine = {
+    id: 22,
+    urlTemplate: 'https://example.com/search?q={query}',
+    iconVersion: 1
+  };
+
+  const statuses = await Promise.all([
+    service.resolveLinkIcon(firstLink),
+    service.resolveLinkIcon(secondLink),
+    service.resolveSearchEngineIcon(engine)
+  ]);
+
+  assert.deepEqual(statuses.map((status) => status.status), ['ready', 'ready', 'ready']);
+  assert.deepEqual(resolvedTargets, ['https://example.com/']);
+
+  const thirdStatus = await service.resolveLinkIcon({
+    id: 23,
+    linkType: 'website',
+    url: 'https://example.com/another',
+    iconMode: 'server',
+    iconVersion: 1
+  });
+  assert.equal(thirdStatus.status, 'ready');
+  assert.deepEqual(resolvedTargets, ['https://example.com/']);
+});
+
 test('legacy upload and local icon modes read cache state without resolving', async () => {
   let resolved = false;
   const config = makeIconConfig();
