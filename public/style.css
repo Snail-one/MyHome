@@ -728,6 +728,70 @@ body::before {
     border-color: rgba(255, 255, 255, 0.3);
 }
 
+.btn-danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.btn-danger:hover {
+    background: rgba(239, 68, 68, 0.35);
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #fecaca;
+}
+
+/* ==================== 删除确认弹窗 ==================== */
+.confirm-modal .modal-body {
+    padding: 24px 20px;
+    text-align: center;
+}
+
+.confirm-content {
+    margin-bottom: 8px;
+}
+
+.confirm-icon {
+    margin: 0 auto 12px;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+.confirm-title {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.confirm-message {
+    margin: 0 0 4px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.confirm-actions {
+    margin-top: 16px;
+    margin-bottom: 0;
+    justify-content: center;
+}
+
+/* 确认弹窗位置：靠上一点（不要完全居中） */
+#confirm-modal {
+    align-items: flex-start;
+    padding-top: 15vh;
+}
+
+#confirm-modal .modal {
+    margin-top: 0;
+}
+
 /* ==================== 布局设置 ==================== */
 .layout-settings-section {
     margin-top: 32px;

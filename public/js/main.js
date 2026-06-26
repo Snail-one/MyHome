@@ -120,9 +120,8 @@ async function loadAppData() {
 
     applySearchEnginesResponse(searchEnginesData.engines);
     applySettings(settingsData.settings || DEFAULT_SETTINGS);
-    renderEmailLinks();
-    renderProjectCards();
-    renderNavCards();
+    // Rendering is already handled inside applySettings → updateEditModeUI()
+    // (which calls render* + syncAddLinkCard for add buttons).
 }
 
 async function saveSettingsPatch(patch) {
@@ -776,6 +775,11 @@ function renderLinkCards(linkType = 'website', options = {}) {
         const card = createNavCardElement(link, index, { linkType, refreshIcon });
         container.insertBefore(card, emptyState);
     });
+
+    // Re-insert the "+" add button if in edit mode.
+    // renderLinkCards does a blanket remove of all .nav-card-wrapper (including .nav-add-wrapper),
+    // so we must restore the add card here. This fixes the add button disappearing after adding/deleting links.
+    syncAddLinkCard(linkType);
 }
 
 function renderNavCards(options = {}) {
@@ -1088,6 +1092,17 @@ function closeActiveModal() {
 
     if (activeModal.id === 'link-modal') {
         closeLinkModal();
+    } else if (activeModal.id === 'confirm-modal') {
+        const overlay = activeModal;
+        const cancelBtn = document.getElementById('confirm-cancel');
+        const okBtn = document.getElementById('confirm-ok');
+
+        if (typeof currentConfirmResolver === 'function') {
+            currentConfirmResolver(false);
+            currentConfirmResolver = null;
+        }
+
+        closeModal('confirm-modal');
     } else {
         closeModal(activeModal.id);
     }
@@ -1100,6 +1115,57 @@ function openModal(modalId) {
     if (!modal) return;
     modal.setAttribute('aria-hidden', 'false');
     modal.classList.add('modal-open');
+}
+
+// 自定义确认弹窗（替代浏览器原生 confirm）
+let currentConfirmResolver = null;
+
+function showConfirm(message, title = '确认删除') {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('confirm-modal');
+        const titleEl = document.getElementById('confirm-title');
+        const messageEl = document.getElementById('confirm-message');
+        const cancelBtn = document.getElementById('confirm-cancel');
+        const okBtn = document.getElementById('confirm-ok');
+
+        if (!overlay || !titleEl || !messageEl || !cancelBtn || !okBtn) {
+            // 兜底：如果 modal 没准备好，使用原生（理论上不应发生）
+            resolve(window.confirm(message));
+            return;
+        }
+
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        currentConfirmResolver = resolve;
+
+        let finished = false;
+        const finish = (result) => {
+            if (finished) return;
+            finished = true;
+            currentConfirmResolver = null;
+            cancelBtn.removeEventListener('click', onCancel);
+            okBtn.removeEventListener('click', onOk);
+            overlay.removeEventListener('click', onBackdrop);
+            closeModal('confirm-modal');
+            resolve(result);
+        };
+
+        const onCancel = () => finish(false);
+        const onOk = () => finish(true);
+        const onBackdrop = (e) => {
+            if (e.target === overlay) {
+                finish(false);
+            }
+        };
+
+        cancelBtn.addEventListener('click', onCancel, { once: true });
+        okBtn.addEventListener('click', onOk, { once: true });
+        overlay.addEventListener('click', onBackdrop);
+
+        openModal('confirm-modal');
+        // 默认聚焦“取消”，防止误操作
+        setTimeout(() => cancelBtn.focus(), 0);
+    });
 }
 
 function resetSearchEngineForm() {
@@ -1232,17 +1298,18 @@ function updateEditModeUI() {
     if (editModeBtn) editModeBtn.classList.toggle('active', editMode);
     renderEmailLinks();
     renderNavCards();
-    syncAddLinkCard();
     const projectSection = document.getElementById('project-links-section');
     if (projectSection) projectSection.hidden = !getProjectLinks().length && !editMode;
     renderProjectCards();
-    syncAddLinkCard('project');
 }
 
 async function deleteLink(index, linkType = 'website') {
     const links = getLinkCollection(linkType);
     if (index < 0 || index >= links.length) return;
-    if (!confirm(`确定要删除链接「${links[index].title}」吗？`)) return;
+
+    const title = links[index].title || '该链接';
+    const confirmed = await showConfirm(`确定要删除链接「${title}」吗？`);
+    if (!confirmed) return;
 
     try {
         const data = await apiRequest(`/api/links/${links[index].id}`, { method: 'DELETE' });
@@ -1775,7 +1842,8 @@ function bindMenuManagement() {
             return;
         }
 
-        if (!confirm(`确定要删除搜索引擎「${engine.name}」吗？`)) return;
+        const confirmed = await showConfirm(`确定要删除搜索引擎「${engine.name}」吗？`);
+        if (!confirmed) return;
 
         deleteBtn.disabled = true;
 
