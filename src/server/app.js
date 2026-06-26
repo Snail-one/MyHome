@@ -24,7 +24,7 @@ function createSecurityHeadersMiddleware() {
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self'",
     "font-src 'self' data:",
-    "connect-src 'self' http: https:",
+    "connect-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'"
@@ -32,11 +32,30 @@ function createSecurityHeadersMiddleware() {
 
   return (req, res, next) => {
     res.set('Content-Security-Policy', contentSecurityPolicy);
+    res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('X-Frame-Options', 'DENY');
     res.set('Referrer-Policy', 'same-origin');
     next();
   };
+}
+
+// CSRF protection: require Content-Type: application/json for state-changing API requests with a body.
+// Cross-origin forms/XHR cannot set Content-Type: application/json without a CORS preflight.
+function csrfContentTypeCheck(req, res, next) {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next();
+  }
+  // Only enforce Content-Type check when there is a request body
+  const contentLength = Number.parseInt(req.headers['content-length'] || '', 10);
+  const hasBody = Number.isInteger(contentLength) && contentLength > 0;
+  if (hasBody) {
+    const contentType = req.headers['content-type'] || '';
+    if (!contentType.includes('application/json')) {
+      return res.status(403).json({ error: '无效的请求格式' });
+    }
+  }
+  next();
 }
 
 function sendPublicFile(res, config, fileName, options = {}) {
@@ -138,6 +157,12 @@ function createApp(deps) {
     limiter,
     stores
   };
+
+  // CSRF protection for JSON API routes (skip background upload which uses multipart/form-data)
+  app.use('/api', (req, res, next) => {
+    if (req.path === '/background' && req.method === 'POST') return next();
+    csrfContentTypeCheck(req, res, next);
+  });
 
   app.use('/api', createAuthRouter(apiDeps));
   app.use('/api', createSettingsRouter(apiDeps));

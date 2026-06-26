@@ -25,6 +25,28 @@ const COMMON_SECOND_LEVEL_PUBLIC_SUFFIXES = new Set([
 function createIconService(config, deps = {}) {
   const iconFetcher = deps.iconFetcher || createIconFetcher(config);
   const iconResolutionCache = new Map();
+  const ICON_CACHE_MAX_SIZE = 200;
+  const ICON_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+  function evictExpiredCacheEntries(now) {
+    for (const [key, entry] of iconResolutionCache) {
+      if (now - entry.timestamp > ICON_CACHE_TTL_MS) {
+        iconResolutionCache.delete(key);
+      }
+    }
+  }
+
+  function evictOldestCacheEntry() {
+    let oldestKey = null;
+    let oldestTime = Infinity;
+    for (const [key, entry] of iconResolutionCache) {
+      if (entry.timestamp < oldestTime) {
+        oldestTime = entry.timestamp;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) iconResolutionCache.delete(oldestKey);
+  }
 
   function normalizeFetcherTargetUrl(value) {
     return typeof iconFetcher.normalizeIconTargetUrl === 'function'
@@ -94,13 +116,30 @@ function createIconService(config, deps = {}) {
   }
 
   async function resolveIconForSingleTarget(targetUrl) {
-    if (iconResolutionCache.has(targetUrl)) return iconResolutionCache.get(targetUrl);
+    const now = Date.now();
+    const cached = iconResolutionCache.get(targetUrl);
+    if (cached) {
+      if (now - cached.timestamp > ICON_CACHE_TTL_MS) {
+        iconResolutionCache.delete(targetUrl);
+      } else {
+        return cached.promise;
+      }
+    }
 
     const resolutionPromise = iconFetcher.resolveIconForUrl(targetUrl).catch((error) => {
       iconResolutionCache.delete(targetUrl);
       throw error;
     });
-    iconResolutionCache.set(targetUrl, resolutionPromise);
+
+    // Evict expired entries periodically, then oldest if still over limit
+    if (iconResolutionCache.size >= ICON_CACHE_MAX_SIZE) {
+      evictExpiredCacheEntries(now);
+      if (iconResolutionCache.size >= ICON_CACHE_MAX_SIZE) {
+        evictOldestCacheEntry();
+      }
+    }
+
+    iconResolutionCache.set(targetUrl, { promise: resolutionPromise, timestamp: now });
     return resolutionPromise;
   }
 
@@ -251,20 +290,26 @@ function createIconService(config, deps = {}) {
     const tempPath = path.join(config.iconCacheDir, `${prefix}.${crypto.randomBytes(8).toString('hex')}.tmp`);
 
     await fs.promises.writeFile(tempPath, icon.buffer);
-    await fs.promises.rename(tempPath, finalPath);
-    await deleteEntityIconFiles(entityType, entityId, finalFileName);
-    await writeEntityIconMetadata(entityType, entityId, {
-      entityType,
-      entityId: Number.parseInt(entityId, 10),
-      version: Number(version || 1),
-      status: 'ready',
-      source: metadata.source || 'server',
-      sourceUrl: metadata.sourceUrl || '',
-      targetUrl: metadata.targetUrl || '',
-      fileName: finalFileName,
-      contentType: icon.contentType,
-      savedAt: new Date().toISOString()
-    });
+    try {
+      await fs.promises.rename(tempPath, finalPath);
+      await deleteEntityIconFiles(entityType, entityId, finalFileName);
+      await writeEntityIconMetadata(entityType, entityId, {
+        entityType,
+        entityId: Number.parseInt(entityId, 10),
+        version: Number(version || 1),
+        status: 'ready',
+        source: metadata.source || 'server',
+        sourceUrl: metadata.sourceUrl || '',
+        targetUrl: metadata.targetUrl || '',
+        fileName: finalFileName,
+        contentType: icon.contentType,
+        savedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      // Clean up temp file on any failure after write
+      await fs.promises.unlink(tempPath).catch(() => {});
+      throw error;
+    }
 
     return {
       filePath: finalPath,

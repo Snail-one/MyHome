@@ -7,6 +7,19 @@ const {
 } = require('./imageTypes');
 const { normalizeUrl } = require('./validation');
 
+async function consumeResponseBody(response) {
+  try {
+    if (response.body?.cancel) {
+      await response.body.cancel();
+    } else if (response.body?.getReader) {
+      const reader = response.body.getReader();
+      await reader.cancel().catch(() => {});
+    } else if (typeof response.arrayBuffer === 'function') {
+      await response.arrayBuffer().catch(() => {});
+    }
+  } catch (_) { /* ignore cleanup errors */ }
+}
+
 function normalizeIconTargetUrl(value) {
   const normalized = normalizeUrl(value);
   if (!normalized) return null;
@@ -290,6 +303,7 @@ async function readResponseBuffer(response, maxBytes, allowTruncate = false) {
         await reader.cancel().catch(() => {});
         break;
       }
+      await reader.cancel().catch(() => {});
       throw new Error('Icon response is too large');
     }
     totalBytes += chunk.length;
@@ -367,6 +381,7 @@ async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps 
       reason: 'access-failed',
       url: parsedUrl.href
     }, deps);
+    await consumeResponseBody(response);
     return null;
   }
 
@@ -378,6 +393,7 @@ async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps 
       reason: 'not-html',
       url: parsedUrl.href
     }, deps);
+    await consumeResponseBody(response);
     return null;
   }
 
@@ -462,6 +478,7 @@ async function readIconCandidate(config, candidateUrl, useProxy = false, deps = 
 
   if (!response.ok) {
     logIconFetch(config, 'icon:skip', { mode, status: response.status, reason: 'access-failed', url: candidateUrl }, deps);
+    await consumeResponseBody(response);
     return null;
   }
 

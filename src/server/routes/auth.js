@@ -3,6 +3,10 @@ const express = require('express');
 
 const { sendLoginLockedResponse } = require('../services/loginLimiter');
 
+// Dummy hash to prevent timing side-channel user enumeration.
+// Always compared when user does not exist, so bcrypt runs in all cases.
+const DUMMY_HASH = '$2a$12$LOPTqknGmV8kIGHgMBkGPOOQmSwGkTSwCRJHBGQ8kXXXXXXXXXXXXXX';
+
 function createAuthRouter(deps) {
   const { auth, config, limiter, stores } = deps;
   const router = express.Router();
@@ -10,7 +14,7 @@ function createAuthRouter(deps) {
   router.post('/login', (req, res) => {
     const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
     const password = typeof req.body.password === 'string' ? req.body.password : '';
-    const attemptKey = limiter.getKey(req, username);
+    const attemptKey = limiter.getKey(req);
     const activeAttemptState = limiter.getActiveState(attemptKey);
 
     if (activeAttemptState?.lockedUntil > Date.now()) {
@@ -19,8 +23,10 @@ function createAuthRouter(deps) {
     }
 
     const user = stores.users.findByUsername(username);
+    const hashToCompare = user?.password_hash || DUMMY_HASH;
+    const passwordValid = user && bcrypt.compareSync(password, hashToCompare);
 
-    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    if (!passwordValid) {
       const failedState = limiter.recordFailure(attemptKey);
       if (failedState.lockedUntil > Date.now()) {
         sendLoginLockedResponse(res, limiter, failedState);
@@ -50,7 +56,12 @@ function createAuthRouter(deps) {
         res.status(500).json({ error: '退出失败，请重试' });
         return;
       }
-      res.clearCookie(config.sessionCookieName);
+      res.clearCookie(config.sessionCookieName, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: config.sessionCookieSecure,
+        path: '/'
+      });
       res.json({ ok: true });
     });
   });

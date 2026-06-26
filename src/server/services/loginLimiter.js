@@ -7,10 +7,9 @@ function createLoginLimiter(options) {
   } = options;
   const attempts = new Map();
 
-  function getKey(req, username) {
+  function getKey(req) {
     const ip = req.ip || req.socket?.remoteAddress || 'unknown';
-    const normalizedUsername = (username || 'unknown').toLowerCase();
-    return `${ip}:${normalizedUsername}`;
+    return ip;
   }
 
   function prune(currentTime = now()) {

@@ -170,10 +170,19 @@ function createIconsRouter(deps) {
         ...links.projectLinks
       ].filter((link) => link.iconMode === 'server');
 
-      await Promise.allSettled([
-        ...visibleLinks.map((link) => iconService.resolveLinkIcon(link)),
-        ...engines.map((engine) => iconService.resolveSearchEngineIcon(engine))
-      ]);
+      const tasks = [
+        ...visibleLinks.map((link) => () => iconService.resolveLinkIcon(link)),
+        ...engines.map((engine) => () => iconService.resolveSearchEngineIcon(engine))
+      ];
+
+      // Process with bounded concurrency to avoid memory spikes
+      const CONCURRENCY_LIMIT = 5;
+      const results = [];
+      for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
+        const batch = tasks.slice(i, i + CONCURRENCY_LIMIT);
+        const batchResults = await Promise.allSettled(batch.map((fn) => fn()));
+        results.push(...batchResults);
+      }
 
       res.json({ ok: true, ...links, engines });
     } catch (error) {
