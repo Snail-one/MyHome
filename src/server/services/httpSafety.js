@@ -337,8 +337,13 @@ async function safeFetch(url, options = {}) {
   throw new Error('Too many redirects');
 }
 
+function clearProxyAgents() {
+  proxyAgents.clear();
+}
+
 module.exports = {
   assertPublicHttpUrl,
+  clearProxyAgents,
   isBlockedAddress,
   isBlockedHostname,
   isPrivateIPv4,

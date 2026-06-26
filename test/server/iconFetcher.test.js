@@ -446,6 +446,49 @@ test('resolved icons use the same fetch mode as the HTML discovery', async () =>
   ]);
 });
 
+test('icon candidates discovered via direct HTML still fall back to proxy when the icon asset itself requires it', async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
+  const html = '<link rel="icon" href="https://cdn.example.com/icon.svg" type="image/svg+xml">';
+  const config = makeIconConfig({
+    iconFetchProxy: {
+      httpProxy: 'http://proxy.example:8080',
+      httpsProxy: 'http://proxy.example:8080',
+      noProxy: ''
+    }
+  });
+
+  let calls = [];
+  const fetcher = createIconFetcher(config, {
+    safeFetch: async (url, options) => {
+      calls.push({ url, hasProxy: Boolean(options.proxy) });
+      if (url === 'https://example.com/') {
+        // HTML succeeds directly
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+      if (url === 'https://cdn.example.com/icon.svg' && !options.proxy) {
+        // Icon asset direct fails (e.g. CDN blocked), but proxy works
+        throw new Error('direct icon failed');
+      }
+      return new Response(svg, {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+  });
+
+  const resolved = await fetcher.resolveIconForUrl('https://example.com/');
+  assert.equal(resolved.icon.contentType, 'image/svg+xml');
+  // HTML direct, then icon: direct attempt (fails) + proxy fallback (succeeds)
+  assert.deepEqual(calls, [
+    { url: 'https://example.com/', hasProxy: false },
+    { url: 'https://cdn.example.com/icon.svg', hasProxy: false },
+    { url: 'https://cdn.example.com/icon.svg', hasProxy: true }
+  ]);
+});
+
 test('default favicon uses the same fetch mode as the HTML discovery', async () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
   const html = '<html><head><title>No icons</title></head></html>';

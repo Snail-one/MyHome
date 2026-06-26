@@ -506,33 +506,29 @@ async function fetchIconCandidate(config, candidate, deps = {}) {
   const preferredFetchMode = typeof candidate === 'string' ? '' : candidate?.fetchMode;
   if (!candidateUrl) return null;
 
-  if (preferredFetchMode === 'direct') {
-    return readIconCandidate(config, candidateUrl, false, deps);
-  }
+  const hasP = hasIconFetchProxy(config);
+  // Use preferred only to decide attempt *order*. Always allow fallback to the other
+  // mode when proxy is configured. This ensures icon resources (often cross-origin
+  // CDNs) are fetched independently of how the HTML page was discovered.
+  const tryProxyFirst = (preferredFetchMode === 'proxy' && hasP);
+  const attempts = tryProxyFirst ? [true, false] : [false, true];
 
-  if (preferredFetchMode === 'proxy' && hasIconFetchProxy(config)) {
-    return readIconCandidate(config, candidateUrl, true, deps);
-  }
-
-  let directError = null;
-
-  try {
-    const directIcon = await readIconCandidate(config, candidateUrl, false, deps);
-    if (directIcon) return directIcon;
-  } catch (error) {
-    directError = error;
-  }
-
-  if (hasIconFetchProxy(config)) {
-    logIconFetch(config, 'icon:proxy-fallback', { url: candidateUrl }, deps);
+  let lastErr = null;
+  for (const useProxy of attempts) {
+    if (useProxy && !hasP) continue;
     try {
-      return await readIconCandidate(config, candidateUrl, true, deps);
+      const icon = await readIconCandidate(config, candidateUrl, useProxy, deps);
+      if (icon) return icon;
     } catch (error) {
-      throw error;
+      lastErr = error;
+      // Log proxy fallback only on the transition in the normal (direct-first) case
+      if (!useProxy && hasP && !tryProxyFirst) {
+        logIconFetch(config, 'icon:proxy-fallback', { url: candidateUrl }, deps);
+      }
     }
   }
 
-  if (directError) throw directError;
+  if (lastErr) throw lastErr;
   return null;
 }
 

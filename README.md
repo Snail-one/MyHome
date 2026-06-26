@@ -55,7 +55,7 @@ ICON_FETCH_LOG=false
 
 `SESSION_SECRET` 可以不填；服务端会自动生成并复用 `data/session-secret`。如需使用外部密钥管理，可手动设置 `SESSION_SECRET` 或 `SESSION_SECRET_FILE`。
 
-如果 Google、X 等站点无法直连，给服务端图标抓取配置代理。图标请求默认先直连，直连失败或拿不到可用图标时再使用代理。解析图标时会先把网址归到主域名根路径，例如 `search.bilibili.com` 先尝试 `bilibili.com`；主域名失败后再尝试 `www.` 主域名。图标来源优先使用 HTML 里声明的 favicon；如果 HTML 没有声明图标，只兜底尝试同源 `/favicon.ico`，不会请求 manifest 或其他常规猜测路径。`ICON_FETCH_PROXY` 会同时用于 HTTP/HTTPS 图标请求；也兼容 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`。`ICON_FETCH_NO_PROXY` 或 `NO_PROXY` 可指定不走代理的地址，默认已绕过 localhost 和常见内网网段。Docker 部署时，代理地址必须是容器内可访问的地址。
+如果 Google、X 等站点无法直连，给服务端图标抓取配置代理。图标请求默认先直连，直连失败或拿不到可用图标时再使用代理。**每个图标资源（即使来自 HTML 解析的 `<link>` 或 CDN）都会独立进行「直连优先 + 失败回退代理」尝试**，而非完全跟随发现 HTML 时的模式。解析图标时会先把网址归到主域名根路径，例如 `search.bilibili.com` 先尝试 `bilibili.com`；主域名失败后再尝试 `www.` 主域名。图标来源优先使用 HTML 里声明的 favicon；如果 HTML 没有声明图标，只兜底尝试同源 `/favicon.ico`，不会请求 manifest 或其他常规猜测路径。`ICON_FETCH_PROXY` 会同时用于 HTTP/HTTPS 图标请求；也兼容 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`。`ICON_FETCH_NO_PROXY` 或 `NO_PROXY` 可指定不走代理的地址，默认已绕过 localhost 和常见内网网段。Docker 部署时，代理地址必须是容器内可访问的地址。
 
 需要排查图标获取时，可设置 `ICON_FETCH_LOG=true`。服务端会向标准输出打印 `[icon-fetch] https://example.com/ | direct | request:start phase=html` 这类抓取日志；第一段是目标网址，第二段是直连/代理，第三段是处理事件和参数。代理请求会显示 `proxy=...`。`request:connect:fail` 表示连接失败（代理/网络/DNS 等没有拿到响应），`request:timeout` 表示请求超过超时时间，`request:access:fail` 表示访问失败（拿到 HTTP 响应但状态不可用），并会尽量带上 `durationMs`、`timeoutMs`、`errorCode`、`errorCause`。HTML 页面获取会显示 `html:fetch:success/fail`，图标链接解析会显示 `html:parse:success/fail`。代理请求会至少等待 10 秒；如果需要更久，可调大 `ICON_FETCH_TIMEOUT_MS`。在支持颜色的终端中，URL、请求、成功、失败和回退状态会用不同颜色区分。
 
