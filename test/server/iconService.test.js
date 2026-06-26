@@ -154,7 +154,7 @@ test('root domain miss falls back to www target', async () => {
     iconFetcher: {
       resolveIconForUrl: async (targetUrl) => {
         resolvedTargets.push(targetUrl);
-        if (targetUrl === 'https://example.com/' || targetUrl === 'https://app.example.com/') {
+        if (targetUrl === 'https://example.com/' || targetUrl === 'https://app.example.com/' || targetUrl === 'https://www.example.com/') {
           return {
             icon: null,
             sourceUrl: '',
@@ -181,15 +181,17 @@ test('root domain miss falls back to www target', async () => {
 
   const status = await service.resolveLinkIcon(link);
   assert.equal(status.status, 'ready');
-  assert.equal(status.sourceUrl, 'https://www.example.com/favicon.svg');
+  // 现在会继续尝试完整地址兜底
+  assert.equal(status.sourceUrl, 'https://app.example.com/dashboardfavicon.svg');
   assert.deepEqual(resolvedTargets, [
     'https://app.example.com/',
     'https://example.com/',
-    'https://www.example.com/'
+    'https://www.example.com/',
+    'https://app.example.com/dashboard'
   ]);
 
   const cached = await service.findCachedEntityIcon('links', link.id, link.iconVersion);
-  assert.equal(cached.metadata.targetUrl, 'https://www.example.com/');
+  assert.equal(cached.metadata.targetUrl, 'https://app.example.com/dashboard');
 });
 
 test('legacy upload and local icon modes read cache state without resolving', async () => {

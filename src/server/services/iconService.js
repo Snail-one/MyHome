@@ -105,6 +105,13 @@ function createIconService(config, deps = {}) {
           if (!candidates.includes(wwwRootTarget)) candidates.push(wwwRootTarget);
         }
       }
+
+      // 兜底：请求用户保存的完整地址（带路径）去获取图标
+      // 有些站点只在具体页面里声明了 <link rel="icon">，或者根域名受限时作为最后后备
+      if (normalizedUrl && !candidates.includes(normalizedUrl)) {
+        candidates.push(normalizedUrl);
+      }
+
       return candidates;
     } catch {
       return [];
