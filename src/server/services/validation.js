@@ -13,6 +13,19 @@ function normalizeLinkType(type) {
   return 'website';
 }
 
+function getDefaultIconMode() {
+  return 'server';
+}
+
+function normalizeIconMode(iconMode) {
+  if (iconMode === undefined || iconMode === null || iconMode === '') {
+    return getDefaultIconMode();
+  }
+
+  if (['server', 'local', 'upload', 'none'].includes(iconMode)) return iconMode;
+  return getDefaultIconMode();
+}
+
 function normalizeDisplayMode(mode, fallback = 'default') {
   if (mode === 'default' || mode === 'centered') return mode;
   return fallback;
@@ -42,6 +55,7 @@ function validateLinkPayload(body) {
   const title = normalizeTitle(body?.title);
   const linkType = normalizeLinkType(body?.type || body?.linkType);
   const url = normalizeUrl(body?.url);
+  const iconMode = normalizeIconMode(body?.iconMode);
 
   if (!title) {
     return { error: '请填写显示名称' };
@@ -55,7 +69,7 @@ function validateLinkPayload(body) {
     };
   }
 
-  return { value: { title, url, linkType } };
+  return { value: { title, url, linkType, iconMode } };
 }
 
 function normalizeSearchEngineName(name) {
@@ -106,6 +120,8 @@ module.exports = {
   isBackgroundUrl,
   isHttpUrl,
   isValidSearchUrlTemplate,
+  getDefaultIconMode,
+  normalizeIconMode,
   normalizeDisplayMode,
   normalizeLinkSize,
   normalizeLinkType,

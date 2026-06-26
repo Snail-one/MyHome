@@ -42,7 +42,7 @@ function serializeSettings(row) {
     projectLayoutColumns: row.project_layout_columns,
     editMode: Boolean(row.edit_mode),
     projectLinkDisplayMode: normalizeDisplayMode(row.project_link_display_mode, 'centered'),
-    bookmarkLinkDisplayMode: normalizeDisplayMode(row.bookmark_link_display_mode, 'default'),
+    bookmarkLinkDisplayMode: normalizeDisplayMode(row.bookmark_link_display_mode, 'centered'),
     projectLinkSize: normalizeLinkSize(row.project_link_size, 'medium'),
     bookmarkLinkSize: normalizeLinkSize(row.bookmark_link_size, 'medium'),
     backgroundUrl: row.background_url || ''
@@ -104,7 +104,14 @@ function createSettingsStore(db, config) {
 function createLinksStore(db, config) {
   const statements = {
     get: db.prepare(`
-      SELECT id, link_key AS linkKey, link_type AS linkType, title, url
+      SELECT
+        id,
+        link_key AS linkKey,
+        link_type AS linkType,
+        title,
+        url,
+        icon_mode AS iconMode,
+        icon_version AS iconVersion
       FROM nav_links
       WHERE user_id = ? AND link_type = ?
       ORDER BY sort_order ASC, id ASC
@@ -115,10 +122,22 @@ function createLinksStore(db, config) {
       WHERE user_id = ? AND link_type = ?
     `),
     insert: db.prepare(`
-      INSERT INTO nav_links (user_id, link_key, link_type, title, url, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO nav_links (user_id, link_key, link_type, title, url, icon_mode, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `),
     findByKey: db.prepare('SELECT id FROM nav_links WHERE user_id = ? AND link_key = ?'),
+    findById: db.prepare(`
+      SELECT
+        id,
+        link_key AS linkKey,
+        link_type AS linkType,
+        title,
+        url,
+        icon_mode AS iconMode,
+        icon_version AS iconVersion
+      FROM nav_links
+      WHERE user_id = ? AND id = ?
+    `),
     findRequiredEmailCandidate: db.prepare(`
       SELECT id
       FROM nav_links
@@ -128,16 +147,40 @@ function createLinksStore(db, config) {
     `),
     updateExistingAsRequiredEmail: db.prepare(`
       UPDATE nav_links
-      SET link_key = ?, title = ?, link_type = 'email', updated_at = CURRENT_TIMESTAMP
+      SET link_key = ?,
+          title = ?,
+          link_type = 'email',
+          icon_mode = 'server',
+          icon_version = icon_version + 1,
+          updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND id = ?
     `),
-    findForUpdate: db.prepare('SELECT link_key FROM nav_links WHERE user_id = ? AND id = ?'),
+    findForUpdate: db.prepare(`
+      SELECT link_key, url, icon_mode, icon_version
+      FROM nav_links
+      WHERE user_id = ? AND id = ?
+    `),
     update: db.prepare(`
       UPDATE nav_links
-      SET link_type = ?, title = ?, url = ?, updated_at = CURRENT_TIMESTAMP
+      SET link_type = ?,
+          title = ?,
+          url = ?,
+          icon_mode = ?,
+          icon_version = ?,
+          updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND id = ?
     `),
     delete: db.prepare('DELETE FROM nav_links WHERE user_id = ? AND id = ?'),
+    bumpIconVersion: db.prepare(`
+      UPDATE nav_links
+      SET icon_version = icon_version + 1, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND id = ?
+    `),
+    bumpAllIconVersions: db.prepare(`
+      UPDATE nav_links
+      SET icon_version = icon_version + 1, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND icon_mode != 'none'
+    `),
     updateSort: db.prepare(`
       UPDATE nav_links
       SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
@@ -166,6 +209,7 @@ function createLinksStore(db, config) {
         payload.linkType,
         payload.title,
         payload.url,
+        payload.iconMode,
         row.next_order
       );
       return this.getResponse();
@@ -192,17 +236,35 @@ function createLinksStore(db, config) {
         'email',
         emailLink.title,
         emailLink.url,
+        'server',
         row.next_order
       );
+    },
+    findById(id) {
+      return statements.findById.get(config.userId, id);
     },
     update(id, payload) {
       const existing = statements.findForUpdate.get(config.userId, id);
       if (!existing) return { notFound: true };
 
       const nextLinkType = config.requiredLinkKeys.has(existing.link_key) ? 'email' : payload.linkType;
-      const result = statements.update.run(nextLinkType, payload.title, payload.url, config.userId, id);
+      const iconMode = config.requiredLinkKeys.has(existing.link_key) ? 'server' : payload.iconMode;
+      const iconChanged = existing.url !== payload.url || existing.icon_mode !== iconMode;
+      const iconVersion = iconChanged ? Number(existing.icon_version || 1) + 1 : Number(existing.icon_version || 1);
+      const result = statements.update.run(
+        nextLinkType,
+        payload.title,
+        payload.url,
+        iconMode,
+        iconVersion,
+        config.userId,
+        id
+      );
       if (Number(result.changes) === 0) return { notFound: true };
-      return { value: this.getResponse() };
+      return {
+        invalidatedIcon: iconChanged ? { entityType: 'links', id: Number(id) } : null,
+        value: this.getResponse()
+      };
     },
     delete(id) {
       const existing = statements.findForUpdate.get(config.userId, id);
@@ -211,7 +273,19 @@ function createLinksStore(db, config) {
 
       const result = statements.delete.run(config.userId, id);
       if (Number(result.changes) === 0) return { notFound: true };
-      return { value: this.getResponse() };
+      return {
+        invalidatedIcon: { entityType: 'links', id: Number(id) },
+        value: this.getResponse()
+      };
+    },
+    bumpIconVersion(id) {
+      const result = statements.bumpIconVersion.run(config.userId, id);
+      if (Number(result.changes) === 0) return { notFound: true };
+      return { value: this.findById(id) };
+    },
+    bumpAllIconVersions() {
+      statements.bumpAllIconVersions.run(config.userId);
+      return this.getResponse();
     },
     reorder(linkType, ids) {
       const currentIds = get(linkType).map((link) => link.id);
@@ -243,7 +317,12 @@ function createLinksStore(db, config) {
 function createSearchEnginesStore(db, config) {
   const statements = {
     get: db.prepare(`
-      SELECT id, engine_key AS engineKey, name, url_template AS urlTemplate
+      SELECT
+        id,
+        engine_key AS engineKey,
+        name,
+        url_template AS urlTemplate,
+        icon_version AS iconVersion
       FROM search_engines
       WHERE user_id = ?
       ORDER BY sort_order ASC, id ASC
@@ -255,6 +334,16 @@ function createSearchEnginesStore(db, config) {
       WHERE user_id = ?
     `),
     findByKey: db.prepare('SELECT id FROM search_engines WHERE user_id = ? AND engine_key = ?'),
+    findById: db.prepare(`
+      SELECT
+        id,
+        engine_key AS engineKey,
+        name,
+        url_template AS urlTemplate,
+        icon_version AS iconVersion
+      FROM search_engines
+      WHERE user_id = ? AND id = ?
+    `),
     findByName: db.prepare(`
       SELECT id
       FROM search_engines
@@ -301,11 +390,21 @@ function createSearchEnginesStore(db, config) {
     `),
     update: db.prepare(`
       UPDATE search_engines
-      SET name = ?, url_template = ?, updated_at = CURRENT_TIMESTAMP
+      SET name = ?, url_template = ?, icon_version = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND id = ?
+    `),
+    findForUpdate: db.prepare(`
+      SELECT engine_key, url_template, icon_version
+      FROM search_engines
       WHERE user_id = ? AND id = ?
     `),
     findForDelete: db.prepare('SELECT engine_key FROM search_engines WHERE user_id = ? AND id = ?'),
     delete: db.prepare('DELETE FROM search_engines WHERE user_id = ? AND id = ?'),
+    bumpAllIconVersions: db.prepare(`
+      UPDATE search_engines
+      SET icon_version = icon_version + 1, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `),
     nextSortOrder: db.prepare(`
       SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order
       FROM search_engines
@@ -316,6 +415,9 @@ function createSearchEnginesStore(db, config) {
   return {
     get() {
       return statements.get.all(config.userId);
+    },
+    findById(id) {
+      return statements.findById.get(config.userId, id);
     },
     create(payload) {
       const row = statements.nextSortOrder.get(config.userId);
@@ -387,9 +489,17 @@ function createSearchEnginesStore(db, config) {
       return { value: this.get() };
     },
     update(id, payload) {
-      const result = statements.update.run(payload.name, payload.urlTemplate, config.userId, id);
+      const existing = statements.findForUpdate.get(config.userId, id);
+      if (!existing) return { notFound: true };
+
+      const iconChanged = existing.url_template !== payload.urlTemplate;
+      const iconVersion = iconChanged ? Number(existing.icon_version || 1) + 1 : Number(existing.icon_version || 1);
+      const result = statements.update.run(payload.name, payload.urlTemplate, iconVersion, config.userId, id);
       if (Number(result.changes) === 0) return { notFound: true };
-      return { value: this.get() };
+      return {
+        invalidatedIcon: iconChanged ? { entityType: 'search-engines', id: Number(id) } : null,
+        value: this.get()
+      };
     },
     delete(id) {
       const engine = statements.findForDelete.get(config.userId, id);
@@ -398,7 +508,14 @@ function createSearchEnginesStore(db, config) {
 
       const result = statements.delete.run(config.userId, id);
       if (Number(result.changes) === 0) return { notFound: true };
-      return { value: this.get() };
+      return {
+        invalidatedIcon: { entityType: 'search-engines', id: Number(id) },
+        value: this.get()
+      };
+    },
+    bumpAllIconVersions() {
+      statements.bumpAllIconVersions.run(config.userId);
+      return this.get();
     }
   };
 }

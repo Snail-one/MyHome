@@ -290,10 +290,12 @@ body::before {
     box-shadow: 0 4px 20px rgba(139, 92, 246, 0.25);
 }
 
-.email-link-icon {
+.email-link-icon,
+.email-link-favicon {
     width: 18px;
     height: 18px;
     flex-shrink: 0;
+    object-fit: contain;
 }
 
 .email-link-label {
@@ -648,6 +650,8 @@ body::before {
 
 .link-form input[type="text"],
 .link-form input[type="url"],
+.link-form input[type="file"],
+.link-form select,
 .search-engine-form input[type="text"],
 .search-engine-form input[type="url"] {
     width: 100%;
@@ -665,10 +669,64 @@ body::before {
     color: var(--text-tertiary);
 }
 
+.link-form input[type="file"] {
+    padding: 10px 12px;
+}
+
+.link-form select {
+    appearance: none;
+}
+
+.link-form select option {
+    background: #ffffff;
+    color: #111827;
+}
+
+.link-form select option:checked {
+    background: #e5e7eb;
+    color: #111827;
+}
+
 .link-form input:focus,
+.link-form select:focus,
 .search-engine-form input:focus {
     outline: none;
     border-color: rgba(255, 255, 255, 0.3);
+}
+
+.icon-source-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.icon-source-option {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    margin: 0 !important;
+    padding: 9px 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary) !important;
+    cursor: pointer;
+}
+
+.icon-source-option:has(input:checked) {
+    border-color: rgba(255, 255, 255, 0.32);
+    background: rgba(255, 255, 255, 0.13);
+    color: var(--text-primary) !important;
+}
+
+.icon-source-option input {
+    margin: 0;
+    accent-color: #fff;
+}
+
+.icon-detail-group[hidden] {
+    display: none;
 }
 
 .form-hint {
@@ -955,6 +1013,10 @@ body::before {
 
 .nav-icon {
     position: relative;
+}
+
+.nav-icon-empty {
+    display: none;
 }
 
 .nav-icon::after {

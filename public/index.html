@@ -144,7 +144,32 @@
                         <label for="link-url" id="link-url-label">链接地址</label>
                         <input type="url" id="link-url" name="url" placeholder="https://example.com" required>
                     </div>
-                    <p class="form-hint" id="link-form-hint">图标将根据网址自动获取网页 favicon。</p>
+                    <div class="form-group">
+                        <label>图标</label>
+                        <div class="icon-source-options" id="link-icon-source-options">
+                            <label class="icon-source-option">
+                                <input type="radio" name="iconMode" value="server">
+                                <span>服务器获取</span>
+                            </label>
+                            <label class="icon-source-option">
+                                <input type="radio" name="iconMode" value="local">
+                                <span>浏览器辅助</span>
+                            </label>
+                            <label class="icon-source-option">
+                                <input type="radio" name="iconMode" value="upload">
+                                <span>上传图标</span>
+                            </label>
+                            <label class="icon-source-option">
+                                <input type="radio" name="iconMode" value="none">
+                                <span>不显示</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-group icon-detail-group" id="link-custom-icon-group" hidden>
+                        <label for="link-custom-icon">上传图标</label>
+                        <input type="file" id="link-custom-icon" accept="image/png,image/svg+xml,image/jpeg,image/webp,image/gif,image/x-icon">
+                    </div>
+                    <p class="form-hint" id="link-form-hint">默认由服务器获取网页图标，失败时可使用浏览器辅助或上传图标。</p>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary" id="link-form-submit">添加链接</button>
                         <button type="button" class="btn btn-secondary" id="link-form-cancel">取消</button>

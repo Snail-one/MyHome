@@ -13,7 +13,8 @@
 - 背景图片支持上传文件或填写图片链接
 - SQLite 保存用户设置和链接数据
 - 上传的背景图片保存到服务器 `uploads/backgrounds/`，数据库只保存图片路径
-- 自动 favicon 缓存，服务端抓取带 SSRF 防护、重定向校验和响应大小限制
+- 图标支持服务器获取、浏览器辅助上传、手动上传和不显示
+- 自动 favicon 抓取由服务端完成，带登录鉴权、协议/凭据校验、重定向次数、响应大小和文件类型限制
 
 ## 运行方式
 
@@ -139,9 +140,9 @@ docker run -d \
 
 - SQLite 数据库：默认 `data/my-home.sqlite`
 - 背景图片文件：默认 `uploads/backgrounds/`
-- favicon 缓存：默认 `data/icon-cache/`
+- favicon 缓存：默认 `data/icon-cache-v2/`
 - 自定义搜索引擎保存在 SQLite 中
-- 数据库不会保存图片二进制或 base64，只保存背景图片路径或外部图片 URL
+- 数据库不会保存图片二进制或 base64，只保存背景图片路径、外部图片 URL 和链接图标策略
 
 ## 目录结构
 

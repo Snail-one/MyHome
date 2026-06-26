@@ -4,7 +4,7 @@ const { validateSearchEnginePayload } = require('../services/validation');
 const { parseIdList } = require('./links');
 
 function createSearchEnginesRouter(deps) {
-  const { auth, stores } = deps;
+  const { auth, iconService, stores } = deps;
   const router = express.Router();
 
   router.get('/search-engines', auth.requireAuth, (req, res) => {
@@ -31,7 +31,7 @@ function createSearchEnginesRouter(deps) {
     res.json({ engines: result.value });
   });
 
-  router.put('/search-engines/:id', auth.requireAuth, (req, res) => {
+  router.put('/search-engines/:id', auth.requireAuth, async (req, res) => {
     const payload = validateSearchEnginePayload(req.body);
     if (payload.error) {
       res.status(400).json({ error: payload.error });
@@ -44,10 +44,15 @@ function createSearchEnginesRouter(deps) {
       return;
     }
 
+    if (result.invalidatedIcon) {
+      await iconService.deleteEntityIcon(result.invalidatedIcon.entityType, result.invalidatedIcon.id)
+        .catch((error) => console.warn('Failed to delete stale search engine icon:', error.message));
+    }
+
     res.json({ engines: result.value });
   });
 
-  router.delete('/search-engines/:id', auth.requireAuth, (req, res) => {
+  router.delete('/search-engines/:id', auth.requireAuth, async (req, res) => {
     const result = stores.searchEngines.delete(req.params.id);
     if (result.notFound) {
       res.status(404).json({ error: '搜索引擎不存在' });
@@ -56,6 +61,11 @@ function createSearchEnginesRouter(deps) {
     if (result.required) {
       res.status(400).json({ error: 'Google 搜索需要保留，可以编辑名称和搜索地址' });
       return;
+    }
+
+    if (result.invalidatedIcon) {
+      await iconService.deleteEntityIcon(result.invalidatedIcon.entityType, result.invalidatedIcon.id)
+        .catch((error) => console.warn('Failed to delete search engine icon:', error.message));
     }
 
     res.json({ engines: result.value });

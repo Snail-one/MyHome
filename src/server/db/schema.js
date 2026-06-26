@@ -12,6 +12,11 @@ function tableExists(db, name) {
   return Boolean(row);
 }
 
+function columnExists(db, tableName, columnName) {
+  return db.prepare(`PRAGMA table_info(${tableName})`).all()
+    .some((column) => column.name === columnName);
+}
+
 function getSchemaVersion(db) {
   if (!tableExists(db, 'schema_meta')) return null;
   const row = db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get();
@@ -47,7 +52,7 @@ function createSchema(db, schemaVersion) {
       project_layout_columns INTEGER NOT NULL DEFAULT 0 CHECK (project_layout_columns >= 0 AND project_layout_columns <= 6),
       edit_mode INTEGER NOT NULL DEFAULT 0 CHECK (edit_mode IN (0, 1)),
       project_link_display_mode TEXT NOT NULL DEFAULT 'centered',
-      bookmark_link_display_mode TEXT NOT NULL DEFAULT 'default',
+      bookmark_link_display_mode TEXT NOT NULL DEFAULT 'centered',
       project_link_size TEXT NOT NULL DEFAULT 'medium',
       bookmark_link_size TEXT NOT NULL DEFAULT 'medium',
       background_url TEXT NOT NULL DEFAULT '',
@@ -62,6 +67,8 @@ function createSchema(db, schemaVersion) {
       link_type TEXT NOT NULL DEFAULT 'website',
       title TEXT NOT NULL,
       url TEXT NOT NULL,
+      icon_mode TEXT NOT NULL DEFAULT 'server',
+      icon_version INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -84,6 +91,7 @@ function createSchema(db, schemaVersion) {
       engine_key TEXT,
       name TEXT NOT NULL,
       url_template TEXT NOT NULL,
+      icon_version INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -113,6 +121,32 @@ function createSchema(db, schemaVersion) {
   `).run(schemaVersion);
 }
 
+function ensureIconColumns(db) {
+  if (tableExists(db, 'nav_links') && !columnExists(db, 'nav_links', 'icon_mode')) {
+    db.exec("ALTER TABLE nav_links ADD COLUMN icon_mode TEXT NOT NULL DEFAULT 'server'");
+  }
+  if (tableExists(db, 'nav_links') && !columnExists(db, 'nav_links', 'icon_version')) {
+    db.exec('ALTER TABLE nav_links ADD COLUMN icon_version INTEGER NOT NULL DEFAULT 1');
+  }
+  if (tableExists(db, 'search_engines') && !columnExists(db, 'search_engines', 'icon_version')) {
+    db.exec('ALTER TABLE search_engines ADD COLUMN icon_version INTEGER NOT NULL DEFAULT 1');
+  }
+}
+
+function runOneTimeMigration(db, key, migrate) {
+  const existing = db.prepare('SELECT value FROM schema_meta WHERE key = ?').get(key);
+  if (existing) return;
+  migrate();
+  db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(key, '1');
+}
+
+function migrateBookmarkDisplayDefault(db) {
+  if (!tableExists(db, 'user_settings')) return;
+  runOneTimeMigration(db, 'migration_bookmark_display_default_centered', () => {
+    db.exec("UPDATE user_settings SET bookmark_link_display_mode = 'centered' WHERE bookmark_link_display_mode = 'default'");
+  });
+}
+
 function initializeSchema(db, schemaVersion) {
   db.exec('PRAGMA foreign_keys = ON');
   const existingVersion = getSchemaVersion(db);
@@ -120,12 +154,17 @@ function initializeSchema(db, schemaVersion) {
     dropApplicationTables(db);
   }
   createSchema(db, schemaVersion);
+  ensureIconColumns(db);
+  migrateBookmarkDisplayDefault(db);
 }
 
 module.exports = {
+  columnExists,
   createSchema,
   dropApplicationTables,
+  ensureIconColumns,
   getSchemaVersion,
   initializeSchema,
+  migrateBookmarkDisplayDefault,
   tableExists
 };

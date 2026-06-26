@@ -16,7 +16,19 @@ test('validateLinkPayload normalizes link type and requires http URLs', () => {
   }).value, {
     title: 'Example',
     url: 'https://example.com',
-    linkType: 'project'
+    linkType: 'project',
+    iconMode: 'server'
+  });
+
+  assert.deepEqual(validateLinkPayload({
+    title: 'Bilibili',
+    url: 'https://www.bilibili.com',
+    iconMode: 'upload'
+  }).value, {
+    title: 'Bilibili',
+    url: 'https://www.bilibili.com',
+    linkType: 'website',
+    iconMode: 'upload'
   });
 
   assert.equal(validateLinkPayload({

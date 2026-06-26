@@ -111,7 +111,7 @@ function isBlockedAddress(address) {
   return true;
 }
 
-function parsePublicHttpUrl(value, baseUrl) {
+function parsePublicHttpUrl(value, baseUrl, options = {}) {
   const parsedUrl = new URL(value, baseUrl);
   const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
   if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
@@ -120,21 +120,24 @@ function parsePublicHttpUrl(value, baseUrl) {
   if (parsedUrl.username || parsedUrl.password) {
     throw new Error('URL credentials are not allowed');
   }
-  if (isBlockedHostname(hostname)) {
+  if (!hostname) {
     throw new Error('URL host is not allowed');
   }
-  if (net.isIP(hostname) && isBlockedAddress(hostname)) {
+  if (!options.allowPrivateNetwork && isBlockedHostname(hostname)) {
+    throw new Error('URL host is not allowed');
+  }
+  if (!options.allowPrivateNetwork && net.isIP(hostname) && isBlockedAddress(hostname)) {
     throw new Error('URL address is not allowed');
   }
   return parsedUrl;
 }
 
 async function assertPublicHttpUrl(value, options = {}) {
-  const parsedUrl = parsePublicHttpUrl(value, options.baseUrl);
+  const parsedUrl = parsePublicHttpUrl(value, options.baseUrl, options);
   const lookup = options.lookup || dns.lookup;
 
   const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
-  if (!net.isIP(hostname)) {
+  if (!options.allowPrivateNetwork && !net.isIP(hostname)) {
     let addresses;
     try {
       addresses = await lookup(hostname, { all: true, verbatim: true });
@@ -164,6 +167,7 @@ function fetchWithTimeout(url, options = {}) {
   delete fetchOptions.timeoutMs;
   delete fetchOptions.maxRedirects;
   delete fetchOptions.lookup;
+  delete fetchOptions.allowPrivateNetwork;
 
   return fetch(url, fetchOptions).finally(() => {
     clearTimeout(timeout);
@@ -173,7 +177,8 @@ function fetchWithTimeout(url, options = {}) {
 async function safeFetch(url, options = {}) {
   const maxRedirects = Number.isInteger(options.maxRedirects) ? options.maxRedirects : 3;
   const lookup = options.lookup;
-  let currentUrl = (await assertPublicHttpUrl(url, { lookup })).href;
+  const allowPrivateNetwork = Boolean(options.allowPrivateNetwork);
+  let currentUrl = (await assertPublicHttpUrl(url, { lookup, allowPrivateNetwork })).href;
 
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
     const response = await fetchWithTimeout(currentUrl, {
@@ -193,7 +198,8 @@ async function safeFetch(url, options = {}) {
 
     currentUrl = (await assertPublicHttpUrl(location, {
       baseUrl: currentUrl,
-      lookup
+      lookup,
+      allowPrivateNetwork
     })).href;
   }
 

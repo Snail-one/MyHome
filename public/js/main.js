@@ -1,11 +1,17 @@
 import { buildSearchUrl as buildSearchUrlFromTemplate } from './search.js';
 import {
+    buildFaviconCandidates,
+    getIconFileUrl,
+    getIconResolveUrl,
+    getIconStatusUrl,
+    getParsedHttpUrl as parseIconHttpUrl
+} from './icons.js';
+import {
     DEFAULT_SETTINGS,
-    ICON_IMPORT_FAILURE_STORAGE_KEY,
-    ICON_IMPORT_FAILURE_TTL_MS,
+    FRONTEND_ICON_CACHE_NAME,
+    FRONTEND_ICON_CACHE_STORAGE_KEY,
     LINK_SIZE_CONFIG,
     LINK_SIZE_OPTIONS,
-    LOCAL_ICON_CACHE_STORAGE_KEY,
     MAX_ICON_UPLOAD_SIZE,
     REQUIRED_EMAIL_LINK_KEYS,
     createAppState,
@@ -15,14 +21,13 @@ import {
 // ==================== 搜索引擎配置 ====================
 let searchEngines = { ...defaultSearchEngines };
 
-let iconImportEndpointAvailable = true;
 const appState = createAppState();
 
 let currentEngine = 'google';
 let layoutColumns = 0;
 let projectLayoutColumns = 0;
 let projectLinkDisplayMode = 'centered';
-let bookmarkLinkDisplayMode = 'default';
+let bookmarkLinkDisplayMode = 'centered';
 let projectLinkSize = 'medium';
 let bookmarkLinkSize = 'medium';
 let editMode = false;
@@ -33,9 +38,9 @@ let isDragging = false;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let layoutResizeTimer = null;
-let iconCacheVersion = Date.now();
-let localIconCache = loadLocalIconCache();
 const iconRefreshPromises = new Map();
+let frontendIconCacheIndex = loadFrontendIconCacheIndex();
+const iconObjectUrls = new WeakMap();
 
 // ==================== DOM 元素 ====================
 const searchInput = document.querySelector('.search-input');
@@ -96,10 +101,7 @@ async function loadAppData() {
     appState.links = Array.isArray(linksData.links) ? linksData.links : [];
     appState.emailLinks = Array.isArray(linksData.emailLinks) ? linksData.emailLinks : [];
     appState.projectLinks = Array.isArray(linksData.projectLinks) ? linksData.projectLinks : [];
-    appState.searchEngineRecords = Array.isArray(searchEnginesData.engines) ? searchEnginesData.engines : [];
-    rebuildSearchEngines();
-    renderSearchEngineButtons();
-    renderSearchEngineList();
+    applySearchEnginesResponse(searchEnginesData.engines);
     applySettings(settingsData.settings || DEFAULT_SETTINGS);
     renderEmailLinks();
     renderProjectCards();
@@ -114,13 +116,54 @@ async function saveSettingsPatch(patch) {
     applySettings(data.settings || DEFAULT_SETTINGS);
 }
 
+function clearChangedLinkIconCaches(previousLinks, nextLinks) {
+    const nextById = new Map(nextLinks.map(link => [String(link.id), link]));
+    previousLinks.forEach(previous => {
+        const next = nextById.get(String(previous.id));
+        if (
+            !next ||
+            previous.url !== next.url ||
+            normalizeLinkIconMode(previous.iconMode) !== normalizeLinkIconMode(next.iconMode) ||
+            getEntityIconVersion(previous) !== getEntityIconVersion(next)
+        ) {
+            clearFrontendIconCache('links', previous.id);
+        }
+    });
+}
+
 function applyLinksResponse(data) {
-    appState.links = Array.isArray(data.links) ? data.links : [];
-    appState.emailLinks = Array.isArray(data.emailLinks) ? data.emailLinks : [];
-    appState.projectLinks = Array.isArray(data.projectLinks) ? data.projectLinks : [];
+    const nextLinks = Array.isArray(data.links) ? data.links : [];
+    const nextEmailLinks = Array.isArray(data.emailLinks) ? data.emailLinks : [];
+    const nextProjectLinks = Array.isArray(data.projectLinks) ? data.projectLinks : [];
+    clearChangedLinkIconCaches(appState.links, nextLinks);
+    clearChangedLinkIconCaches(appState.emailLinks, nextEmailLinks);
+    clearChangedLinkIconCaches(appState.projectLinks, nextProjectLinks);
+    appState.links = nextLinks;
+    appState.emailLinks = nextEmailLinks;
+    appState.projectLinks = nextProjectLinks;
     renderEmailLinks();
     renderProjectCards();
     renderNavCards();
+}
+
+function applySearchEnginesResponse(engines) {
+    const nextEngines = Array.isArray(engines) ? engines : [];
+    const nextById = new Map(nextEngines.map(engine => [String(engine.id), engine]));
+    appState.searchEngineRecords.forEach(previous => {
+        const next = nextById.get(String(previous.id));
+        if (
+            !next ||
+            previous.urlTemplate !== next.urlTemplate ||
+            getEntityIconVersion(previous) !== getEntityIconVersion(next)
+        ) {
+            clearFrontendIconCache('search-engines', previous.id);
+        }
+    });
+
+    appState.searchEngineRecords = nextEngines;
+    rebuildSearchEngines();
+    renderSearchEngineButtons();
+    renderSearchEngineList();
 }
 
 function clearAuthenticatedDom() {
@@ -262,60 +305,25 @@ function rebuildSearchEngines() {
     }
 }
 
-function getSearchTemplateDomain(urlTemplate) {
-    if (!urlTemplate) return null;
-    return getDomainFromUrl(urlTemplate.replaceAll('{query}', 'test'));
-}
-
-function getFallbackFaviconUrlForDomain(domain) {
-    return domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64` : '';
-}
-
-function getSearchEngineFaviconUrl(domain) {
-    return domain ? getCachedFaviconUrl(`https://${domain}/`) : '';
-}
-
-function bindExternalFaviconFallback(img) {
-    const fallbackUrl = img?.dataset?.fallbackFavicon;
-    const targetUrl = img?.dataset?.iconTargetUrl;
-    if (!fallbackUrl) return;
-
-    img.addEventListener('error', () => {
-        if (img.dataset.fallbackTried === '1') return;
-        img.dataset.fallbackTried = '1';
-        if (!targetUrl) {
-            img.src = fallbackUrl;
-            return;
-        }
-
-        refreshCachedIconFromLocal(targetUrl).then((serverIconUrl) => {
-            img.src = serverIconUrl || fallbackUrl;
-        }).catch(() => {
-            img.src = fallbackUrl;
-        });
-    });
-}
-
 function renderSearchEngineButtons() {
     searchEngineSwitcher.innerHTML = '';
 
     getRenderableSearchEngines().forEach(engine => {
         const key = getEngineKey(engine);
-        const domain = getSearchTemplateDomain(engine.urlTemplate);
-        const faviconUrl = getSearchEngineFaviconUrl(domain);
+        const iconDescriptor = getSearchEngineIconDescriptor(engine);
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'engine-btn';
         btn.dataset.engine = key;
         btn.innerHTML = `
-            ${faviconUrl
-                ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="engine-favicon" data-icon-target-url="${escapeAttribute(`https://${domain}/`)}" data-fallback-favicon="${escapeAttribute(getFallbackFaviconUrlForDomain(domain))}">`
+            ${iconDescriptor
+                ? '<img alt="" class="engine-favicon">'
                 : '<span class="engine-favicon" aria-hidden="true"></span>'
             }
             <span>${escapeHtml(engine.name)}</span>
         `;
         const faviconImg = btn.querySelector('.engine-favicon');
-        if (faviconImg) bindExternalFaviconFallback(faviconImg);
+        if (faviconImg && iconDescriptor) hydrateIconElement(faviconImg, iconDescriptor);
         searchEngineSwitcher.appendChild(btn);
     });
 
@@ -454,46 +462,350 @@ function getLinkEmptyState(linkType) {
     return document.getElementById(linkType === 'project' ? 'project-empty-state' : 'nav-empty-state');
 }
 
-function getDomainFromUrl(url) {
-    if (!url || typeof url !== 'string' || !url.trim()) return null;
+function normalizeLinkIconMode(iconMode) {
+    if (['server', 'local', 'upload', 'none'].includes(iconMode)) return iconMode;
+    return 'server';
+}
+
+function getEntityIconVersion(entity) {
+    return Number.parseInt(entity?.iconVersion, 10) || 1;
+}
+
+function getNormalizedHttpUrl(url) {
+    const parsedUrl = parseIconHttpUrl(url);
+    return parsedUrl ? parsedUrl.href : '';
+}
+
+function getHashText(value) {
+    let hash = 2166136261;
+    const text = String(value || '');
+    for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
+
+function getIconEntityStorageKey(entityType, entityId) {
+    return `${entityType}:${entityId}`;
+}
+
+function getFrontendIconCacheKey(descriptor) {
+    const sourceHash = getHashText(descriptor.sourceUrl || '');
+    return `${window.location.origin}/api/icons/frontend-cache/${descriptor.entityType}/${descriptor.id}/${sourceHash}?v=${descriptor.version}`;
+}
+
+function loadFrontendIconCacheIndex() {
     try {
-        const trimmed = url.trim();
-        if (/^[a-z][a-z\d+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) return null;
-        const normalizedUrl = /^https?:\/\//i.test(trimmed) ? trimmed : 'https://' + trimmed;
-        const parsedUrl = new URL(normalizedUrl);
-        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
-        return parsedUrl.hostname;
+        const cached = JSON.parse(localStorage.getItem(FRONTEND_ICON_CACHE_STORAGE_KEY) || '{}');
+        return cached && typeof cached === 'object' ? cached : {};
+    } catch {
+        return {};
+    }
+}
+
+function saveFrontendIconCacheIndex() {
+    try {
+        const entries = Object.entries(frontendIconCacheIndex)
+            .sort(([, left], [, right]) => (right.savedAt || 0) - (left.savedAt || 0))
+            .slice(0, 300);
+        frontendIconCacheIndex = Object.fromEntries(entries);
+        localStorage.setItem(FRONTEND_ICON_CACHE_STORAGE_KEY, JSON.stringify(frontendIconCacheIndex));
+    } catch {
+        // Icon display falls back to HTTP cache when localStorage is unavailable.
+    }
+}
+
+function canUseFrontendIconCache() {
+    return typeof window !== 'undefined' && 'caches' in window;
+}
+
+async function getFrontendIconCache() {
+    if (!canUseFrontendIconCache()) return null;
+    return window.caches.open(FRONTEND_ICON_CACHE_NAME);
+}
+
+async function clearFrontendIconCache(entityType, entityId) {
+    const storageKey = getIconEntityStorageKey(entityType, entityId);
+    const entry = frontendIconCacheIndex[storageKey];
+    delete frontendIconCacheIndex[storageKey];
+    saveFrontendIconCacheIndex();
+
+    if (!entry?.cacheKey) return;
+    try {
+        const cache = await getFrontendIconCache();
+        await cache?.delete(new Request(entry.cacheKey, { credentials: 'same-origin' }));
+    } catch {
+        // Cache cleanup is best-effort.
+    }
+}
+
+async function clearAllFrontendIconCache() {
+    const entries = Object.values(frontendIconCacheIndex);
+    frontendIconCacheIndex = {};
+    saveFrontendIconCacheIndex();
+
+    try {
+        const cache = await getFrontendIconCache();
+        if (!cache) return;
+        await Promise.all(entries
+            .filter(entry => entry?.cacheKey)
+            .map(entry => cache.delete(new Request(entry.cacheKey, { credentials: 'same-origin' }))));
+    } catch {
+        // Cache cleanup is best-effort.
+    }
+}
+
+function createObjectUrlForIcon(img, blob) {
+    const previousUrl = iconObjectUrls.get(img);
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+
+    const objectUrl = URL.createObjectURL(blob);
+    iconObjectUrls.set(img, objectUrl);
+    return objectUrl;
+}
+
+function getIconFallbackElement(img) {
+    const fallback = img?.nextElementSibling;
+    if (!fallback) return null;
+    return fallback.matches('.nav-favicon-fallback, .email-link-icon') ? fallback : null;
+}
+
+function showIconFallback(img) {
+    if (!img) return;
+    img.removeAttribute('src');
+    img.style.display = 'none';
+    const fallback = getIconFallbackElement(img);
+    if (fallback) fallback.style.display = 'block';
+}
+
+function setIconImageUrl(img, url) {
+    if (!img || !url) return;
+    img.style.display = '';
+    const fallback = getIconFallbackElement(img);
+    if (fallback) fallback.style.display = 'none';
+    img.src = url;
+}
+
+function getLinkIconDescriptor(link, linkType = 'website') {
+    if (!link?.id) return null;
+
+    const mode = normalizeLinkIconMode(link.iconMode);
+    const version = getEntityIconVersion(link);
+    const targetUrl = getNormalizedHttpUrl(link.url);
+
+    return {
+        entityType: 'links',
+        id: link.id,
+        mode,
+        version,
+        sourceUrl: targetUrl || link.url || '',
+        fileUrl: getIconFileUrl('links', link.id, version),
+        statusUrl: getIconStatusUrl('links', link.id),
+        resolveUrl: getIconResolveUrl('links', link.id),
+        uploadUrl: `/api/icons/links/${encodeURIComponent(String(link.id))}/upload`,
+        localCandidates: targetUrl ? buildFaviconCandidates(targetUrl, { extended: linkType === 'project' }) : []
+    };
+}
+
+function getSearchEngineIconDescriptor(engine) {
+    if (!engine?.id || !Number.isInteger(Number.parseInt(engine.id, 10))) return null;
+    const version = getEntityIconVersion(engine);
+
+    return {
+        entityType: 'search-engines',
+        id: engine.id,
+        mode: 'server',
+        version,
+        sourceUrl: engine.urlTemplate || '',
+        fileUrl: getIconFileUrl('search-engines', engine.id, version),
+        statusUrl: getIconStatusUrl('search-engines', engine.id),
+        resolveUrl: getIconResolveUrl('search-engines', engine.id),
+        localCandidates: []
+    };
+}
+
+async function restoreIconFromFrontendCache(descriptor, img) {
+    const storageKey = getIconEntityStorageKey(descriptor.entityType, descriptor.id);
+    const cacheKey = getFrontendIconCacheKey(descriptor);
+    const entry = frontendIconCacheIndex[storageKey];
+    if (!entry || entry.cacheKey !== cacheKey || Number(entry.version) !== Number(descriptor.version)) return null;
+
+    try {
+        const cache = await getFrontendIconCache();
+        const response = await cache?.match(new Request(cacheKey, { credentials: 'same-origin' }));
+        if (!response?.ok) return null;
+
+        const blob = await response.blob();
+        if (!blob.size) return null;
+        return createObjectUrlForIcon(img, blob);
     } catch {
         return null;
     }
 }
 
-function getParsedHttpUrl(url) {
-    if (!url || typeof url !== 'string' || !url.trim()) return null;
-
+async function rememberIconResponse(descriptor, response) {
+    const cacheKey = getFrontendIconCacheKey(descriptor);
+    const storageKey = getIconEntityStorageKey(descriptor.entityType, descriptor.id);
     try {
-        const trimmed = url.trim();
-        if (/^[a-z][a-z\d+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) return null;
-        const normalizedUrl = /^https?:\/\//i.test(trimmed) ? trimmed : 'https://' + trimmed;
-        const parsedUrl = new URL(normalizedUrl);
-        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
-        return parsedUrl;
+        const cache = await getFrontendIconCache();
+        if (!cache) return;
+
+        await cache.put(new Request(cacheKey, { credentials: 'same-origin' }), response);
+        frontendIconCacheIndex[storageKey] = {
+            cacheKey,
+            version: descriptor.version,
+            contentType: response.headers.get('content-type') || '',
+            savedAt: Date.now()
+        };
+        saveFrontendIconCacheIndex();
     } catch {
-        return null;
+        // The server file URL still works when Cache API is unavailable.
     }
 }
 
-function getCachedFaviconUrl(url, options = {}) {
-    const parsedUrl = getParsedHttpUrl(url);
-    if (!parsedUrl) return null;
-
-    const params = new URLSearchParams({
-        url: parsedUrl.href,
-        v: String(iconCacheVersion)
+async function fetchIconFileAsObjectUrl(descriptor, img) {
+    const response = await fetch(descriptor.fileUrl, {
+        credentials: 'same-origin',
+        cache: 'default'
     });
-    if (options.refresh) params.set('refresh', '1');
-    if (options.cacheOnly) params.set('cacheOnly', '1');
-    return `/api/icon?${params.toString()}`;
+
+    if (response.status === 401) {
+        showLoggedOut('登录已过期，请重新登录');
+        return null;
+    }
+    if (!response.ok) return null;
+
+    const responseForCache = response.clone();
+    const blob = await response.blob();
+    if (!blob.size) return null;
+
+    await rememberIconResponse(descriptor, responseForCache);
+    return createObjectUrlForIcon(img, blob);
+}
+
+async function resolveIconOnServer(descriptor) {
+    if (!descriptor.resolveUrl) return null;
+
+    const refreshKey = `${descriptor.entityType}:${descriptor.id}:${descriptor.version}:server`;
+    if (iconRefreshPromises.has(refreshKey)) return iconRefreshPromises.get(refreshKey);
+
+    const promise = apiRequest(descriptor.resolveUrl, { method: 'POST' })
+        .catch(() => null)
+        .finally(() => {
+            iconRefreshPromises.delete(refreshKey);
+        });
+    iconRefreshPromises.set(refreshKey, promise);
+    return promise;
+}
+
+function updateLinkIconVersion(linkId, version) {
+    if (!version) return;
+    [appState.links, appState.emailLinks, appState.projectLinks].forEach(collection => {
+        const link = collection.find(item => String(item.id) === String(linkId));
+        if (link) link.iconVersion = version;
+    });
+}
+
+async function uploadCandidateIconToServer(descriptor, candidateUrl) {
+    const sameOrigin = isSameOriginUrl(candidateUrl);
+    const response = await fetch(candidateUrl, {
+        credentials: sameOrigin ? 'same-origin' : 'omit',
+        mode: sameOrigin ? 'same-origin' : 'cors',
+        cache: 'no-store'
+    });
+    if (!response.ok) return null;
+
+    const blob = await response.blob();
+    if (!isUploadableIconBlob(blob, candidateUrl)) return null;
+
+    const formData = new FormData();
+    formData.append('source', 'local');
+    formData.append('sourceUrl', candidateUrl);
+    formData.append('icon', blob, getIconUploadFilename(candidateUrl, blob));
+
+    const result = await apiRequest(descriptor.uploadUrl, {
+        method: 'POST',
+        body: formData
+    });
+
+    if (result?.iconVersion && Number(result.iconVersion) !== Number(descriptor.version)) {
+        await clearFrontendIconCache(descriptor.entityType, descriptor.id);
+        descriptor.version = Number(result.iconVersion);
+        descriptor.fileUrl = getIconFileUrl(descriptor.entityType, descriptor.id, descriptor.version);
+        updateLinkIconVersion(descriptor.id, descriptor.version);
+    }
+
+    return result;
+}
+
+async function resolveIconFromLocalCandidates(descriptor) {
+    if (!descriptor.uploadUrl || !descriptor.localCandidates?.length) return null;
+
+    const refreshKey = `${descriptor.entityType}:${descriptor.id}:${descriptor.version}:local`;
+    if (iconRefreshPromises.has(refreshKey)) return iconRefreshPromises.get(refreshKey);
+
+    const promise = (async () => {
+        for (const candidateUrl of descriptor.localCandidates) {
+            try {
+                const result = await uploadCandidateIconToServer(descriptor, candidateUrl);
+                if (result?.status === 'ready') return result;
+            } catch {
+                // Try the next browser-visible candidate.
+            }
+        }
+        return null;
+    })().finally(() => {
+        iconRefreshPromises.delete(refreshKey);
+    });
+
+    iconRefreshPromises.set(refreshKey, promise);
+    return promise;
+}
+
+async function hydrateIconElement(img, descriptor) {
+    if (!img || !descriptor || descriptor.mode === 'none') {
+        showIconFallback(img);
+        return;
+    }
+
+    img.iconDescriptor = descriptor;
+
+    const cachedUrl = await restoreIconFromFrontendCache(descriptor, img);
+    if (cachedUrl && img.iconDescriptor === descriptor) {
+        setIconImageUrl(img, cachedUrl);
+        return;
+    }
+
+    let objectUrl = await fetchIconFileAsObjectUrl(descriptor, img);
+    if (objectUrl && img.iconDescriptor === descriptor) {
+        setIconImageUrl(img, objectUrl);
+        return;
+    }
+
+    if (descriptor.mode === 'server') {
+        const resolved = await resolveIconOnServer(descriptor);
+        if (resolved?.status === 'ready') {
+            objectUrl = await fetchIconFileAsObjectUrl(descriptor, img);
+            if (objectUrl && img.iconDescriptor === descriptor) {
+                setIconImageUrl(img, objectUrl);
+                return;
+            }
+        }
+    }
+
+    if (descriptor.entityType === 'links' && descriptor.mode !== 'upload') {
+        const localResult = await resolveIconFromLocalCandidates(descriptor);
+        if (localResult?.status === 'ready') {
+            objectUrl = await fetchIconFileAsObjectUrl(descriptor, img);
+            if (objectUrl && img.iconDescriptor === descriptor) {
+                setIconImageUrl(img, objectUrl);
+                return;
+            }
+        }
+    }
+
+    showIconFallback(img);
 }
 
 function getIconUploadFilename(iconUrl, blob) {
@@ -511,7 +823,8 @@ function getIconUploadFilename(iconUrl, blob) {
         const extension = new URL(iconUrl).pathname.match(/\.(ico|png|svg|jpg|jpeg|webp|gif)$/i)?.[0];
         if (extension) return `icon${extension.toLowerCase()}`;
     } catch {
-        // Fall back to content type below.
+        const extension = String(iconUrl || '').match(/\.(ico|png|svg|jpg|jpeg|webp|gif)$/i)?.[0];
+        if (extension) return `icon${extension.toLowerCase()}`;
     }
 
     return `icon${extensionByType[blob?.type] || '.ico'}`;
@@ -523,356 +836,12 @@ function isUploadableIconBlob(blob, iconUrl) {
     return /\.(ico|png|svg|jpg|jpeg|webp|gif)(\?|#|$)/i.test(iconUrl);
 }
 
-async function uploadIconBlobToServer(targetUrl, iconUrl, blob) {
-    const formData = new FormData();
-    formData.append('url', targetUrl);
-    formData.append('sourceUrl', iconUrl);
-    formData.append('icon', blob, getIconUploadFilename(iconUrl, blob));
-    await apiRequest('/api/icon-cache/upload', {
-        method: 'POST',
-        body: formData
-    });
-}
-
-function loadIconImportFailures() {
-    try {
-        const now = Date.now();
-        const stored = JSON.parse(localStorage.getItem(ICON_IMPORT_FAILURE_STORAGE_KEY) || '{}');
-        if (!stored || typeof stored !== 'object') return {};
-
-        return Object.fromEntries(Object.entries(stored).filter(([, savedAt]) => (
-            typeof savedAt === 'number' && now - savedAt < ICON_IMPORT_FAILURE_TTL_MS
-        )));
-    } catch {
-        return {};
-    }
-}
-
-let iconImportFailures = loadIconImportFailures();
-
-function saveIconImportFailures() {
-    try {
-        const entries = Object.entries(iconImportFailures)
-            .sort(([, left], [, right]) => right - left)
-            .slice(0, 500);
-        iconImportFailures = Object.fromEntries(entries);
-        localStorage.setItem(ICON_IMPORT_FAILURE_STORAGE_KEY, JSON.stringify(iconImportFailures));
-    } catch {
-        // Failed imports are only an optimization; icon loading can continue without this cache.
-    }
-}
-
-function getIconImportFailureKey(targetUrl, iconUrl) {
-    return `${targetUrl}\n${iconUrl}`;
-}
-
-function hasRecentIconImportFailure(targetUrl, iconUrl) {
-    const savedAt = iconImportFailures[getIconImportFailureKey(targetUrl, iconUrl)];
-    return typeof savedAt === 'number' && Date.now() - savedAt < ICON_IMPORT_FAILURE_TTL_MS;
-}
-
-function rememberIconImportFailure(targetUrl, iconUrl) {
-    iconImportFailures[getIconImportFailureKey(targetUrl, iconUrl)] = Date.now();
-    saveIconImportFailures();
-}
-
-function forgetIconImportFailure(targetUrl, iconUrl) {
-    const key = getIconImportFailureKey(targetUrl, iconUrl);
-    if (!iconImportFailures[key]) return;
-    delete iconImportFailures[key];
-    saveIconImportFailures();
-}
-
-function clearIconImportFailures() {
-    iconImportFailures = {};
-    try {
-        localStorage.removeItem(ICON_IMPORT_FAILURE_STORAGE_KEY);
-    } catch {
-        // localStorage may be unavailable.
-    }
-}
-
 function isSameOriginUrl(url) {
     try {
         return new URL(url, window.location.href).origin === window.location.origin;
     } catch {
         return false;
     }
-}
-
-async function importIconUrlToServer(targetUrl, iconUrl) {
-    if (!iconImportEndpointAvailable) return false;
-    if (hasRecentIconImportFailure(targetUrl, iconUrl)) return false;
-
-    const response = await fetch('/api/icon-cache/import', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: targetUrl, iconUrl })
-    });
-
-    const contentType = response.headers.get('content-type') || '';
-    const data = contentType.includes('application/json') ? await response.json() : null;
-
-    if (response.status === 401) {
-        showLoggedOut(data?.error || '登录已过期，请重新登录');
-        return false;
-    }
-
-    if (response.status === 404 && !data) {
-        iconImportEndpointAvailable = false;
-        return false;
-    }
-
-    if (!response.ok) {
-        rememberIconImportFailure(targetUrl, iconUrl);
-        return false;
-    }
-
-    if (data?.ok === true) {
-        forgetIconImportFailure(targetUrl, iconUrl);
-        return true;
-    }
-
-    rememberIconImportFailure(targetUrl, iconUrl);
-    return false;
-}
-
-async function uploadCandidateIconToServer(targetUrl, iconUrl) {
-    if (isSameOriginUrl(iconUrl)) {
-        try {
-            const response = await fetch(iconUrl, {
-                credentials: 'same-origin',
-                cache: 'no-store'
-            });
-            if (response.ok) {
-                const blob = await response.blob();
-                if (isUploadableIconBlob(blob, iconUrl)) {
-                    await uploadIconBlobToServer(targetUrl, iconUrl, blob);
-                    return true;
-                }
-            }
-        } catch {
-            // Fall back to server-side import below.
-        }
-    }
-
-    try {
-        return await importIconUrlToServer(targetUrl, iconUrl);
-    } catch {
-        return false;
-    }
-}
-
-async function refreshCachedIconFromLocal(targetUrl, preferredIconUrl = '') {
-    const normalizedTargetUrl = getLocalIconCacheKey(targetUrl);
-    if (!normalizedTargetUrl) return null;
-
-    if (iconRefreshPromises.has(normalizedTargetUrl)) {
-        return iconRefreshPromises.get(normalizedTargetUrl);
-    }
-
-    const refreshPromise = (async () => {
-        const candidates = getLocalFaviconCandidates(normalizedTargetUrl);
-        if (preferredIconUrl && !candidates.includes(preferredIconUrl)) {
-            candidates.unshift(preferredIconUrl);
-        } else if (preferredIconUrl) {
-            candidates.splice(candidates.indexOf(preferredIconUrl), 1);
-            candidates.unshift(preferredIconUrl);
-        }
-        for (const candidateUrl of candidates) {
-            if (hasRecentIconImportFailure(normalizedTargetUrl, candidateUrl)) continue;
-            if (await uploadCandidateIconToServer(normalizedTargetUrl, candidateUrl)) {
-                iconCacheVersion = Date.now();
-                return getCachedFaviconUrl(normalizedTargetUrl);
-            }
-        }
-        return null;
-    })().finally(() => {
-        iconRefreshPromises.delete(normalizedTargetUrl);
-    });
-
-    iconRefreshPromises.set(normalizedTargetUrl, refreshPromise);
-    return refreshPromise;
-}
-
-function refreshFaviconInBackground(img, targetUrl, preferredIconUrl = '') {
-    if (!img || !targetUrl) return;
-
-    refreshCachedIconFromLocal(targetUrl, preferredIconUrl).then((serverIconUrl) => {
-        if (!serverIconUrl || !img.isConnected) return;
-        img.iconSource = 'server';
-        img.iconCurrentUrl = serverIconUrl;
-        img.src = serverIconUrl;
-    }).catch(() => {
-        // Keep the currently displayed cached icon.
-    });
-}
-
-function maybeUploadLoadedLocalFavicon(img, loadedIconUrl) {
-    if (!img?.iconTargetUrl || !loadedIconUrl) return;
-    if (img.iconAutoUpload !== true) return;
-    refreshFaviconInBackground(img, img.iconTargetUrl, loadedIconUrl);
-}
-
-function loadLocalIconCache() {
-    try {
-        const cached = JSON.parse(localStorage.getItem(LOCAL_ICON_CACHE_STORAGE_KEY) || '{}');
-        return cached && typeof cached === 'object' ? cached : {};
-    } catch {
-        return {};
-    }
-}
-
-function saveLocalIconCache() {
-    try {
-        const entries = Object.entries(localIconCache)
-            .sort(([, left], [, right]) => (right.savedAt || 0) - (left.savedAt || 0))
-            .slice(0, 200);
-        localIconCache = Object.fromEntries(entries);
-        localStorage.setItem(LOCAL_ICON_CACHE_STORAGE_KEY, JSON.stringify(localIconCache));
-    } catch {
-        // localStorage can be unavailable or full; icons still work without this cache.
-    }
-}
-
-function getLocalIconCacheKey(url) {
-    const parsedUrl = getParsedHttpUrl(url);
-    return parsedUrl ? parsedUrl.href : null;
-}
-
-function getLocalCachedFaviconUrl(url) {
-    const cacheKey = getLocalIconCacheKey(url);
-    return cacheKey ? localIconCache[cacheKey]?.iconUrl || null : null;
-}
-
-function getKnownHighResolutionIconCandidates(parsedUrl) {
-    const hostname = parsedUrl.hostname.toLowerCase();
-    if (hostname === 'google.com' || hostname.endsWith('.google.com')) {
-        return [
-            'https://www.gstatic.com/images/branding/product/2x/googleg_48dp.png',
-            'https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png'
-        ];
-    }
-
-    if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be') {
-        return [
-            'https://www.gstatic.com/youtube/img/branding/favicon/favicon_192x192_v2.png',
-            'https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144_v2.png'
-        ];
-    }
-
-    return [];
-}
-
-function setLocalCachedFaviconUrl(targetUrl, iconUrl) {
-    if (!targetUrl || !iconUrl) return;
-    localIconCache[targetUrl] = {
-        iconUrl,
-        savedAt: Date.now()
-    };
-    saveLocalIconCache();
-}
-
-function removeLocalCachedFaviconUrl(targetUrl) {
-    if (!targetUrl || !localIconCache[targetUrl]) return;
-    delete localIconCache[targetUrl];
-    saveLocalIconCache();
-}
-
-function getLocalFaviconCandidates(url) {
-    const parsedUrl = getParsedHttpUrl(url);
-    if (!parsedUrl) return [];
-
-    const rootIconPaths = [
-        '/android-chrome-512x512.png',
-        '/android-chrome-384x384.png',
-        '/android-chrome-256x256.png',
-        '/android-chrome-192x192.png',
-        '/apple-touch-icon.png',
-        '/apple-touch-icon-precomposed.png',
-        '/apple-touch-icon-180x180.png',
-        '/apple-touch-icon-167x167.png',
-        '/apple-touch-icon-152x152.png',
-        '/apple-touch-icon-144x144.png',
-        '/apple-touch-icon-120x120.png',
-        '/mstile-310x310.png',
-        '/mstile-150x150.png',
-        '/favicon.svg',
-        '/favicon-512x512.png',
-        '/favicon-384x384.png',
-        '/favicon-256x256.png',
-        '/favicon-196x196.png',
-        '/favicon-192x192.png',
-        '/favicon-128x128.png',
-        '/favicon-96x96.png',
-        '/favicon-64x64.png',
-        '/favicon-48x48.png',
-        '/favicon-32x32.png',
-        '/favicon.png',
-        '/favicon.ico',
-        '/favicon-16x16.png',
-        '/images/favicon.ico',
-        '/images/favicon.png',
-        '/static/favicon.ico',
-        '/assets/favicon.ico',
-        '/front-static/favicon.ico'
-    ];
-    const nestedIconNames = ['favicon.ico', 'favicon.png', 'favicon.svg', 'apple-touch-icon.png'];
-    const pathSegments = parsedUrl.pathname.split('/').filter(Boolean).slice(0, 3);
-    const pathPrefixes = [];
-    let currentPrefix = '';
-
-    for (const segment of pathSegments) {
-        currentPrefix += `/${segment}`;
-        pathPrefixes.unshift(currentPrefix);
-    }
-
-    const cachedIconUrl = getLocalCachedFaviconUrl(parsedUrl.href);
-    const candidates = getKnownHighResolutionIconCandidates(parsedUrl);
-    if (cachedIconUrl) candidates.push(cachedIconUrl);
-    rootIconPaths.forEach(iconPath => {
-        candidates.push(`${parsedUrl.origin}${iconPath}`);
-    });
-    pathPrefixes.forEach(prefix => {
-        nestedIconNames.forEach(iconName => {
-            candidates.push(`${parsedUrl.origin}${prefix}/${iconName}`);
-        });
-    });
-
-    return [...new Set(candidates)];
-}
-
-function handleFaviconLoad(event) {
-    const img = event.currentTarget;
-    if (img.iconSource === 'local') {
-        const loadedIconUrl = img.iconCurrentUrl || img.getAttribute('src');
-        setLocalCachedFaviconUrl(img.iconTargetUrl, loadedIconUrl);
-        maybeUploadLoadedLocalFavicon(img, loadedIconUrl);
-    }
-}
-
-function handleFaviconError(event) {
-    const img = event.currentTarget;
-    const candidates = img.localFaviconCandidates || [];
-    let nextIndex = (img.localFaviconIndex ?? -1) + 1;
-
-    while (nextIndex < candidates.length) {
-        const nextUrl = candidates[nextIndex];
-        nextIndex += 1;
-        if (!nextUrl || nextUrl === img.iconCurrentUrl) continue;
-
-        img.localFaviconIndex = nextIndex - 1;
-        img.iconSource = 'local';
-        img.iconAutoUpload = true;
-        img.iconCurrentUrl = nextUrl;
-        img.src = nextUrl;
-        return;
-    }
-
-    removeLocalCachedFaviconUrl(img.iconTargetUrl);
-    img.style.display = 'none';
-    if (img.nextElementSibling) img.nextElementSibling.style.display = 'block';
 }
 
 function getEffectiveUrl(link) {
@@ -904,11 +873,15 @@ function getMailIconSvg(className = 'email-link-icon') {
 function createEmailLinkElement(link, index, total) {
     const wrapper = document.createElement('div');
     const isRequired = REQUIRED_EMAIL_LINK_KEYS.has(link.linkKey);
+    const iconDescriptor = getLinkIconDescriptor(link, 'email');
+    const iconMarkup = iconDescriptor?.mode === 'none'
+        ? ''
+        : `<img alt="" class="email-link-favicon" style="display:none">${getMailIconSvg()}`;
     wrapper.className = 'email-link-wrapper';
     wrapper.dataset.index = index;
     wrapper.innerHTML = `
         <a href="${escapeAttribute(getEffectiveEmailUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" data-link-type="email" draggable="${editMode ? 'true' : 'false'}" title="${escapeAttribute(link.title || '邮箱登录')}">
-            ${getMailIconSvg()}
+            ${iconMarkup}
             <span class="email-link-label">${escapeHtml(link.title || '邮箱登录')}</span>
         </a>
         <div class="email-link-actions">
@@ -927,6 +900,9 @@ function createEmailLinkElement(link, index, total) {
     `;
 
     const emailLink = wrapper.querySelector('.email-link');
+    const faviconImg = wrapper.querySelector('.email-link-favicon');
+    if (faviconImg && iconDescriptor) hydrateIconElement(faviconImg, iconDescriptor);
+
     if (emailLink && editMode) {
         emailLink.addEventListener('dragstart', handleDragStart);
         emailLink.addEventListener('dragend', handleDragEnd);
@@ -970,15 +946,9 @@ function renderEmailLinks() {
 }
 
 function createNavCardElement(link, index, options = {}) {
-    const { noAnimation = false, linkType = 'website', refreshIcon = false } = options;
+    const { noAnimation = false, linkType = 'website' } = options;
     const href = getEffectiveUrl(link);
-    const localCachedFaviconUrl = getLocalCachedFaviconUrl(link.url);
-    const serverFaviconUrl = getCachedFaviconUrl(link.url, { cacheOnly: refreshIcon });
-    const faviconUrl = refreshIcon
-        ? (localCachedFaviconUrl || serverFaviconUrl)
-        : (serverFaviconUrl || localCachedFaviconUrl);
-    const localFaviconCandidates = getLocalFaviconCandidates(link.url);
-    const iconTargetUrl = getLocalIconCacheKey(link.url);
+    const iconDescriptor = getLinkIconDescriptor(link, linkType);
     const fallbackFavicon = '<svg class="nav-favicon-fallback" style="display:none" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
 
     const card = document.createElement('div');
@@ -992,10 +962,10 @@ function createNavCardElement(link, index, options = {}) {
 
     card.innerHTML = `
         <a href="${href}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" data-link-type="${linkType}" draggable="true">
-            <div class="nav-icon">
-                ${faviconUrl
-                    ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="nav-favicon">${fallbackFavicon}`
-                    : fallbackFavicon.replace('style="display:none"', '')
+            <div class="nav-icon${iconDescriptor?.mode === 'none' ? ' nav-icon-empty' : ''}">
+                ${iconDescriptor?.mode === 'none'
+                    ? ''
+                    : `<img alt="" class="nav-favicon">${fallbackFavicon}`
                 }
             </div>
             <div class="nav-info">
@@ -1010,15 +980,8 @@ function createNavCardElement(link, index, options = {}) {
     `;
 
     const faviconImg = card.querySelector('.nav-favicon');
-    if (faviconImg) {
-        faviconImg.iconTargetUrl = iconTargetUrl;
-        faviconImg.iconSource = faviconUrl === localCachedFaviconUrl ? 'local' : 'server';
-        faviconImg.iconCurrentUrl = faviconUrl;
-        faviconImg.localFaviconCandidates = localFaviconCandidates;
-        faviconImg.localFaviconIndex = localFaviconCandidates.indexOf(faviconUrl);
-        faviconImg.addEventListener('load', handleFaviconLoad);
-        faviconImg.addEventListener('error', handleFaviconError);
-        if (refreshIcon) refreshFaviconInBackground(faviconImg, link.url);
+    if (faviconImg && iconDescriptor) {
+        hydrateIconElement(faviconImg, iconDescriptor);
     }
 
     const navCard = card.querySelector('.nav-card');
@@ -1117,12 +1080,9 @@ function renderProjectCards(options = {}) {
 }
 
 function refreshVisibleNavIconsInBackground() {
-    document.querySelectorAll('.nav-favicon').forEach(img => {
-        if (!img.iconTargetUrl) return;
-        img.iconAutoUpload = true;
-        const preferredIconUrl = img.iconSource === 'local' ? (img.iconCurrentUrl || img.getAttribute('src')) : '';
-        refreshFaviconInBackground(img, img.iconTargetUrl, preferredIconUrl);
-    });
+    renderEmailLinks();
+    renderProjectCards();
+    renderNavCards();
 }
 
 function renderLinkCollection(linkType = 'website') {
@@ -1268,6 +1228,68 @@ function getLinkCollection(linkType) {
     return getLinks();
 }
 
+function getSelectedIconMode() {
+    const selected = document.querySelector('input[name="iconMode"]:checked')?.value;
+    return normalizeLinkIconMode(selected);
+}
+
+function setSelectedIconMode(iconMode) {
+    const normalizedMode = normalizeLinkIconMode(iconMode);
+    const input = document.querySelector(`input[name="iconMode"][value="${normalizedMode}"]`);
+    if (input) input.checked = true;
+    syncLinkIconControls();
+}
+
+function syncLinkIconControls() {
+    const iconMode = getSelectedIconMode();
+    const uploadGroup = document.getElementById('link-custom-icon-group');
+    if (uploadGroup) uploadGroup.hidden = iconMode !== 'upload';
+}
+
+function getSelectedLinkIconPayload() {
+    return {
+        iconMode: getSelectedIconMode()
+    };
+}
+
+function getSelectedCustomIconFile(iconMode) {
+    if (iconMode !== 'upload') return null;
+    return document.getElementById('link-custom-icon')?.files?.[0] || null;
+}
+
+async function uploadCustomLinkIcon(linkId, file) {
+    if (!file) return;
+    if (file.size > MAX_ICON_UPLOAD_SIZE) {
+        throw new Error('图标文件不能超过 1MB');
+    }
+
+    const formData = new FormData();
+    formData.append('source', 'upload');
+    formData.append('sourceUrl', file.name || '');
+    formData.append('icon', file, getIconUploadFilename(file.name || 'icon', file));
+    return apiRequest(`/api/icons/links/${encodeURIComponent(String(linkId))}/upload`, {
+        method: 'POST',
+        body: formData
+    });
+}
+
+function getLinksFromResponse(data, linkType) {
+    if (linkType === 'email') return Array.isArray(data.emailLinks) ? data.emailLinks : [];
+    if (linkType === 'project') return Array.isArray(data.projectLinks) ? data.projectLinks : [];
+    return Array.isArray(data.links) ? data.links : [];
+}
+
+function findSavedLinkInResponse(data, linkType, editingLink, title, url) {
+    const responseLinks = getLinksFromResponse(data, linkType);
+    if (editingLink) {
+        return responseLinks.find(link => String(link.id) === String(editingLink.id)) || null;
+    }
+
+    return [...responseLinks]
+        .reverse()
+        .find(link => link.title === title && link.url === url) || responseLinks.at(-1) || null;
+}
+
 function openLinkModal(editIndex, linkType = 'website') {
     const form = document.getElementById('link-form');
     const modalTitle = document.getElementById('link-modal-title');
@@ -1276,6 +1298,7 @@ function openLinkModal(editIndex, linkType = 'website') {
     const urlLabel = document.getElementById('link-url-label');
     const hint = document.getElementById('link-form-hint');
     const links = getLinkCollection(linkType);
+    const editingLink = typeof editIndex === 'number' && links[editIndex] ? links[editIndex] : null;
     openModal('link-modal');
     form.reset();
     form.dataset.linkType = linkType;
@@ -1284,23 +1307,22 @@ function openLinkModal(editIndex, linkType = 'website') {
         urlInput.type = 'url';
         urlLabel.textContent = '邮箱登录地址';
         urlInput.placeholder = 'https://mail.google.com/';
-        hint.textContent = '点击后会在新页面打开邮箱登录或访问页面。';
+        hint.textContent = '默认由服务器获取邮箱站点图标，也可以上传自定义图标。';
     } else if (linkType === 'project') {
         urlInput.type = 'url';
         urlLabel.textContent = '项目地址';
         urlInput.placeholder = 'https://example.com';
-        hint.textContent = '用于展示你自己部署的服务，图标将根据项目地址自动获取。';
+        hint.textContent = '个人项目默认由服务器获取图标，失败时可使用浏览器辅助或上传图标。';
     } else {
         urlInput.type = 'url';
         urlLabel.textContent = '链接地址';
         urlInput.placeholder = 'https://example.com';
-        hint.textContent = '图标将根据网址自动获取网页 favicon。';
+        hint.textContent = '默认由服务器获取网页图标，失败时可使用浏览器辅助或上传图标。';
     }
 
-    if (typeof editIndex === 'number' && links[editIndex]) {
-        const link = links[editIndex];
-        document.getElementById('link-title').value = link.title || '';
-        document.getElementById('link-url').value = link.url || '';
+    if (editingLink) {
+        document.getElementById('link-title').value = editingLink.title || '';
+        document.getElementById('link-url').value = editingLink.url || '';
         form.dataset.editIndex = editIndex;
         modalTitle.textContent = linkType === 'email'
             ? '编辑邮箱'
@@ -1317,6 +1339,8 @@ function openLinkModal(editIndex, linkType = 'website') {
             ? '添加邮箱'
             : linkType === 'project' ? '添加项目' : '添加链接';
     }
+
+    setSelectedIconMode(editingLink ? normalizeLinkIconMode(editingLink.iconMode) : 'server');
 
     setTimeout(() => document.getElementById('link-title')?.focus(), 0);
 }
@@ -1395,13 +1419,12 @@ function renderSearchEngineList() {
     }
 
     list.innerHTML = appState.searchEngineRecords.map((engine, index, records) => {
-        const domain = getSearchTemplateDomain(engine.urlTemplate);
-        const faviconUrl = getSearchEngineFaviconUrl(domain);
+        const iconDescriptor = getSearchEngineIconDescriptor(engine);
         const isRequired = engine.engineKey === 'google';
         return `
             <div class="engine-list-item">
-                ${faviconUrl
-                    ? `<img src="${escapeAttribute(faviconUrl)}" alt="" class="engine-list-icon" data-icon-target-url="${escapeAttribute(`https://${domain}/`)}" data-fallback-favicon="${escapeAttribute(getFallbackFaviconUrlForDomain(domain))}">`
+                ${iconDescriptor
+                    ? `<img alt="" class="engine-list-icon" data-engine-icon-id="${escapeAttribute(String(engine.id))}">`
                     : '<span class="engine-list-icon" aria-hidden="true"></span>'
                 }
                 <div class="engine-list-info">
@@ -1428,7 +1451,11 @@ function renderSearchEngineList() {
         `;
     }).join('');
 
-    list.querySelectorAll('.engine-list-icon[data-fallback-favicon]').forEach(bindExternalFaviconFallback);
+    list.querySelectorAll('.engine-list-icon[data-engine-icon-id]').forEach(img => {
+        const engine = appState.searchEngineRecords.find(item => String(item.id) === img.dataset.engineIconId);
+        const iconDescriptor = getSearchEngineIconDescriptor(engine);
+        if (iconDescriptor) hydrateIconElement(img, iconDescriptor);
+    });
 }
 
 async function moveSearchEngine(engineId, direction) {
@@ -1449,10 +1476,7 @@ async function moveSearchEngine(engineId, direction) {
             method: 'PUT',
             body: { ids: nextEngines.map(engine => engine.id) }
         });
-        appState.searchEngineRecords = data.engines || nextEngines;
-        rebuildSearchEngines();
-        renderSearchEngineButtons();
-        renderSearchEngineList();
+        applySearchEnginesResponse(data.engines || nextEngines);
     } catch (error) {
         appState.searchEngineRecords = previousEngines;
         rebuildSearchEngines();
@@ -1462,23 +1486,9 @@ async function moveSearchEngine(engineId, direction) {
     }
 }
 
-function getSearchEngineIconTargets() {
-    return [...new Set(getRenderableSearchEngines()
-        .map(engine => getSearchTemplateDomain(engine.urlTemplate))
-        .filter(Boolean)
-        .map(domain => `https://${domain}/`))];
-}
-
 function refreshSearchEngineIconsInBackground() {
-    getSearchEngineIconTargets().forEach(targetUrl => {
-        refreshCachedIconFromLocal(targetUrl).then((serverIconUrl) => {
-            if (!serverIconUrl) return;
-            renderSearchEngineButtons();
-            renderSearchEngineList();
-        }).catch(() => {
-            // Keep the currently displayed cached icon.
-        });
-    });
+    renderSearchEngineButtons();
+    renderSearchEngineList();
 }
 
 async function toggleEditMode() {
@@ -1809,11 +1819,10 @@ async function refreshIconCache() {
     }
 
     try {
-        await apiRequest('/api/icon-cache/refresh', { method: 'POST' });
-        clearIconImportFailures();
-        iconCacheVersion = Date.now();
-        refreshVisibleNavIconsInBackground();
-        refreshSearchEngineIconsInBackground();
+        const data = await apiRequest('/api/icons/refresh', { method: 'POST' });
+        await clearAllFrontendIconCache();
+        applyLinksResponse(data);
+        applySearchEnginesResponse(data.engines || []);
     } catch (error) {
         alert(error.message);
     } finally {
@@ -1840,12 +1849,14 @@ function bindMenuManagement() {
     const layoutSettingsSection = document.querySelector('.layout-settings-section');
     const iconRefreshBtn = document.getElementById('icon-refresh-btn');
     const cancelBtn = document.getElementById('link-form-cancel');
+    const iconModeOptions = document.getElementById('link-icon-source-options');
     const searchEngineCancelBtn = document.getElementById('search-engine-form-cancel');
 
     manageBtn.addEventListener('click', () => openManageModal());
     if (editModeBtn) editModeBtn.addEventListener('click', toggleEditMode);
     if (iconRefreshBtn) iconRefreshBtn.addEventListener('click', refreshIconCache);
     cancelBtn.addEventListener('click', closeLinkModal);
+    if (iconModeOptions) iconModeOptions.addEventListener('change', syncLinkIconControls);
     if (searchEngineCancelBtn) searchEngineCancelBtn.addEventListener('click', resetSearchEngineForm);
 
     if (emailLinksContainer) {
@@ -1919,15 +1930,34 @@ function bindMenuManagement() {
 
         const links = getLinkCollection(linkType);
         const editingLink = editIndex !== null && links[editIndex] ? links[editIndex] : null;
+        const iconPayload = getSelectedLinkIconPayload();
+        const customIconFile = getSelectedCustomIconFile(iconPayload.iconMode);
         submitBtn.disabled = true;
 
         try {
             const data = await apiRequest(editingLink ? `/api/links/${editingLink.id}` : '/api/links', {
                 method: editingLink ? 'PUT' : 'POST',
-                body: { title, url, type: linkType }
+                body: { title, url, type: linkType, ...iconPayload }
             });
+            let iconUploadError = null;
+            if (customIconFile) {
+                try {
+                    const savedLink = findSavedLinkInResponse(data, linkType, editingLink, title, url);
+                    if (!savedLink) throw new Error('链接已保存，但无法定位图标记录');
+                    const uploadStatus = await uploadCustomLinkIcon(savedLink.id, customIconFile);
+                    if (uploadStatus?.iconVersion) {
+                        savedLink.iconVersion = uploadStatus.iconVersion;
+                        await clearFrontendIconCache('links', savedLink.id);
+                    }
+                } catch (error) {
+                    iconUploadError = error;
+                }
+            }
             applyLinksResponse(data);
             closeLinkModal();
+            if (iconUploadError) {
+                alert(`链接已保存，但图标上传失败：${iconUploadError.message}`);
+            }
         } catch (error) {
             alert(error.message);
         } finally {
@@ -1971,10 +2001,7 @@ function bindMenuManagement() {
                 method: editId ? 'PUT' : 'POST',
                 body: { name, urlTemplate }
             });
-            appState.searchEngineRecords = data.engines || [];
-            rebuildSearchEngines();
-            renderSearchEngineButtons();
-            renderSearchEngineList();
+            applySearchEnginesResponse(data.engines || []);
             resetSearchEngineForm();
         } catch (error) {
             alert(error.message);
@@ -2012,15 +2039,13 @@ function bindMenuManagement() {
         try {
             const data = await apiRequest(`/api/search-engines/${engine.id}`, { method: 'DELETE' });
             const deletedEngineKey = getEngineKey(engine);
-            appState.searchEngineRecords = data.engines || [];
+            const nextEngines = data.engines || [];
             if (currentEngine === deletedEngineKey) {
-                currentEngine = appState.searchEngineRecords.some(item => item.engineKey === 'google')
+                currentEngine = nextEngines.some(item => item.engineKey === 'google')
                     ? 'google'
-                    : getEngineKey(appState.searchEngineRecords[0] || getFallbackSearchEngineRecords()[0]);
+                    : getEngineKey(nextEngines[0] || getFallbackSearchEngineRecords()[0]);
             }
-            rebuildSearchEngines();
-            renderSearchEngineButtons();
-            renderSearchEngineList();
+            applySearchEnginesResponse(nextEngines);
             resetSearchEngineForm();
         } catch (error) {
             alert(error.message);
@@ -2106,7 +2131,7 @@ function applySettings(settings) {
     layoutColumns = Number.parseInt(appState.settings.layoutColumns, 10) || 0;
     projectLayoutColumns = Number.parseInt(appState.settings.projectLayoutColumns, 10) || 0;
     projectLinkDisplayMode = appState.settings.projectLinkDisplayMode === 'default' ? 'default' : 'centered';
-    bookmarkLinkDisplayMode = appState.settings.bookmarkLinkDisplayMode === 'centered' ? 'centered' : 'default';
+    bookmarkLinkDisplayMode = appState.settings.bookmarkLinkDisplayMode === 'default' ? 'default' : 'centered';
     projectLinkSize = normalizeLinkSize(appState.settings.projectLinkSize);
     bookmarkLinkSize = normalizeLinkSize(appState.settings.bookmarkLinkSize);
     editMode = Boolean(appState.settings.editMode);

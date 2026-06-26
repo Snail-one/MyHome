@@ -48,7 +48,7 @@ function createSettingsRouter(deps) {
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'bookmarkLinkDisplayMode')) {
-      next.bookmarkLinkDisplayMode = normalizeDisplayMode(req.body.bookmarkLinkDisplayMode, 'default');
+      next.bookmarkLinkDisplayMode = normalizeDisplayMode(req.body.bookmarkLinkDisplayMode, 'centered');
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'projectLinkSize')) {

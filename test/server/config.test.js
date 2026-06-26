@@ -34,6 +34,7 @@ test('loadConfig builds expected runtime paths', () => {
   }, { rootDir: '/repo' });
 
   assert.equal(config.databasePath, '/repo/tmp/app.sqlite');
+  assert.equal(config.iconCacheDir, '/repo/data/icon-cache-v2');
   assert.equal(config.port, 8080);
   assert.equal(config.trustProxy, true);
   assert.equal(config.sessionCookieName, 'my_home_sid');

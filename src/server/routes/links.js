@@ -9,7 +9,7 @@ function parseIdList(value) {
 }
 
 function createLinksRouter(deps) {
-  const { auth, stores } = deps;
+  const { auth, iconService, stores } = deps;
   const router = express.Router();
 
   router.get('/links', auth.requireAuth, (req, res) => {
@@ -38,7 +38,7 @@ function createLinksRouter(deps) {
     res.json(result.value);
   });
 
-  router.put('/links/:id', auth.requireAuth, (req, res) => {
+  router.put('/links/:id', auth.requireAuth, async (req, res) => {
     const payload = validateLinkPayload(req.body);
     if (payload.error) {
       res.status(400).json({ error: payload.error });
@@ -51,10 +51,15 @@ function createLinksRouter(deps) {
       return;
     }
 
+    if (result.invalidatedIcon) {
+      await iconService.deleteEntityIcon(result.invalidatedIcon.entityType, result.invalidatedIcon.id)
+        .catch((error) => console.warn('Failed to delete stale link icon:', error.message));
+    }
+
     res.json(result.value);
   });
 
-  router.delete('/links/:id', auth.requireAuth, (req, res) => {
+  router.delete('/links/:id', auth.requireAuth, async (req, res) => {
     const result = stores.links.delete(req.params.id);
     if (result.notFound) {
       res.status(404).json({ error: '链接不存在' });
@@ -63,6 +68,11 @@ function createLinksRouter(deps) {
     if (result.required) {
       res.status(400).json({ error: 'Google 邮箱需要保留，可以编辑名称和登录地址' });
       return;
+    }
+
+    if (result.invalidatedIcon) {
+      await iconService.deleteEntityIcon(result.invalidatedIcon.entityType, result.invalidatedIcon.id)
+        .catch((error) => console.warn('Failed to delete link icon:', error.message));
     }
 
     res.json(result.value);

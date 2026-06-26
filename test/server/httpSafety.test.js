@@ -51,3 +51,22 @@ test('safeFetch validates every redirect target before following it', async (t) 
     timeoutMs: 1000
   }));
 });
+
+test('safeFetch allows private network only when explicitly requested', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  global.fetch = async () => new Response('ok', { status: 200 });
+
+  await assert.rejects(() => safeFetch('http://127.0.0.1/icon.svg', {
+    timeoutMs: 1000
+  }));
+
+  const response = await safeFetch('http://127.0.0.1/icon.svg', {
+    allowPrivateNetwork: true,
+    timeoutMs: 1000
+  });
+  assert.equal(response.status, 200);
+});

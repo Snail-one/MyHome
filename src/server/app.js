@@ -24,7 +24,7 @@ function createSecurityHeadersMiddleware() {
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self'",
     "font-src 'self' data:",
-    "connect-src 'self' https:",
+    "connect-src 'self' http: https:",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'"

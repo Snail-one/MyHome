@@ -92,7 +92,7 @@ async function startApp(overrides) {
     database.close();
   }
 
-  return { close, login, request, requestJson };
+  return { baseUrl, close, login, request, requestJson };
 }
 
 test('protected APIs require login and authenticated user can manage settings, links, and engines', async (t) => {
@@ -114,6 +114,10 @@ test('protected APIs require login and authenticated user can manage settings, l
   assert.equal(page.status, 200);
   assert.match(await page.text(), /search-engine-switcher/);
 
+  result = await app.requestJson('/api/settings');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.settings.bookmarkLinkDisplayMode, 'centered');
+
   result = await app.requestJson('/api/settings', {
     method: 'PUT',
     body: { layoutColumns: 2, editMode: true }
@@ -128,13 +132,28 @@ test('protected APIs require login and authenticated user can manage settings, l
   });
   assert.equal(result.response.status, 201);
   assert.equal(result.data.projectLinks[0].title, 'Project');
+  assert.equal(result.data.projectLinks[0].iconMode, 'server');
+  assert.equal(result.data.projectLinks[0].iconVersion, 1);
+
+  result = await app.requestJson('/api/links', {
+    method: 'POST',
+    body: {
+      title: 'Bilibili',
+      url: 'https://www.bilibili.com',
+      iconMode: 'none'
+    }
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.links[0].iconMode, 'none');
 
   result = await app.requestJson('/api/search-engines', {
     method: 'POST',
     body: { name: 'Docs', urlTemplate: 'https://example.com/search?q={query}' }
   });
   assert.equal(result.response.status, 201);
-  assert.equal(result.data.engines.some((engine) => engine.name === 'Docs'), true);
+  const docsEngine = result.data.engines.find((engine) => engine.name === 'Docs');
+  assert.ok(docsEngine);
+  assert.equal(docsEngine.iconVersion, 1);
 });
 
 test('failed login lockout returns 429 and Retry-After', async (t) => {
@@ -164,26 +183,60 @@ test('background upload rejects forged image data', async (t) => {
   assert.equal(response.status, 400);
 });
 
-test('icon import rejects localhost and private targets', async (t) => {
+test('server icon resolve allows private targets for configured links', async (t) => {
   const app = await startApp();
   t.after(app.close);
   await app.login();
 
-  let result = await app.requestJson('/api/icon-cache/import', {
+  let result = await app.requestJson('/api/links', {
     method: 'POST',
     body: {
-      url: 'http://93.184.216.34/',
-      iconUrl: 'http://127.0.0.1/favicon.ico'
+      title: 'Local App',
+      url: app.baseUrl,
+      iconMode: 'server'
     }
   });
-  assert.equal(result.response.status, 400);
+  assert.equal(result.response.status, 201);
 
-  result = await app.requestJson('/api/icon-cache/import', {
+  const link = result.data.links.find((item) => item.title === 'Local App');
+  result = await app.requestJson(`/api/icons/links/${link.id}/resolve`, { method: 'POST' });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.status, 'ready');
+
+  const response = await app.request(`/api/icons/links/${link.id}/file?v=${link.iconVersion}`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /image\/svg\+xml/);
+});
+
+test('link icon upload stores v2 entity icon and bumps version', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  await app.login();
+
+  const targetUrl = 'http://10.0.0.1/';
+  let result = await app.requestJson('/api/links', {
     method: 'POST',
-    body: {
-      url: 'http://10.0.0.1/',
-      iconUrl: 'http://93.184.216.34/favicon.ico'
-    }
+    body: { title: 'Private', url: targetUrl, iconMode: 'upload' }
   });
-  assert.equal(result.response.status, 400);
+  assert.equal(result.response.status, 201);
+  const link = result.data.links.find((item) => item.title === 'Private');
+
+  const formData = new FormData();
+  formData.append('sourceUrl', 'icon.svg');
+  formData.append('icon', new Blob([
+    Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>')
+  ], { type: 'image/svg+xml' }), 'icon.svg');
+
+  let response = await app.request(`/api/icons/links/${link.id}/upload`, {
+    method: 'POST',
+    body: formData
+  });
+  assert.equal(response.status, 201);
+  const status = await response.json();
+  assert.equal(status.status, 'ready');
+  assert.equal(status.iconVersion, 2);
+
+  response = await app.request(`/api/icons/links/${link.id}/file?v=2`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /image\/svg\+xml/);
 });

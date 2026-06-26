@@ -34,7 +34,7 @@ const DEFAULT_EMAIL_LINK = {
 const REQUIRED_SEARCH_ENGINE_KEYS = new Set(['google']);
 const REQUIRED_LINK_KEYS = new Set([DEFAULT_EMAIL_LINK.linkKey]);
 const USER_ID = 1;
-const SCHEMA_VERSION = '2026-06-20.1';
+const SCHEMA_VERSION = '2026-06-26.1';
 
 function parseIntegerEnv(value, fallback, minimum) {
   const parsed = Number.parseInt(value, 10);
@@ -71,7 +71,7 @@ function loadConfig(env = process.env, options = {}) {
     dataDir,
     uploadsDir,
     backgroundsDir: path.join(uploadsDir, 'backgrounds'),
-    iconCacheDir: path.join(dataDir, 'icon-cache'),
+    iconCacheDir: path.join(dataDir, 'icon-cache-v2'),
     databasePath,
     host: env.HOST || '127.0.0.1',
     port: parseIntegerEnv(env.PORT, 3000, 1),
@@ -90,11 +90,10 @@ function loadConfig(env = process.env, options = {}) {
     bcryptRounds: parseIntegerEnv(env.BCRYPT_ROUNDS, 12, 4),
     maxBackgroundSize: 10 * 1024 * 1024,
     maxIconSize: 1024 * 1024,
-    iconFetchTimeoutMs: parseIntegerEnv(env.ICON_FETCH_TIMEOUT_MS, 5000, 100),
+    iconFetchTimeoutMs: parseIntegerEnv(env.ICON_FETCH_TIMEOUT_MS, 2500, 100),
     iconHtmlSampleSize: 128 * 1024,
-    iconDiscoveryVersion: 4,
     iconMaxRedirects: parseIntegerEnv(env.ICON_MAX_REDIRECTS, 3, 0),
-    iconMaxCandidates: parseIntegerEnv(env.ICON_MAX_CANDIDATES, 40, 1),
+    iconMaxCandidates: parseIntegerEnv(env.ICON_MAX_CANDIDATES, 12, 1),
     userId: USER_ID,
     schemaVersion: SCHEMA_VERSION,
     defaultSearchEngines: DEFAULT_SEARCH_ENGINES,
