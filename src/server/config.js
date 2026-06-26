@@ -175,7 +175,7 @@ function loadConfig(env = process.env, options = {}) {
     bcryptRounds: parseIntegerEnv(env.BCRYPT_ROUNDS, 12, 4),
     maxBackgroundSize: 10 * 1024 * 1024,
     maxIconSize: 1024 * 1024,
-    iconFetchTimeoutMs: parseIntegerEnv(env.ICON_FETCH_TIMEOUT_MS, 2500, 100),
+    iconFetchTimeoutMs: parseIntegerEnv(env.ICON_FETCH_TIMEOUT_MS, 5000, 100),
     iconFetchLogEnabled: parseBooleanEnv(env.ICON_FETCH_LOG, false),
     iconHtmlSampleSize: 128 * 1024,
     iconMaxRedirects: parseIntegerEnv(env.ICON_MAX_REDIRECTS, 3, 0),

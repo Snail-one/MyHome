@@ -33,13 +33,8 @@ test('assertPublicHttpUrl rejects localhost, private literals, and private DNS a
   assert.equal(parsedUrl.href, 'https://service.test/path');
 });
 
-test('safeFetch validates every redirect target before following it', async (t) => {
-  const originalFetch = global.fetch;
-  t.after(() => {
-    global.fetch = originalFetch;
-  });
-
-  global.fetch = async () => new Response(null, {
+test('safeFetch validates every redirect target before following it', async () => {
+  const fetch = async () => new Response(null, {
     status: 302,
     headers: {
       location: 'http://127.0.0.1/private'
@@ -47,43 +42,37 @@ test('safeFetch validates every redirect target before following it', async (t) 
   });
 
   await assert.rejects(() => safeFetch('https://service.test/icon.png', {
+    fetch,
     lookup: async () => [{ address: '93.184.216.34', family: 4 }],
     timeoutMs: 1000
   }));
 });
 
-test('safeFetch allows private network only when explicitly requested', async (t) => {
-  const originalFetch = global.fetch;
-  t.after(() => {
-    global.fetch = originalFetch;
-  });
-
-  global.fetch = async () => new Response('ok', { status: 200 });
+test('safeFetch allows private network only when explicitly requested', async () => {
+  const fetch = async () => new Response('ok', { status: 200 });
 
   await assert.rejects(() => safeFetch('http://127.0.0.1/icon.svg', {
+    fetch,
     timeoutMs: 1000
   }));
 
   const response = await safeFetch('http://127.0.0.1/icon.svg', {
     allowPrivateNetwork: true,
+    fetch,
     timeoutMs: 1000
   });
   assert.equal(response.status, 200);
 });
 
-test('safeFetch applies proxy dispatcher when proxy is configured', async (t) => {
-  const originalFetch = global.fetch;
-  t.after(() => {
-    global.fetch = originalFetch;
-  });
-
+test('safeFetch applies proxy dispatcher when proxy is configured', async () => {
   let fetchOptions;
-  global.fetch = async (url, options) => {
+  const fetch = async (url, options) => {
     fetchOptions = options;
     return new Response('ok', { status: 200 });
   };
 
   const response = await safeFetch('https://service.test/icon.svg', {
+    fetch,
     lookup: async () => [{ address: '93.184.216.34', family: 4 }],
     proxy: {
       httpsProxy: 'http://127.0.0.1:7890',
@@ -96,20 +85,16 @@ test('safeFetch applies proxy dispatcher when proxy is configured', async (t) =>
   assert.ok(fetchOptions.dispatcher);
 });
 
-test('safeFetch honors no_proxy entries before applying proxy dispatcher', async (t) => {
-  const originalFetch = global.fetch;
-  t.after(() => {
-    global.fetch = originalFetch;
-  });
-
+test('safeFetch honors no_proxy entries before applying proxy dispatcher', async () => {
   let fetchOptions;
-  global.fetch = async (url, options) => {
+  const fetch = async (url, options) => {
     fetchOptions = options;
     return new Response('ok', { status: 200 });
   };
 
   const response = await safeFetch('http://10.1.2.3/icon.svg', {
     allowPrivateNetwork: true,
+    fetch,
     proxy: {
       httpProxy: 'http://127.0.0.1:7890',
       noProxy: '127.0.0.1,10.0.0.0/8'
@@ -119,4 +104,23 @@ test('safeFetch honors no_proxy entries before applying proxy dispatcher', async
 
   assert.equal(response.status, 200);
   assert.equal(fetchOptions.dispatcher, undefined);
+});
+
+test('safeFetch reports request timeouts explicitly', async () => {
+  const fetch = async (_url, options) => new Promise((_, reject) => {
+    options.signal.addEventListener('abort', () => {
+      reject(new DOMException('This operation was aborted', 'AbortError'));
+    });
+  });
+
+  await assert.rejects(() => safeFetch('https://service.test/icon.svg', {
+    fetch,
+    lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    timeoutMs: 1
+  }), (error) => {
+    assert.equal(error.code, 'FETCH_TIMEOUT');
+    assert.equal(error.timeoutMs, 1);
+    assert.equal(error.message, 'Request timed out');
+    return true;
+  });
 });

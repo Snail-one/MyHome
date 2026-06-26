@@ -141,7 +141,7 @@ test('discoverIconCandidates ranks only HTML-declared icons', async () => {
   assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://x.com/ | direct | html:parse:success')));
 });
 
-test('discoverIconCandidates logs HTML parse failure when no icon links are found', async () => {
+test('discoverIconCandidates falls back to default favicon when no icon links are found', async () => {
   const logs = [];
   const candidates = await discoverIconCandidates(
     makeIconConfig({ iconFetchLogEnabled: true }),
@@ -159,11 +159,15 @@ test('discoverIconCandidates logs HTML parse failure when no icon links are foun
     }
   );
 
-  assert.deepEqual(candidates, []);
+  assert.deepEqual(candidates, ['https://example.com/favicon.ico']);
   assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://example.com/ | direct | html:fetch:success')));
   assert.ok(logs.some((line) => (
     line.startsWith('[icon-fetch] https://example.com/ | direct | html:parse:fail') &&
     line.includes('reason=no-icon-link')
+  )));
+  assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/ | direct | default:favicon') &&
+    line.includes('source=https://example.com/favicon.ico')
   )));
 });
 
@@ -179,16 +183,104 @@ test('discoverIconCandidates logs HTML fetch failure on request errors', async (
         }
       },
       safeFetch: async () => {
-        throw new Error('network down');
+        throw new Error('fetch failed', {
+          cause: { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED 127.0.0.1:8080' }
+        });
       }
     }
   );
 
   assert.deepEqual(candidates, []);
   assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/ | direct | request:connect:fail') &&
+    line.includes('reason=connection-failed') &&
+    line.includes('errorCode=ECONNREFUSED') &&
+    line.includes('errorCause="connect ECONNREFUSED 127.0.0.1:8080"') &&
+    line.includes('error="fetch failed"')
+  )));
+  assert.ok(logs.some((line) => (
     line.startsWith('[icon-fetch] https://example.com/ | direct | html:fetch:fail') &&
-    line.includes('reason=request-error') &&
-    line.includes('error="network down"')
+    line.includes('reason=connection-failed') &&
+    line.includes('errorCode=ECONNREFUSED') &&
+    line.includes('errorCause="connect ECONNREFUSED 127.0.0.1:8080"') &&
+    line.includes('error="fetch failed"')
+  )));
+});
+
+test('discoverIconCandidates logs request timeouts explicitly', async () => {
+  const logs = [];
+  const candidates = await discoverIconCandidates(
+    makeIconConfig({ iconFetchLogEnabled: true }),
+    new URL('https://example.com/'),
+    {
+      logger: {
+        log(line) {
+          logs.push(line);
+        }
+      },
+      safeFetch: async () => {
+        const error = new Error('Request timed out', {
+          cause: new DOMException('This operation was aborted', 'AbortError')
+        });
+        error.code = 'FETCH_TIMEOUT';
+        error.timeoutMs = 5000;
+        throw error;
+      }
+    }
+  );
+
+  assert.deepEqual(candidates, []);
+  assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/ | direct | request:timeout') &&
+    line.includes('reason=timeout') &&
+    line.includes('timeoutMs=5000') &&
+    line.includes('errorCode=FETCH_TIMEOUT')
+  )));
+  assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/ | direct | html:fetch:fail') &&
+    line.includes('reason=timeout') &&
+    line.includes('timeoutMs=5000')
+  )));
+});
+
+test('discoverIconCandidates logs proxy address and access failures', async () => {
+  const logs = [];
+  const candidates = await discoverIconCandidates(
+    makeIconConfig({
+      iconFetchLogEnabled: true,
+      iconFetchProxy: {
+        httpProxy: 'http://proxy.example:8080',
+        httpsProxy: 'http://proxy.example:8080',
+        noProxy: ''
+      }
+    }),
+    new URL('https://example.com/'),
+    {
+      logger: {
+        log(line) {
+          logs.push(line);
+        }
+      },
+      safeFetch: async (url, options) => {
+        if (!options.proxy) throw new Error('direct down');
+        return new Response('forbidden', {
+          status: 403,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+    }
+  );
+
+  assert.deepEqual(candidates, []);
+  assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/ | proxy | request:start') &&
+    line.includes('proxy=http://proxy.example:8080/')
+  )));
+  assert.ok(logs.some((line) => (
+    line.startsWith('[icon-fetch] https://example.com/ | proxy | request:access:fail') &&
+    line.includes('proxy=http://proxy.example:8080/') &&
+    line.includes('status=403') &&
+    line.includes('reason=access-failed')
   )));
 });
 
@@ -288,6 +380,134 @@ test('icon fetcher tries direct requests before proxy fallback', async () => {
   icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
   assert.equal(icon.contentType, 'image/svg+xml');
   assert.deepEqual(calls.map((call) => call.hasProxy), [false]);
+});
+
+test('resolved icons use the same fetch mode as the HTML discovery', async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
+  const html = '<link rel="icon" href="https://cdn.example.com/icon.svg" type="image/svg+xml">';
+  const config = makeIconConfig({
+    iconFetchProxy: {
+      httpProxy: 'http://proxy.example:8080',
+      httpsProxy: 'http://proxy.example:8080',
+      noProxy: ''
+    }
+  });
+
+  let calls = [];
+  let fetcher = createIconFetcher(config, {
+    safeFetch: async (url, options) => {
+      calls.push({ url, hasProxy: Boolean(options.proxy) });
+      if (url === 'https://example.com/') {
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      return new Response(svg, {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+  });
+
+  let resolved = await fetcher.resolveIconForUrl('https://example.com/');
+  assert.equal(resolved.icon.contentType, 'image/svg+xml');
+  assert.deepEqual(calls, [
+    { url: 'https://example.com/', hasProxy: false },
+    { url: 'https://cdn.example.com/icon.svg', hasProxy: false }
+  ]);
+
+  calls = [];
+  fetcher = createIconFetcher(config, {
+    safeFetch: async (url, options) => {
+      calls.push({ url, hasProxy: Boolean(options.proxy) });
+      if (url === 'https://example.com/' && !options.proxy) throw new Error('direct html failed');
+      if (url === 'https://example.com/') {
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      return new Response(svg, {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+  });
+
+  resolved = await fetcher.resolveIconForUrl('https://example.com/');
+  assert.equal(resolved.icon.contentType, 'image/svg+xml');
+  assert.deepEqual(calls, [
+    { url: 'https://example.com/', hasProxy: false },
+    { url: 'https://example.com/', hasProxy: true },
+    { url: 'https://cdn.example.com/icon.svg', hasProxy: true }
+  ]);
+});
+
+test('default favicon uses the same fetch mode as the HTML discovery', async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
+  const html = '<html><head><title>No icons</title></head></html>';
+  const config = makeIconConfig({
+    iconFetchProxy: {
+      httpProxy: 'http://proxy.example:8080',
+      httpsProxy: 'http://proxy.example:8080',
+      noProxy: ''
+    }
+  });
+
+  let calls = [];
+  let fetcher = createIconFetcher(config, {
+    safeFetch: async (url, options) => {
+      calls.push({ url, hasProxy: Boolean(options.proxy) });
+      if (url === 'https://example.com/') {
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      return new Response(svg, {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+  });
+
+  let resolved = await fetcher.resolveIconForUrl('https://example.com/');
+  assert.equal(resolved.icon.contentType, 'image/svg+xml');
+  assert.deepEqual(calls, [
+    { url: 'https://example.com/', hasProxy: false },
+    { url: 'https://example.com/favicon.ico', hasProxy: false }
+  ]);
+
+  calls = [];
+  fetcher = createIconFetcher(config, {
+    safeFetch: async (url, options) => {
+      calls.push({ url, hasProxy: Boolean(options.proxy) });
+      if (url === 'https://example.com/' && !options.proxy) throw new Error('direct html failed');
+      if (url === 'https://example.com/') {
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      return new Response(svg, {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+  });
+
+  resolved = await fetcher.resolveIconForUrl('https://example.com/');
+  assert.equal(resolved.icon.contentType, 'image/svg+xml');
+  assert.deepEqual(calls, [
+    { url: 'https://example.com/', hasProxy: false },
+    { url: 'https://example.com/', hasProxy: true },
+    { url: 'https://example.com/favicon.ico', hasProxy: true }
+  ]);
 });
 
 test('icon fetcher logs only when enabled', async () => {

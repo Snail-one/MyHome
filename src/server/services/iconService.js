@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 
 const { createIconFetcher, normalizeIconTargetUrl } = require('./iconFetcher');
@@ -7,6 +8,19 @@ const {
   getIconContentType,
   iconContentTypeByExtension
 } = require('./imageTypes');
+
+const COMMON_SECOND_LEVEL_PUBLIC_SUFFIXES = new Set([
+  'ac',
+  'co',
+  'com',
+  'edu',
+  'gov',
+  'mil',
+  'net',
+  'ne',
+  'or',
+  'org'
+]);
 
 function createIconService(config, deps = {}) {
   const iconFetcher = deps.iconFetcher || createIconFetcher(config);
@@ -18,29 +32,72 @@ function createIconService(config, deps = {}) {
       : normalizeIconTargetUrl(value);
   }
 
-  function getOriginTargetUrl(value) {
+  function getRootHostname(hostname) {
+    const normalizedHostname = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+    if (!normalizedHostname || net.isIP(normalizedHostname) || normalizedHostname === 'localhost') {
+      return normalizedHostname;
+    }
+
+    const labels = normalizedHostname.split('.').filter(Boolean);
+    if (labels.length <= 2) return normalizedHostname;
+
+    const lastLabel = labels[labels.length - 1];
+    const secondLastLabel = labels[labels.length - 2];
+    const rootLabelCount = lastLabel.length === 2 && COMMON_SECOND_LEVEL_PUBLIC_SUFFIXES.has(secondLastLabel) ? 3 : 2;
+    return labels.slice(-rootLabelCount).join('.');
+  }
+
+  function getTargetUrlCandidates(value) {
     const normalizedUrl = normalizeFetcherTargetUrl(value);
-    if (!normalizedUrl) return null;
+    if (!normalizedUrl) return [];
 
     try {
       const parsedUrl = new URL(normalizedUrl);
-      return `${parsedUrl.origin}/`;
+      const rootHostname = getRootHostname(parsedUrl.hostname);
+      if (!rootHostname) return [];
+
+      const candidates = [`${parsedUrl.protocol}//${rootHostname}/`];
+      if (!net.isIP(rootHostname) && rootHostname !== 'localhost' && rootHostname.includes('.')) {
+        const wwwTargetUrl = `${parsedUrl.protocol}//www.${rootHostname}/`;
+        if (!candidates.includes(wwwTargetUrl)) candidates.push(wwwTargetUrl);
+      }
+      return candidates;
     } catch {
-      return null;
+      return [];
     }
   }
 
-  async function resolveIconForTarget(targetUrl) {
-    const originTargetUrl = getOriginTargetUrl(targetUrl);
-    if (!originTargetUrl) return { icon: null, sourceUrl: '', targetUrl: '' };
-    if (iconResolutionCache.has(originTargetUrl)) return iconResolutionCache.get(originTargetUrl);
+  function getPrimaryTargetUrl(value) {
+    return getTargetUrlCandidates(value)[0] || null;
+  }
 
-    const resolutionPromise = iconFetcher.resolveIconForUrl(originTargetUrl).catch((error) => {
-      iconResolutionCache.delete(originTargetUrl);
+  async function resolveIconForSingleTarget(targetUrl) {
+    if (iconResolutionCache.has(targetUrl)) return iconResolutionCache.get(targetUrl);
+
+    const resolutionPromise = iconFetcher.resolveIconForUrl(targetUrl).catch((error) => {
+      iconResolutionCache.delete(targetUrl);
       throw error;
     });
-    iconResolutionCache.set(originTargetUrl, resolutionPromise);
+    iconResolutionCache.set(targetUrl, resolutionPromise);
     return resolutionPromise;
+  }
+
+  async function resolveIconForTarget(targetUrl) {
+    const targetUrlCandidates = getTargetUrlCandidates(targetUrl);
+    if (!targetUrlCandidates.length) return { icon: null, sourceUrl: '', targetUrl: '' };
+
+    let lastResolved = null;
+    for (const candidateTargetUrl of targetUrlCandidates) {
+      try {
+        const resolved = await resolveIconForSingleTarget(candidateTargetUrl);
+        lastResolved = resolved || { icon: null, sourceUrl: '', targetUrl: candidateTargetUrl };
+        if (lastResolved.icon) return lastResolved;
+      } catch (error) {
+        lastResolved = { icon: null, sourceUrl: '', targetUrl: candidateTargetUrl, error: error.message };
+      }
+    }
+
+    return lastResolved || { icon: null, sourceUrl: '', targetUrl: targetUrlCandidates[0] };
   }
 
   function getEntityCachePrefix(entityType, entityId) {
@@ -226,7 +283,7 @@ function createIconService(config, deps = {}) {
 
     await markEntityIconMiss('links', link.id, link.iconVersion, {
       source: 'server',
-      targetUrl: resolved?.targetUrl || getOriginTargetUrl(link.url) || ''
+      targetUrl: resolved?.targetUrl || getPrimaryTargetUrl(link.url) || ''
     });
     return getEntityIconStatus('links', link);
   }
@@ -234,7 +291,7 @@ function createIconService(config, deps = {}) {
   function getSearchEngineTargetUrl(engine) {
     if (!engine?.urlTemplate) return null;
     const sampleUrl = engine.urlTemplate.replaceAll('{query}', 'test');
-    return getOriginTargetUrl(sampleUrl);
+    return getPrimaryTargetUrl(sampleUrl);
   }
 
   async function resolveSearchEngineIcon(engine) {

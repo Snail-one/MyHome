@@ -43,12 +43,48 @@ function getIconFetchMode(useProxy) {
   return useProxy ? 'proxy' : 'direct';
 }
 
+function getIconFetchProxyUrl(config, resourceUrl, useProxy = false) {
+  if (!useProxy || !hasIconFetchProxy(config)) return '';
+
+  try {
+    const parsedUrl = new URL(resourceUrl);
+    return parsedUrl.protocol === 'https:'
+      ? (config.iconFetchProxy.httpsProxy || config.iconFetchProxy.httpProxy || '')
+      : (config.iconFetchProxy.httpProxy || '');
+  } catch {
+    return config.iconFetchProxy.httpsProxy || config.iconFetchProxy.httpProxy || '';
+  }
+}
+
+function getIconFetchTimeoutMs(config, useProxy = false) {
+  const timeoutMs = Number.parseInt(config?.iconFetchTimeoutMs, 10) || 0;
+  return useProxy ? Math.max(timeoutMs, 10000) : timeoutMs;
+}
+
+function formatProxyLogValue(proxyUrl) {
+  if (!proxyUrl) return '';
+
+  try {
+    const parsedUrl = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(proxyUrl) ? proxyUrl : `http://${proxyUrl}`);
+    if (parsedUrl.username || parsedUrl.password) {
+      parsedUrl.username = parsedUrl.username ? '***' : '';
+      parsedUrl.password = parsedUrl.password ? '***' : '';
+    }
+    return parsedUrl.href;
+  } catch {
+    return proxyUrl;
+  }
+}
+
 const LOG_FIELD_ORDER = [
   'host',
   'phase',
+  'proxy',
   'status',
   'ok',
   'reason',
+  'durationMs',
+  'timeoutMs',
   'icons',
   'count',
   'candidates',
@@ -56,6 +92,8 @@ const LOG_FIELD_ORDER = [
   'extension',
   'bytes',
   'source',
+  'errorCode',
+  'errorCause',
   'error'
 ];
 
@@ -110,8 +148,26 @@ function colorLogValue(value, color, enabled) {
   return `${color}${value}${LOG_COLORS.reset}`;
 }
 
+function getErrorLogDetails(error) {
+  const cause = error?.cause;
+  return {
+    errorCode: error?.code || cause?.code || cause?.name || '',
+    errorCause: cause?.message || '',
+    timeoutMs: error?.timeoutMs || '',
+    error: error?.message || String(error || '')
+  };
+}
+
+function getRequestFailureReason(error) {
+  return error?.code === 'FETCH_TIMEOUT' ? 'timeout' : 'connection-failed';
+}
+
+function getRequestFailureEvent(error) {
+  return error?.code === 'FETCH_TIMEOUT' ? 'request:timeout' : 'request:connect:fail';
+}
+
 function getLogEventColor(event) {
-  if (event.includes('error') || event.includes('invalid') || event.includes('fail')) return LOG_COLORS.red;
+  if (event.includes('error') || event.includes('invalid') || event.includes('fail') || event.includes('timeout')) return LOG_COLORS.red;
   if (event.includes('hit') || event.includes('accepted') || event.includes('success')) return LOG_COLORS.green;
   if (event.includes('miss') || event.includes('skip') || event.includes('empty') || event.includes('unsupported') || event.includes('fallback')) {
     return LOG_COLORS.yellow;
@@ -153,7 +209,7 @@ function getIconFetchOptions(config, requestOptions = {}, useProxy = false) {
   const { proxy, phase, ...fetchOptions } = requestOptions;
   return {
     ...fetchOptions,
-    timeoutMs: config.iconFetchTimeoutMs,
+    timeoutMs: getIconFetchTimeoutMs(config, useProxy),
     maxRedirects: config.iconMaxRedirects,
     allowPrivateNetwork: true,
     ...(useProxy && hasIconFetchProxy(config) ? { proxy: config.iconFetchProxy } : {})
@@ -165,25 +221,39 @@ async function safeFetchIconResource(config, resourceUrl, requestOptions, usePro
   const mode = getIconFetchMode(useProxy);
   const phase = requestOptions.phase || 'request';
   const fetchOptions = getIconFetchOptions(config, requestOptions, useProxy);
+  const proxy = formatProxyLogValue(getIconFetchProxyUrl(config, resourceUrl, useProxy));
+  const startedAt = Date.now();
 
-  logIconFetch(config, 'request:start', { phase, mode, url: resourceUrl }, deps);
+  logIconFetch(config, 'request:start', {
+    phase,
+    mode,
+    proxy,
+    timeoutMs: fetchOptions.timeoutMs,
+    url: resourceUrl
+  }, deps);
 
   try {
     const response = await fetchImpl(resourceUrl, fetchOptions);
-    logIconFetch(config, 'request:response', {
+    logIconFetch(config, response.ok ? 'request:response' : 'request:access:fail', {
       phase,
       mode,
+      proxy,
       status: response.status,
       ok: response.ok,
+      durationMs: Date.now() - startedAt,
+      ...(response.ok ? {} : { reason: 'access-failed' }),
       url: resourceUrl
     }, deps);
     return response;
   } catch (error) {
-    logIconFetch(config, 'request:error', {
+    logIconFetch(config, getRequestFailureEvent(error), {
       phase,
       mode,
+      proxy,
+      reason: getRequestFailureReason(error),
+      durationMs: Date.now() - startedAt,
       url: resourceUrl,
-      error: error.message
+      ...getErrorLogDetails(error)
     }, deps);
     throw error;
   }
@@ -257,6 +327,16 @@ function extractIconLinksFromHtml(html, pageUrl) {
   return candidates;
 }
 
+function getDefaultFaviconCandidate(parsedUrl, fetchMode) {
+  return {
+    url: `${parsedUrl.origin}/favicon.ico`,
+    rel: 'default icon',
+    sizes: '',
+    type: 'image/x-icon',
+    fetchMode
+  };
+}
+
 async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps = {}) {
   const mode = getIconFetchMode(useProxy);
   let response;
@@ -271,9 +351,9 @@ async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps 
   } catch (error) {
     logIconFetch(config, 'html:fetch:fail', {
       mode,
-      reason: 'request-error',
+      reason: getRequestFailureReason(error),
       url: parsedUrl.href,
-      error: error.message
+      ...getErrorLogDetails(error)
     }, deps);
     throw error;
   }
@@ -284,7 +364,7 @@ async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps 
       mode,
       status: response.status,
       contentType,
-      reason: 'http-status',
+      reason: 'access-failed',
       url: parsedUrl.href
     }, deps);
     return null;
@@ -316,19 +396,33 @@ async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps 
       mode,
       reason: 'read-error',
       url: parsedUrl.href,
-      error: error.message
+      ...getErrorLogDetails(error)
     }, deps);
     throw error;
   }
 
   const html = buffer.toString('utf8');
-  const iconCandidates = extractIconLinksFromHtml(html, parsedUrl.href);
-  logIconFetch(config, iconCandidates.length ? 'html:parse:success' : 'html:parse:fail', {
+  const htmlIconCandidates = extractIconLinksFromHtml(html, parsedUrl.href)
+    .map((candidate) => ({ ...candidate, fetchMode: mode }));
+  logIconFetch(config, htmlIconCandidates.length ? 'html:parse:success' : 'html:parse:fail', {
     mode,
-    icons: iconCandidates.length,
-    ...(iconCandidates.length ? {} : { reason: 'no-icon-link' }),
+    icons: htmlIconCandidates.length,
+    ...(htmlIconCandidates.length ? {} : { reason: 'no-icon-link' }),
     url: parsedUrl.href
   }, deps);
+
+  const iconCandidates = htmlIconCandidates.length
+    ? htmlIconCandidates
+    : [getDefaultFaviconCandidate(parsedUrl, mode)];
+
+  if (!htmlIconCandidates.length) {
+    logIconFetch(config, 'default:favicon', {
+      mode,
+      source: iconCandidates[0].url,
+      url: parsedUrl.href
+    }, deps);
+  }
+
   return {
     iconCandidates
   };
@@ -367,7 +461,7 @@ async function readIconCandidate(config, candidateUrl, useProxy = false, deps = 
   }, useProxy, deps);
 
   if (!response.ok) {
-    logIconFetch(config, 'icon:skip', { mode, status: response.status, url: candidateUrl }, deps);
+    logIconFetch(config, 'icon:skip', { mode, status: response.status, reason: 'access-failed', url: candidateUrl }, deps);
     return null;
   }
 
@@ -403,7 +497,23 @@ async function readIconCandidate(config, candidateUrl, useProxy = false, deps = 
   };
 }
 
-async function fetchIconCandidate(config, candidateUrl, deps = {}) {
+function getCandidateUrl(candidate) {
+  return typeof candidate === 'string' ? candidate : candidate?.url;
+}
+
+async function fetchIconCandidate(config, candidate, deps = {}) {
+  const candidateUrl = getCandidateUrl(candidate);
+  const preferredFetchMode = typeof candidate === 'string' ? '' : candidate?.fetchMode;
+  if (!candidateUrl) return null;
+
+  if (preferredFetchMode === 'direct') {
+    return readIconCandidate(config, candidateUrl, false, deps);
+  }
+
+  if (preferredFetchMode === 'proxy' && hasIconFetchProxy(config)) {
+    return readIconCandidate(config, candidateUrl, true, deps);
+  }
+
   let directError = null;
 
   try {
@@ -483,7 +593,7 @@ function getIconCandidateScore(candidate) {
   return score;
 }
 
-function uniqueIconCandidates(candidates, maxCandidates = 40) {
+function uniqueIconCandidateDetails(candidates, maxCandidates = 40) {
   const candidatesByUrl = new Map();
 
   candidates.forEach((candidate, index) => {
@@ -507,19 +617,28 @@ function uniqueIconCandidates(candidates, maxCandidates = 40) {
 
   return Array.from(candidatesByUrl.values())
     .sort((left, right) => (right.score - left.score) || (left.sourceOrder - right.sourceOrder))
-    .slice(0, maxCandidates)
+    .slice(0, maxCandidates);
+}
+
+function uniqueIconCandidates(candidates, maxCandidates = 40) {
+  return uniqueIconCandidateDetails(candidates, maxCandidates)
     .map((candidate) => candidate.url);
 }
 
-async function discoverIconCandidates(config, parsedUrl, deps = {}) {
+async function discoverIconCandidateDetails(config, parsedUrl, deps = {}) {
   const documentHints = await discoverDocumentIconHints(config, parsedUrl, deps);
-  const candidateUrls = uniqueIconCandidates(documentHints?.iconCandidates || [], config.iconMaxCandidates);
+  const candidates = uniqueIconCandidateDetails(documentHints?.iconCandidates || [], config.iconMaxCandidates);
   logIconFetch(config, 'candidates:ready', {
     host: parsedUrl.hostname,
-    count: candidateUrls.length,
+    count: candidates.length,
     url: parsedUrl.href
   }, deps);
-  return candidateUrls;
+  return candidates;
+}
+
+async function discoverIconCandidates(config, parsedUrl, deps = {}) {
+  return (await discoverIconCandidateDetails(config, parsedUrl, deps))
+    .map((candidate) => candidate.url);
 }
 
 async function resolveIconForUrl(config, targetUrl, deps = {}) {
@@ -531,11 +650,12 @@ async function resolveIconForUrl(config, targetUrl, deps = {}) {
 
   const parsedUrl = new URL(normalizedTargetUrl);
   logIconFetch(config, 'resolve:start', { url: normalizedTargetUrl }, deps);
-  const candidates = await discoverIconCandidates(config, parsedUrl, deps);
+  const candidates = await discoverIconCandidateDetails(config, parsedUrl, deps);
 
-  for (const candidateUrl of candidates) {
+  for (const candidate of candidates) {
+    const candidateUrl = candidate.url;
     try {
-      const icon = await fetchIconCandidate(config, candidateUrl, deps);
+      const icon = await fetchIconCandidate(config, candidate, deps);
       if (!icon) continue;
 
       logIconFetch(config, 'resolve:hit', {
@@ -548,7 +668,7 @@ async function resolveIconForUrl(config, targetUrl, deps = {}) {
       logIconFetch(config, 'resolve:candidate-error', {
         target: normalizedTargetUrl,
         source: candidateUrl,
-        error: error.message
+        ...getErrorLogDetails(error)
       }, deps);
       // Try the next candidate.
     }

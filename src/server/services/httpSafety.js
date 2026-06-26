@@ -1,7 +1,7 @@
 const dns = require('node:dns').promises;
 const net = require('node:net');
 
-const { ProxyAgent } = require('undici');
+const { fetch: undiciFetch, ProxyAgent } = require('undici');
 
 const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_PORTS = {
@@ -257,7 +257,15 @@ async function assertPublicHttpUrl(value, options = {}) {
 
 function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const timeoutMs = Number.parseInt(options.timeoutMs, 10) || 0;
+  let didTimeout = false;
+  const timeout = timeoutMs > 0
+    ? setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, timeoutMs)
+    : null;
+  const fetchImpl = options.fetch || undiciFetch;
   let fetchPromise;
 
   try {
@@ -274,15 +282,27 @@ function fetchWithTimeout(url, options = {}) {
     delete fetchOptions.lookup;
     delete fetchOptions.allowPrivateNetwork;
     delete fetchOptions.proxy;
-    fetchPromise = fetch(url, fetchOptions);
+    delete fetchOptions.fetch;
+    fetchPromise = fetchImpl(url, fetchOptions);
   } catch (error) {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
     throw error;
   }
 
-  return fetchPromise.finally(() => {
-    clearTimeout(timeout);
-  });
+  return fetchPromise
+    .catch((error) => {
+      if (didTimeout) {
+        const timeoutError = new Error('Request timed out');
+        timeoutError.code = 'FETCH_TIMEOUT';
+        timeoutError.timeoutMs = timeoutMs;
+        timeoutError.cause = error;
+        throw timeoutError;
+      }
+      throw error;
+    })
+    .finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
 }
 
 async function safeFetch(url, options = {}) {
