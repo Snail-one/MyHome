@@ -12,12 +12,8 @@ const {
   discoverIconCandidates,
   extractIconLinksFromHtml,
   fetchIconCandidate,
-  getConventionalIconCandidates,
-  getKnownHighResolutionIconCandidates,
-  getManifestIconCandidates,
   normalizeIconTargetUrl,
-  toHttpUrl,
-  uniqueIconCandidates
+  toHttpUrl
 } = require('../../src/server/services/iconFetcher');
 
 function makeIconConfig(overrides = {}) {
@@ -70,42 +66,10 @@ test('HTML relative favicon links resolve to absolute URLs', () => {
   ]);
 });
 
-test('manifest icon candidates resolve relative src values and reject unsafe URLs', () => {
-  const icons = getManifestIconCandidates({
-    icons: [
-      { src: '/icons/192.png', sizes: '192x192', type: 'image/png' },
-      { src: 'https://user:pass@example.com/icon.png', sizes: '512x512' },
-      { src: 'data:image/png;base64,abc', sizes: '32x32' }
-    ]
-  }, 'https://example.com/app/manifest.json');
-
-  assert.deepEqual(icons.map((icon) => icon.url), [
-    'https://example.com/icons/192.png'
-  ]);
-});
-
-test('SPA URL conventional candidates prioritize subpath favicon', () => {
-  const candidates = getConventionalIconCandidates(new URL('https://joker.dantapi.top/ui/'));
-
-  assert.equal(candidates[0], 'https://joker.dantapi.top/ui/favicon.svg');
-});
-
-test('known Google and X icon candidates are prioritized over conventional HTTPS favicons', () => {
-  let candidates = uniqueIconCandidates([
-    ...getKnownHighResolutionIconCandidates(new URL('https://www.google.com/search?q=test')),
-    ...getConventionalIconCandidates(new URL('https://www.google.com/search?q=test')).map((url) => ({ url }))
-  ]);
-  assert.equal(candidates[0], 'https://www.gstatic.com/images/branding/product/1x/googleg_32dp.png');
-
-  candidates = uniqueIconCandidates([
-    ...getKnownHighResolutionIconCandidates(new URL('https://x.com/')),
-    ...getConventionalIconCandidates(new URL('https://x.com/')).map((url) => ({ url }))
-  ]);
-  assert.equal(candidates[0], 'https://abs.twimg.com/favicons/twitter.3.ico');
-});
-
-test('discoverIconCandidates includes HTML and manifest candidates', async (t) => {
+test('discoverIconCandidates returns only icons declared in HTML', async (t) => {
+  const requestedUrls = [];
   const app = await startServer((req, res) => {
+    requestedUrls.push(req.url);
     if (req.url === '/app/page') {
       res.setHeader('content-type', 'text/html; charset=utf-8');
       res.end('<link rel="icon" href="favicon.svg"><link rel="manifest" href="/manifest.json">');
@@ -124,8 +88,49 @@ test('discoverIconCandidates includes HTML and manifest candidates', async (t) =
   t.after(app.close);
 
   const candidates = await discoverIconCandidates(makeIconConfig(), new URL(`${app.baseUrl}/app/page`));
-  assert.ok(candidates.includes(`${app.baseUrl}/app/favicon.svg`));
-  assert.ok(candidates.includes(`${app.baseUrl}/icons/manifest-192.png`));
+  assert.deepEqual(candidates, [`${app.baseUrl}/app/favicon.svg`]);
+  assert.deepEqual(requestedUrls, ['/app/page']);
+});
+
+test('discoverIconCandidates ranks only HTML-declared icons', async () => {
+  const html = [
+    '<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">',
+    '<link rel="apple-touch-icon" href="/apple-192.png" sizes="192x192" type="image/png">',
+    '<link rel="manifest" href="/manifest.json">'
+  ].join('');
+  const candidates = await discoverIconCandidates(
+    makeIconConfig({ iconMaxCandidates: 8 }),
+    new URL('https://x.com/'),
+    {
+      safeFetch: async (url) => {
+        if (url === 'https://x.com/') {
+          return new Response(html, {
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' }
+          });
+        }
+
+        if (url === 'https://x.com/manifest.json') {
+          return new Response(JSON.stringify({
+            icons: [{ src: '/manifest-512.png', sizes: '512x512', type: 'image/png' }]
+          }), {
+            status: 200,
+            headers: { 'content-type': 'application/manifest+json' }
+          });
+        }
+
+        return new Response('', {
+          status: 404,
+          headers: { 'content-type': 'text/plain' }
+        });
+      }
+    }
+  );
+
+  assert.deepEqual(candidates, [
+    'https://x.com/apple-192.png',
+    'https://x.com/favicon-32.png'
+  ]);
 });
 
 test('fetchIconCandidate accepts valid image magic and rejects forged image data', async (t) => {
@@ -245,8 +250,8 @@ test('icon fetcher logs only when enabled', async () => {
   });
   const icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
   assert.equal(icon.contentType, 'image/svg+xml');
-  assert.ok(logs.some((line) => line.includes('[icon-fetch] event=request:start') && line.includes('mode=direct')));
-  assert.ok(logs.some((line) => line.includes('event=icon:accepted')));
+  assert.ok(logs.some((line) => line.includes('[icon-fetch] request:start') && line.includes('mode=direct')));
+  assert.ok(logs.some((line) => line.includes('[icon-fetch] icon:accepted')));
 
   logs.length = 0;
   fetcher = createIconFetcher(makeIconConfig({ iconFetchLogEnabled: false }), {

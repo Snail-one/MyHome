@@ -43,22 +43,60 @@ function getIconFetchMode(useProxy) {
   return useProxy ? 'proxy' : 'direct';
 }
 
+const LOG_FIELD_ORDER = [
+  'target',
+  'host',
+  'phase',
+  'mode',
+  'status',
+  'ok',
+  'icons',
+  'count',
+  'candidates',
+  'contentType',
+  'extension',
+  'bytes',
+  'source',
+  'url',
+  'error'
+];
+
 function formatLogValue(value) {
-  return String(value ?? '')
+  const normalized = String(value ?? '')
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/\s+/g, ' ')
     .slice(0, 500);
+
+  return /[\s=|"]/.test(normalized) ? JSON.stringify(normalized) : normalized;
+}
+
+function getOrderedLogEntries(details) {
+  const seenFields = new Set();
+  const orderedEntries = [];
+
+  for (const key of LOG_FIELD_ORDER) {
+    if (Object.prototype.hasOwnProperty.call(details, key)) {
+      orderedEntries.push([key, details[key]]);
+      seenFields.add(key);
+    }
+  }
+
+  for (const entry of Object.entries(details)) {
+    if (!seenFields.has(entry[0])) orderedEntries.push(entry);
+  }
+
+  return orderedEntries;
 }
 
 function logIconFetch(config, event, details = {}, deps = {}) {
   if (!config?.iconFetchLogEnabled) return;
 
   const logger = deps.logger || console;
-  const fields = Object.entries(details)
+  const fields = getOrderedLogEntries(details)
     .filter(([, value]) => value !== undefined && value !== null && value !== '')
     .map(([key, value]) => `${key}=${formatLogValue(value)}`)
     .join(' ');
-  const line = `[icon-fetch] event=${event}${fields ? ` ${fields}` : ''}`;
+  const line = `[icon-fetch] ${event}${fields ? ` | ${fields}` : ''}`;
 
   if (typeof logger.log === 'function') {
     logger.log(line);
@@ -150,15 +188,6 @@ function getHtmlAttribute(tag, name) {
   return match ? (match[2] || match[3] || match[4] || '').trim() : '';
 }
 
-function getConventionalManifestCandidates(parsedUrl) {
-  return [
-    '/manifest.webmanifest',
-    '/site.webmanifest',
-    '/manifest.json',
-    '/webmanifest.json'
-  ].map((manifestPath) => `${parsedUrl.origin}${manifestPath}`);
-}
-
 function extractIconLinksFromHtml(html, pageUrl) {
   const candidates = [];
 
@@ -180,100 +209,6 @@ function extractIconLinksFromHtml(html, pageUrl) {
   }
 
   return candidates;
-}
-
-function extractManifestLinksFromHtml(html, pageUrl) {
-  const manifestUrls = [];
-
-  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
-    const tag = match[0];
-    const rel = getHtmlAttribute(tag, 'rel').toLowerCase();
-    const href = getHtmlAttribute(tag, 'href');
-    if (!rel || !href || !rel.split(/\s+/).includes('manifest')) continue;
-
-    const manifestUrl = toHttpUrl(href, pageUrl);
-    if (manifestUrl) manifestUrls.push(manifestUrl);
-  }
-
-  return manifestUrls;
-}
-
-function getManifestIconCandidates(manifest, manifestUrl) {
-  if (!manifest || !Array.isArray(manifest.icons)) return [];
-
-  return manifest.icons
-    .map((icon) => {
-      if (!icon || typeof icon.src !== 'string') return null;
-      const iconUrl = toHttpUrl(icon.src, manifestUrl);
-      if (!iconUrl) return null;
-
-      return {
-        url: iconUrl,
-        rel: 'manifest-icon',
-        sizes: typeof icon.sizes === 'string' ? icon.sizes : '',
-        type: typeof icon.type === 'string' ? icon.type : '',
-        purpose: typeof icon.purpose === 'string' ? icon.purpose : ''
-      };
-    })
-    .filter(Boolean);
-}
-
-async function readManifestIconCandidates(config, manifestUrl, useProxy = false, deps = {}) {
-  const mode = getIconFetchMode(useProxy);
-  const response = await safeFetchIconResource(config, manifestUrl, {
-    phase: 'manifest',
-    headers: {
-      Accept: 'application/manifest+json,application/json,*/*;q=0.8'
-    }
-  }, useProxy, deps);
-
-  if (!response.ok) {
-    logIconFetch(config, 'manifest:skip', { mode, status: response.status, url: manifestUrl }, deps);
-    return null;
-  }
-
-  const buffer = await readResponseBuffer(response, config.iconHtmlSampleSize, true);
-  if (!buffer.length) {
-    logIconFetch(config, 'manifest:empty', { mode, url: manifestUrl }, deps);
-    return null;
-  }
-
-  try {
-    const candidates = getManifestIconCandidates(JSON.parse(buffer.toString('utf8')), manifestUrl);
-    logIconFetch(config, 'manifest:candidates', {
-      mode,
-      count: candidates.length,
-      url: manifestUrl
-    }, deps);
-    return candidates;
-  } catch {
-    logIconFetch(config, 'manifest:invalid-json', { mode, url: manifestUrl }, deps);
-    return null;
-  }
-}
-
-async function fetchManifestIconCandidates(config, manifestUrl, deps = {}) {
-  let directCandidates = null;
-
-  try {
-    directCandidates = await readManifestIconCandidates(config, manifestUrl, false, deps);
-    if (directCandidates?.length) return directCandidates;
-  } catch {
-    directCandidates = null;
-  }
-
-  if (hasIconFetchProxy(config)) {
-    logIconFetch(config, 'manifest:proxy-fallback', { url: manifestUrl }, deps);
-    try {
-      const proxyCandidates = await readManifestIconCandidates(config, manifestUrl, true, deps);
-      if (proxyCandidates?.length) return proxyCandidates;
-    } catch {
-      // Ignore proxy manifest failures and fall back to direct/conventional candidates.
-    }
-  }
-
-  if (directCandidates) return directCandidates;
-  return [];
 }
 
 async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps = {}) {
@@ -298,16 +233,13 @@ async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps 
 
   const html = (await readResponseBuffer(response, config.iconHtmlSampleSize, true)).toString('utf8');
   const iconCandidates = extractIconLinksFromHtml(html, parsedUrl.href);
-  const manifestUrls = extractManifestLinksFromHtml(html, parsedUrl.href);
   logIconFetch(config, 'html:candidates', {
     mode,
     icons: iconCandidates.length,
-    manifests: manifestUrls.length,
     url: parsedUrl.href
   }, deps);
   return {
-    iconCandidates,
-    manifestUrls
+    iconCandidates
   };
 }
 
@@ -316,7 +248,7 @@ async function discoverDocumentIconHints(config, parsedUrl, deps = {}) {
 
   try {
     directHints = await fetchDocumentIconHints(config, parsedUrl, false, deps);
-    if (directHints?.iconCandidates?.length || directHints?.manifestUrls?.length) return directHints;
+    if (directHints?.iconCandidates?.length) return directHints;
   } catch {
     directHints = null;
   }
@@ -325,9 +257,9 @@ async function discoverDocumentIconHints(config, parsedUrl, deps = {}) {
     logIconFetch(config, 'html:proxy-fallback', { url: parsedUrl.href }, deps);
     try {
       const proxyHints = await fetchDocumentIconHints(config, parsedUrl, true, deps);
-      if (proxyHints?.iconCandidates?.length || proxyHints?.manifestUrls?.length) return proxyHints;
+      if (proxyHints?.iconCandidates?.length) return proxyHints;
     } catch {
-      // Conventional favicon paths below still cover most services.
+      // HTML icon hints are optional; callers can handle an empty candidate list.
     }
   }
 
@@ -433,7 +365,6 @@ function getIconCandidateScore(candidate) {
   const candidateUrl = typeof candidate === 'string' ? candidate : candidate.url;
   const rel = (candidate.rel || '').toLowerCase();
   const type = (candidate.type || '').toLowerCase();
-  const purpose = (candidate.purpose || '').toLowerCase();
   const sizes = Math.max(
     getLargestIconSizeFromText(candidate.sizes, { allowAny: true }),
     getIconSizeFromUrl(candidateUrl)
@@ -449,9 +380,7 @@ function getIconCandidateScore(candidate) {
   let score = Math.min(sizes, 512) * 10;
 
   if (pathname.endsWith('.svg') || type.includes('svg')) score += 10000;
-  if (rel.includes('known-icon')) score += 20000;
   if (rel.includes('apple-touch-icon') || pathname.includes('apple-touch-icon')) score += 1800;
-  if (rel.includes('manifest')) score += 200;
   if (pathname.includes('/favicon')) score += 1000;
   if (sizes >= 96) score += 1000;
   if (sizes >= 144) score += 700;
@@ -459,72 +388,8 @@ function getIconCandidateScore(candidate) {
   if (type.includes('png') || pathname.endsWith('.png')) score += 80;
   if (type.includes('webp') || pathname.endsWith('.webp')) score += 70;
   if (pathname.endsWith('.ico')) score += 30;
-  if (purpose.includes('maskable')) score -= 3500;
-  if (purpose.includes('monochrome')) score -= 8000;
 
   return score;
-}
-
-function getKnownHighResolutionIconCandidates(parsedUrl) {
-  const hostname = parsedUrl.hostname.toLowerCase();
-  if (hostname === 'google.com' || hostname.endsWith('.google.com')) {
-    return [
-      {
-        url: 'https://www.gstatic.com/images/branding/product/1x/googleg_32dp.png',
-        rel: 'known-icon',
-        sizes: '512x512',
-        type: 'image/png'
-      }
-    ];
-  }
-
-  if (hostname === 'x.com' || hostname.endsWith('.x.com') || hostname === 'twitter.com' || hostname.endsWith('.twitter.com')) {
-    return [
-      {
-        url: 'https://abs.twimg.com/favicons/twitter.3.ico',
-        rel: 'known-icon',
-        sizes: '128x128',
-        type: 'image/x-icon'
-      },
-      {
-        url: 'https://abs.twimg.com/responsive-web/client-web/icon-ios.b1fc727a.png',
-        rel: 'known-icon',
-        sizes: '192x192',
-        type: 'image/png'
-      }
-    ];
-  }
-
-  return [];
-}
-
-function getConventionalIconCandidates(parsedUrl) {
-  const rootIconPaths = [
-    '/android-chrome-192x192.png',
-    '/apple-touch-icon.png',
-    '/favicon.svg',
-    '/favicon-192x192.png',
-    '/favicon-32x32.png',
-    '/favicon.png',
-    '/favicon.ico'
-  ];
-  const nestedIconNames = ['favicon.svg', 'favicon.png', 'favicon.ico'];
-  const pathSegments = parsedUrl.pathname.split('/').filter(Boolean).slice(0, 1);
-  const pathPrefixes = [];
-  let currentPrefix = '';
-
-  for (const segment of pathSegments) {
-    currentPrefix += `/${segment}`;
-    pathPrefixes.unshift(currentPrefix);
-  }
-
-  const candidates = [];
-  pathPrefixes.forEach((prefix) => {
-    nestedIconNames.forEach((iconName) => candidates.push(`${parsedUrl.origin}${prefix}/${iconName}`));
-  });
-  rootIconPaths.forEach((iconPath) => candidates.push(`${parsedUrl.origin}${iconPath}`));
-
-  return candidates;
 }
 
 function uniqueIconCandidates(candidates, maxCandidates = 40) {
@@ -556,49 +421,14 @@ function uniqueIconCandidates(candidates, maxCandidates = 40) {
 }
 
 async function discoverIconCandidates(config, parsedUrl, deps = {}) {
-  const candidates = getKnownHighResolutionIconCandidates(parsedUrl);
-  if (candidates.length) {
-    logIconFetch(config, 'candidates:known-site', {
-      host: parsedUrl.hostname,
-      count: candidates.length,
-      url: parsedUrl.href
-    }, deps);
-    candidates.push(...getConventionalIconCandidates(parsedUrl).map((url) => ({ url })));
-    const uniqueCandidates = uniqueIconCandidates(candidates, config.iconMaxCandidates);
-    logIconFetch(config, 'candidates:ready', {
-      host: parsedUrl.hostname,
-      count: uniqueCandidates.length,
-      url: parsedUrl.href
-    }, deps);
-    return uniqueCandidates;
-  }
-
-  const manifestUrls = [];
   const documentHints = await discoverDocumentIconHints(config, parsedUrl, deps);
-  if (documentHints) {
-    candidates.push(...documentHints.iconCandidates);
-    manifestUrls.push(...documentHints.manifestUrls);
-  }
-
-  manifestUrls.push(...getConventionalManifestCandidates(parsedUrl));
-
-  for (const manifestUrl of [...new Set(manifestUrls)].slice(0, 3)) {
-    try {
-      const manifestIconCandidates = await fetchManifestIconCandidates(config, manifestUrl, deps);
-      candidates.push(...manifestIconCandidates);
-    } catch {
-      // Manifest icons are optional; conventional paths below are still valid.
-    }
-  }
-
-  candidates.push(...getConventionalIconCandidates(parsedUrl).map((url) => ({ url })));
-  const uniqueCandidates = uniqueIconCandidates(candidates, config.iconMaxCandidates);
+  const candidateUrls = uniqueIconCandidates(documentHints?.iconCandidates || [], config.iconMaxCandidates);
   logIconFetch(config, 'candidates:ready', {
     host: parsedUrl.hostname,
-    count: uniqueCandidates.length,
+    count: candidateUrls.length,
     url: parsedUrl.href
   }, deps);
-  return uniqueCandidates;
+  return candidateUrls;
 }
 
 async function resolveIconForUrl(config, targetUrl, deps = {}) {
@@ -654,13 +484,9 @@ module.exports = {
   createIconFetcher,
   discoverIconCandidates,
   extractIconLinksFromHtml,
-  extractManifestLinksFromHtml,
   fetchIconCandidate,
-  getConventionalIconCandidates,
   getIconCandidateScore,
-  getKnownHighResolutionIconCandidates,
   getLargestIconSizeFromText,
-  getManifestIconCandidates,
   normalizeIconTargetUrl,
   readResponseBuffer,
   resolveIconForUrl,

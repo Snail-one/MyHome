@@ -57,7 +57,7 @@ ICON_FETCH_LOG=false
 
 如果 Google、X 等站点无法直连，给服务端图标抓取配置代理。图标请求默认先直连，直连失败或拿不到可用图标时再使用代理。`ICON_FETCH_PROXY` 会同时用于 HTTP/HTTPS 图标请求；也兼容 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`。`ICON_FETCH_NO_PROXY` 或 `NO_PROXY` 可指定不走代理的地址，默认已绕过 localhost 和常见内网网段。Docker 部署时，代理地址必须是容器内可访问的地址。
 
-需要排查图标获取时，可设置 `ICON_FETCH_LOG=true`。服务端会向标准输出打印 `[icon-fetch]` 前缀的抓取日志，包含直连/代理、请求阶段、URL、HTTP 状态、候选数量和最终命中/失败结果。
+需要排查图标获取时，可设置 `ICON_FETCH_LOG=true`。服务端会向标准输出打印 `[icon-fetch] request:start | phase=html mode=direct url=https://example.com/` 这类抓取日志，包含直连/代理、请求阶段、URL、HTTP 状态、候选数量和最终命中/失败结果。
 
 4. 启动服务
 
