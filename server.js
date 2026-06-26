@@ -16,6 +16,10 @@ function main() {
     throw error;
   }
 
+  if (config.iconFetchLogEnabled) {
+    console.log('[icon-fetch] detailed logging enabled (set ICON_FETCH_LOG=false to disable)');
+  }
+
   const database = createDatabase(config);
   const app = createApp({
     config,

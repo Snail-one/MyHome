@@ -89,78 +89,6 @@ function formatProxyLogValue(proxyUrl) {
   }
 }
 
-const LOG_FIELD_ORDER = [
-  'host',
-  'phase',
-  'proxy',
-  'status',
-  'ok',
-  'reason',
-  'durationMs',
-  'timeoutMs',
-  'icons',
-  'count',
-  'candidates',
-  'contentType',
-  'extension',
-  'bytes',
-  'source',
-  'errorCode',
-  'errorCause',
-  'error'
-];
-
-const LOG_COLORS = {
-  reset: '\x1b[0m',
-  gray: '\x1b[90m',
-  cyan: '\x1b[36m',
-  blue: '\x1b[34m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m'
-};
-
-function formatLogValue(value) {
-  const normalized = String(value ?? '')
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .slice(0, 500);
-
-  return /[\s=|"]/.test(normalized) ? JSON.stringify(normalized) : normalized;
-}
-
-function getOrderedLogEntries(details) {
-  const seenFields = new Set();
-  const orderedEntries = [];
-
-  for (const key of LOG_FIELD_ORDER) {
-    if (Object.prototype.hasOwnProperty.call(details, key)) {
-      orderedEntries.push([key, details[key]]);
-      seenFields.add(key);
-    }
-  }
-
-  for (const entry of Object.entries(details)) {
-    if (!seenFields.has(entry[0])) orderedEntries.push(entry);
-  }
-
-  return orderedEntries;
-}
-
-function getLogSubject(details) {
-  return details.target || details.url || details.source || '';
-}
-
-function shouldColorIconFetchLog(logger, deps = {}) {
-  if (typeof deps.colorLogs === 'boolean') return deps.colorLogs;
-  return logger === console && Boolean(process.stdout?.isTTY) && !process.env.NO_COLOR;
-}
-
-function colorLogValue(value, color, enabled) {
-  if (!enabled || !color) return value;
-  return `${color}${value}${LOG_COLORS.reset}`;
-}
-
 function getErrorLogDetails(error) {
   const cause = error?.cause;
   return {
@@ -179,39 +107,88 @@ function getRequestFailureEvent(error) {
   return error?.code === 'FETCH_TIMEOUT' ? 'request:timeout' : 'request:connect:fail';
 }
 
-function getLogEventColor(event) {
-  if (event.includes('error') || event.includes('invalid') || event.includes('fail') || event.includes('timeout')) return LOG_COLORS.red;
-  if (event.includes('hit') || event.includes('accepted') || event.includes('success')) return LOG_COLORS.green;
-  if (event.includes('miss') || event.includes('skip') || event.includes('empty') || event.includes('unsupported') || event.includes('fallback')) {
-    return LOG_COLORS.yellow;
-  }
-  if (event.startsWith('request:')) return LOG_COLORS.blue;
-  return LOG_COLORS.gray;
+/**
+ * Enterprise-grade structured logging for icon fetching.
+ * When ICON_FETCH_LOG=true, emits single-line JSON suitable for log aggregation,
+ * search, and alerting (ELK, Loki, Datadog, CloudWatch, etc.).
+ * Fields are stable, timestamps are ISO8601, values are sanitized.
+ */
+function shouldUsePrettyIconLog(logger, deps = {}) {
+  if (typeof deps.colorLogs === 'boolean') return deps.colorLogs;
+  if (process.env.ICON_FETCH_LOG_FORMAT === 'json') return false;
+  if (process.env.ICON_FETCH_LOG_FORMAT === 'pretty') return true;
+  return logger === console && Boolean(process.stdout?.isTTY) && !process.env.NO_COLOR;
 }
 
 function logIconFetch(config, event, details = {}, deps = {}) {
   if (!config?.iconFetchLogEnabled) return;
 
   const logger = deps.logger || console;
-  const subject = getLogSubject(details);
-  const mode = details.mode || '-';
-  const colorEnabled = shouldColorIconFetchLog(logger, deps);
-  const fields = getOrderedLogEntries(details)
-    .filter(([key, value]) => (
-      key !== 'target' &&
-      key !== 'url' &&
-      key !== 'mode' &&
-      value !== undefined &&
-      value !== null &&
-      value !== ''
-    ))
-    .map(([key, value]) => `${key}=${formatLogValue(value)}`)
-    .join(' ');
-  const label = colorLogValue('[icon-fetch]', LOG_COLORS.gray, colorEnabled);
-  const subjectPrefix = subject ? `${colorLogValue(formatLogValue(subject), LOG_COLORS.cyan, colorEnabled)} | ` : '';
-  const modePart = colorLogValue(formatLogValue(mode), mode === 'proxy' ? LOG_COLORS.yellow : LOG_COLORS.blue, colorEnabled);
-  const eventName = colorLogValue(event, getLogEventColor(event), colorEnabled);
-  const line = `${label} ${subjectPrefix}${modePart} | ${eventName}${fields ? ` ${fields}` : ''}`;
+
+  const entry = {
+    time: new Date().toISOString(),
+    level: 'debug',
+    component: 'icon-fetch',
+    event
+  };
+
+  // Normalize primary identifiers
+  const primaryUrl = details.url || details.target || details.source || '';
+  if (primaryUrl) {
+    entry.url = String(primaryUrl);
+  }
+  if (details.host) entry.host = String(details.host);
+  if (details.mode) entry.mode = details.mode;
+  if (details.phase) entry.phase = details.phase;
+  if (details.proxy) entry.proxy = details.proxy;
+
+  // Well-known numeric / status fields
+  const knownFields = [
+    'status', 'ok', 'reason', 'durationMs', 'timeoutMs',
+    'icons', 'count', 'candidates', 'contentType', 'extension',
+    'bytes', 'source', 'errorCode', 'errorCause', 'error'
+  ];
+
+  for (const key of knownFields) {
+    const val = details[key];
+    if (val !== undefined && val !== null && val !== '') {
+      entry[key] = val;
+    }
+  }
+
+  // Any other non-internal fields (future proof)
+  for (const [key, val] of Object.entries(details)) {
+    if (
+      val !== undefined && val !== null && val !== '' &&
+      !entry.hasOwnProperty(key) &&
+      !['target', 'url', 'source', 'mode', 'host', 'phase', 'proxy'].includes(key)
+    ) {
+      // sanitize very long strings
+      entry[key] = (typeof val === 'string' && val.length > 400)
+        ? val.slice(0, 400) + '...'
+        : val;
+    }
+  }
+
+  const usePretty = shouldUsePrettyIconLog(logger, deps);
+
+  let line;
+  if (usePretty) {
+    // Human friendly for local terminal (still useful)
+    const host = entry.host || (entry.url ? (new URL(entry.url).hostname || entry.url) : '');
+    const modeStr = entry.mode || '-';
+    const extra = [];
+    if (entry.phase) extra.push(`phase=${entry.phase}`);
+    if (entry.status != null) extra.push(`status=${entry.status}`);
+    if (entry.reason) extra.push(`reason=${entry.reason}`);
+    if (entry.durationMs != null) extra.push(`durationMs=${entry.durationMs}`);
+    if (entry.proxy) extra.push(`proxy=${entry.proxy}`);
+    if (entry.errorCode) extra.push(`errorCode=${entry.errorCode}`);
+    line = `[icon-fetch] ${host} | ${modeStr} | ${event}${extra.length ? ' ' + extra.join(' ') : ''}`;
+  } else {
+    // Enterprise structured JSON (default for non-TTY, prod, or when FORMAT=json)
+    line = JSON.stringify(entry);
+  }
 
   if (typeof logger.log === 'function') {
     logger.log(line);

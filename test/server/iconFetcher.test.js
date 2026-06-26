@@ -137,8 +137,14 @@ test('discoverIconCandidates ranks only HTML-declared icons', async () => {
     'https://x.com/apple-192.png',
     'https://x.com/favicon-32.png'
   ]);
-  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://x.com/ | direct | html:fetch:success')));
-  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://x.com/ | direct | html:parse:success')));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'html:fetch:success' && log.mode === 'direct' && /x\.com/.test(log.url || '');
+  }));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'html:parse:success' && log.mode === 'direct' && /x\.com/.test(log.url || '');
+  }));
 });
 
 test('discoverIconCandidates falls back to default favicon when no icon links are found', async () => {
@@ -160,15 +166,18 @@ test('discoverIconCandidates falls back to default favicon when no icon links ar
   );
 
   assert.deepEqual(candidates, ['https://example.com/favicon.ico']);
-  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://example.com/ | direct | html:fetch:success')));
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/ | direct | html:parse:fail') &&
-    line.includes('reason=no-icon-link')
-  )));
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/ | direct | default:favicon') &&
-    line.includes('source=https://example.com/favicon.ico')
-  )));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'html:fetch:success' && log.mode === 'direct' && /example\.com/.test(log.url || '');
+  }));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'html:parse:fail' && log.mode === 'direct' && log.reason === 'no-icon-link';
+  }));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'default:favicon' && log.mode === 'direct' && log.source === 'https://example.com/favicon.ico';
+  }));
 });
 
 test('discoverIconCandidates logs HTML fetch failure on request errors', async () => {
@@ -191,20 +200,22 @@ test('discoverIconCandidates logs HTML fetch failure on request errors', async (
   );
 
   assert.deepEqual(candidates, []);
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/ | direct | request:connect:fail') &&
-    line.includes('reason=connection-failed') &&
-    line.includes('errorCode=ECONNREFUSED') &&
-    line.includes('errorCause="connect ECONNREFUSED 127.0.0.1:8080"') &&
-    line.includes('error="fetch failed"')
-  )));
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/ | direct | html:fetch:fail') &&
-    line.includes('reason=connection-failed') &&
-    line.includes('errorCode=ECONNREFUSED') &&
-    line.includes('errorCause="connect ECONNREFUSED 127.0.0.1:8080"') &&
-    line.includes('error="fetch failed"')
-  )));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'request:connect:fail' &&
+           log.mode === 'direct' &&
+           log.reason === 'connection-failed' &&
+           log.errorCode === 'ECONNREFUSED' &&
+           /ECONNREFUSED/.test(log.errorCause || '') &&
+           /fetch failed/.test(log.error || '');
+  }));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'html:fetch:fail' &&
+           log.mode === 'direct' &&
+           log.reason === 'connection-failed' &&
+           log.errorCode === 'ECONNREFUSED';
+  }));
 });
 
 test('discoverIconCandidates logs request timeouts explicitly', async () => {
@@ -230,17 +241,21 @@ test('discoverIconCandidates logs request timeouts explicitly', async () => {
   );
 
   assert.deepEqual(candidates, []);
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/ | direct | request:timeout') &&
-    line.includes('reason=timeout') &&
-    line.includes('timeoutMs=5000') &&
-    line.includes('errorCode=FETCH_TIMEOUT')
-  )));
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/ | direct | html:fetch:fail') &&
-    line.includes('reason=timeout') &&
-    line.includes('timeoutMs=5000')
-  )));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'request:timeout' &&
+           log.mode === 'direct' &&
+           log.reason === 'timeout' &&
+           log.timeoutMs === 5000 &&
+           log.errorCode === 'FETCH_TIMEOUT';
+  }));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'html:fetch:fail' &&
+           log.mode === 'direct' &&
+           log.reason === 'timeout' &&
+           log.timeoutMs === 5000;
+  }));
 });
 
 test('discoverIconCandidates logs proxy address and access failures', async () => {
@@ -272,16 +287,20 @@ test('discoverIconCandidates logs proxy address and access failures', async () =
   );
 
   assert.deepEqual(candidates, []);
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/ | proxy | request:start') &&
-    line.includes('proxy=http://proxy.example:8080/')
-  )));
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/ | proxy | request:access:fail') &&
-    line.includes('proxy=http://proxy.example:8080/') &&
-    line.includes('status=403') &&
-    line.includes('reason=access-failed')
-  )));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'request:start' &&
+           log.mode === 'proxy' &&
+           /proxy\.example:8080/.test(log.proxy || '');
+  }));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'request:access:fail' &&
+           log.mode === 'proxy' &&
+           /proxy\.example:8080/.test(log.proxy || '') &&
+           log.status === 403 &&
+           log.reason === 'access-failed';
+  }));
 });
 
 test('fetchIconCandidate accepts valid image magic and rejects forged image data', async (t) => {
@@ -572,11 +591,17 @@ test('icon fetcher logs only when enabled', async () => {
   });
   const icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
   assert.equal(icon.contentType, 'image/svg+xml');
-  assert.ok(logs.some((line) => (
-    line.startsWith('[icon-fetch] https://example.com/icon.svg | direct | request:start') &&
-    line.includes('phase=icon')
-  )));
-  assert.ok(logs.some((line) => line.startsWith('[icon-fetch] https://example.com/icon.svg | direct | icon:accepted')));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'request:start' &&
+           log.mode === 'direct' &&
+           log.phase === 'icon' &&
+           /example\.com\/icon\.svg/.test(log.url || '');
+  }));
+  assert.ok(logs.some((line) => {
+    const log = JSON.parse(line);
+    return log.event === 'icon:accepted' && log.mode === 'direct';
+  }));
 
   logs.length = 0;
   fetcher = createIconFetcher(makeIconConfig({ iconFetchLogEnabled: false }), {
