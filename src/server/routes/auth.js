@@ -5,7 +5,7 @@ const { sendLoginLockedResponse } = require('../services/loginLimiter');
 
 // Dummy hash to prevent timing side-channel user enumeration.
 // Always compared when user does not exist, so bcrypt runs in all cases.
-const DUMMY_HASH = '$2a$12$LOPTqknGmV8kIGHgMBkGPOOQmSwGkTSwCRJHBGQ8kXXXXXXXXXXXXXX';
+const DUMMY_HASH = '$2a$12$0A3hvgiidTsNjYRnlBrXMutNAw5tzOXVcpPOlu.FiY3Ee1kwthq/G';
 
 function createAuthRouter(deps) {
   const { auth, config, limiter, stores } = deps;
@@ -24,7 +24,10 @@ function createAuthRouter(deps) {
 
     const user = stores.users.findByUsername(username);
     const hashToCompare = user?.password_hash || DUMMY_HASH;
-    const passwordValid = user && bcrypt.compareSync(password, hashToCompare);
+    // Always run bcrypt.compareSync to prevent timing side-channel user enumeration.
+    // When user is null, DUMMY_HASH is used (will never match any real password).
+    const bcryptResult = bcrypt.compareSync(password, hashToCompare);
+    const passwordValid = user && bcryptResult;
 
     if (!passwordValid) {
       const failedState = limiter.recordFailure(attemptKey);

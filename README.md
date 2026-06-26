@@ -49,32 +49,37 @@ TRUST_PROXY=false
 LOGIN_MAX_FAILED_ATTEMPTS=5
 LOGIN_WINDOW_MS=900000
 LOGIN_LOCKOUT_MS=900000
+ICON_FETCH_TIMEOUT_MS=5000
+ICON_MAX_REDIRECTS=3
+ICON_MAX_CANDIDATES=40
 ICON_FETCH_LOG=false
 #ICON_FETCH_PROXY=http://127.0.0.1:7890
 ```
 
 `SESSION_SECRET` 可以不填；服务端会自动生成并复用 `data/session-secret`。如需使用外部密钥管理，可手动设置 `SESSION_SECRET` 或 `SESSION_SECRET_FILE`。
 
-如果 Google、X 等站点无法直连，给服务端图标抓取配置代理。图标请求默认先直连，直连失败或拿不到可用图标时再使用代理。**每个图标资源（即使来自 HTML 解析的 `<link>` 或 CDN）都会独立进行「直连优先 + 失败回退代理」尝试**，而非完全跟随发现 HTML 时的模式。解析图标时会先把网址归到主域名根路径，例如 `search.bilibili.com` 先尝试 `bilibili.com`；主域名失败后再尝试 `www.` 主域名。图标来源优先使用 HTML 里声明的 favicon；如果 HTML 没有声明图标，只兜底尝试同源 `/favicon.ico`，不会请求 manifest 或其他常规猜测路径。`ICON_FETCH_PROXY` 会同时用于 HTTP/HTTPS 图标请求；也兼容 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`。`ICON_FETCH_NO_PROXY` 或 `NO_PROXY` 可指定不走代理的地址，默认已绕过 localhost 和常见内网网段。Docker 部署时，代理地址必须是容器内可访问的地址。
+如果 Google、X 等站点无法直连，给服务端图标抓取配置代理。图标请求默认先直连，直连失败或拿不到可用图标时再使用代理。解析图标时会先把网址归到主域名根路径，例如 `search.bilibili.com` 先尝试 `bilibili.com`；主域名失败后再尝试 `www.` 主域名。图标来源优先使用 HTML 里声明的 favicon；如果 HTML 没有声明图标，只兜底尝试同源 `/favicon.ico`，不会请求 manifest 或其他常规猜测路径。`ICON_FETCH_PROXY` 会同时用于 HTTP/HTTPS 图标请求；也兼容 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`。`ICON_FETCH_NO_PROXY` 或 `NO_PROXY` 可指定不走代理的地址，默认已绕过 localhost 和常见内网网段。Docker 部署时，代理地址必须是容器内可访问的地址。
 
-需要排查图标获取时，可设置 `ICON_FETCH_LOG=true`。此时服务端会输出图标抓取的详细日志：
+需要排查图标获取时，可设置 `ICON_FETCH_LOG=true`。服务端会向标准输出打印 `[icon-fetch] https://example.com/ | direct | request:start phase=html` 这类抓取日志；第一段是目标网址，第二段是直连/代理，第三段是处理事件和参数。代理请求会显示 `proxy=...`。`request:connect:fail` 表示连接失败（代理/网络/DNS 等没有拿到响应），`request:timeout` 表示请求超过超时时间，`request:access:fail` 表示访问失败（拿到 HTTP 响应但状态不可用），并会尽量带上 `durationMs`、`timeoutMs`、`errorCode`、`errorCause`。HTML 页面获取会显示 `html:fetch:success/fail`，图标链接解析会显示 `html:parse:success/fail`。代理请求会至少等待 10 秒；如果需要更久，可调大 `ICON_FETCH_TIMEOUT_MS`。在支持颜色的终端中，URL、请求、成功、失败和回退状态会用不同颜色区分。
 
-- 在终端（TTY）下会显示较友好的单行格式，便于直接查看。
-- 非 TTY、管道输出、或设置 `ICON_FETCH_LOG_FORMAT=json` 时，输出**结构化 JSON**（企业标准，适合日志采集系统）。
+### 使用 Nginx 反向代理（推荐生产环境）
 
-示例（JSON 模式）：
-```json
-{"time":"2026-06-27T10:11:12.345Z","level":"debug","component":"icon-fetch","event":"request:start","url":"https://example.com/","mode":"direct","phase":"html","timeoutMs":5000}
-{"time":"...","event":"html:fetch:success","mode":"direct","status":200,"contentType":"text/html"}
-{"time":"...","event":"icon:proxy-fallback","mode":"proxy","proxy":"http://..."}
+项目根目录提供了通用 Nginx 配置模板：
+
+```bash
+cp nginx.conf.example /etc/nginx/sites-available/my-home.conf
+# 编辑后启用
+ln -s /etc/nginx/sites-available/my-home.conf /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
 ```
 
-关键字段：
-- `event`：阶段（request:start、html:fetch:success、icon:accepted、resolve:hit、request:connect:fail、request:timeout 等）
-- `mode`：direct / proxy
-- 其他：url、status、reason、durationMs、errorCode、proxy（已脱敏）等
-
-可用 `ICON_FETCH_LOG_FORMAT=pretty|json` 强制格式。推荐搭配 `jq` 使用。代理请求会至少等待 10 秒，可用 `ICON_FETCH_TIMEOUT_MS` 调整。
+**重要配置提醒**：
+- 反代后面必须在 `.env` 中设置：
+  ```env
+  TRUST_PROXY=true
+  SESSION_COOKIE_SECURE=true
+  ```
+- Nginx 配置中已正确传递 `X-Forwarded-For` 和 `X-Forwarded-Proto`，配合 `TRUST_PROXY=true` 可获得真实客户端 IP 和正确 HTTPS 状态。
 
 4. 启动服务
 
@@ -198,6 +203,7 @@ docker run -d \
 ├── test/
 ├── package.json
 ├── .env.example
+├── nginx.conf.example          # Nginx 反向代理通用模板
 └── data/                 # 运行时生成，已忽略，包含 SQLite、图标缓存和上传背景
 ```
 
@@ -210,3 +216,4 @@ docker run -d \
 - 登录防爆破默认规则：15 分钟内同一 IP + 用户名失败 5 次后锁定 15 分钟。
 - 生产环境请使用 HTTPS，设置强管理员密码，并把 `SESSION_COOKIE_SECURE` 设为 `true`。默认生成的 `data/session-secret` 需要随数据目录一起持久化。
 - 容器里如果要换端口，只改 `docker-compose.yml` 的端口映射和 `PORT` 环境变量即可。
+- 使用 Nginx 反代时，务必把 `TRUST_PROXY=true` 写入 `.env`。
