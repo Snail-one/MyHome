@@ -31,6 +31,9 @@ let draggedIndex = null;
 let draggedLinkType = 'website';
 let isDragging = false;
 let draggedWrapper = null;
+let draggedPreviousLinks = null;
+let dragOrderSaveInFlight = false;
+let dragOrderSaveCompleted = false;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let layoutResizeTimer = null;
@@ -832,6 +835,51 @@ function renderLinkCollection(linkType = 'website') {
     renderLinkCards(linkType);
 }
 
+function areLinkOrdersEqual(leftLinks, rightLinks) {
+    if (!Array.isArray(leftLinks) || !Array.isArray(rightLinks)) return false;
+    if (leftLinks.length !== rightLinks.length) return false;
+    return leftLinks.every((link, index) => link.id === rightLinks[index]?.id);
+}
+
+function getDomOrderedLinks(linkType = 'website') {
+    if (linkType === 'email') return null;
+
+    const container = getLinkContainer(linkType);
+    const links = getLinkCollection(linkType);
+    if (!container || !links.length) return null;
+
+    const wrappers = Array.from(container.querySelectorAll('.nav-card-wrapper[data-id]'));
+    if (wrappers.length !== links.length) return null;
+
+    const linkMap = new Map(links.map(link => [link.id, link]));
+    const nextLinks = [];
+    const seenIds = new Set();
+
+    for (const wrapper of wrappers) {
+        const id = parseInt(wrapper.dataset.id, 10);
+        if (!linkMap.has(id) || seenIds.has(id)) return null;
+        seenIds.add(id);
+        nextLinks.push(linkMap.get(id));
+    }
+
+    return nextLinks;
+}
+
+function setLinksStateFromResponse(data) {
+    if (
+        Array.isArray(data.links) &&
+        Array.isArray(data.emailLinks) &&
+        Array.isArray(data.projectLinks)
+    ) {
+        appState.links = data.links;
+        appState.emailLinks = data.emailLinks;
+        appState.projectLinks = data.projectLinks;
+        return true;
+    }
+
+    return false;
+}
+
 async function persistLinkOrder(linkType, links, previousLinks) {
     try {
         const data = await apiRequest('/api/links/reorder', {
@@ -839,20 +887,47 @@ async function persistLinkOrder(linkType, links, previousLinks) {
             body: { ids: links.map(link => link.id), type: linkType }
         });
 
-        if (
-            Array.isArray(data.links) &&
-            Array.isArray(data.emailLinks) &&
-            Array.isArray(data.projectLinks)
-        ) {
+        if (setLinksStateFromResponse(data)) {
             applyLinksResponse(data);
         } else {
             setLinkCollection(linkType, links);
             renderLinkCollection(linkType);
         }
+        return true;
     } catch (error) {
         setLinkCollection(linkType, previousLinks);
         renderLinkCollection(linkType);
         alert(error.message);
+        return false;
+    }
+}
+
+async function persistDraggedDomOrder(linkType, previousLinks) {
+    if (dragOrderSaveInFlight || dragOrderSaveCompleted) return false;
+
+    const nextLinks = getDomOrderedLinks(linkType);
+    if (!nextLinks || !previousLinks || areLinkOrdersEqual(nextLinks, previousLinks)) {
+        return false;
+    }
+
+    dragOrderSaveInFlight = true;
+    setLinkCollection(linkType, nextLinks);
+
+    try {
+        const data = await apiRequest('/api/links/reorder', {
+            method: 'PUT',
+            body: { ids: nextLinks.map(link => link.id), type: linkType }
+        });
+        setLinksStateFromResponse(data);
+        dragOrderSaveCompleted = true;
+        return true;
+    } catch (error) {
+        setLinkCollection(linkType, previousLinks);
+        renderLinkCollection(linkType);
+        alert(error.message);
+        return false;
+    } finally {
+        dragOrderSaveInFlight = false;
     }
 }
 
@@ -861,6 +936,9 @@ function handleDragStart(event) {
     draggedWrapper = this.closest ? this.closest('.nav-card-wrapper') : null;
     draggedIndex = parseInt(this.dataset.index, 10);
     draggedLinkType = this.dataset.linkType || 'website';
+    draggedPreviousLinks = [...getLinkCollection(draggedLinkType)];
+    dragOrderSaveInFlight = false;
+    dragOrderSaveCompleted = false;
     isDragging = true;
     this.style.transform = 'scale(0.95)';
     this.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.4)';
@@ -888,7 +966,7 @@ function handleDragStart(event) {
     }
 }
 
-function handleDragEnd() {
+async function handleDragEnd() {
     this.style.transform = '';
     this.style.boxShadow = '';
     this.style.opacity = '';
@@ -896,11 +974,22 @@ function handleDragEnd() {
     document.querySelectorAll('.nav-card, .email-link').forEach(card => {
         card.classList.remove('drag-over');
     });
-    draggedCard = null;
-    draggedIndex = null;
-    draggedLinkType = 'website';
-    draggedWrapper = null;
-    setTimeout(() => { isDragging = false; }, 100);
+
+    const linkType = draggedLinkType;
+    const previousLinks = draggedPreviousLinks;
+
+    try {
+        await persistDraggedDomOrder(linkType, previousLinks);
+    } finally {
+        draggedCard = null;
+        draggedIndex = null;
+        draggedLinkType = 'website';
+        draggedWrapper = null;
+        draggedPreviousLinks = null;
+        dragOrderSaveInFlight = false;
+        dragOrderSaveCompleted = false;
+        setTimeout(() => { isDragging = false; }, 100);
+    }
 }
 
 function handleDragOver(event) {
@@ -977,15 +1066,19 @@ async function handleDrop(event) {
             // update indices in place, no re-render to avoid "reloading" cards
             wrappers.forEach((w, i) => { w.dataset.index = i; });
             try {
+                dragOrderSaveInFlight = true;
                 await apiRequest('/api/links/reorder', {
                     method: 'PUT',
                     body: { ids: newLinks.map(link => link.id), type: linkType }
                 });
+                dragOrderSaveCompleted = true;
                 // success: DOM already updated, no re-render
             } catch (error) {
                 setLinkCollection(linkType, previousLinks);
                 renderLinkCollection(linkType); // rollback
                 alert(error.message);
+            } finally {
+                dragOrderSaveInFlight = false;
             }
             draggedWrapper = null;
             return;
@@ -1011,7 +1104,9 @@ async function handleDrop(event) {
             });
         });
     }
-    await persistLinkOrder(linkType, links, previousLinks);
+    dragOrderSaveInFlight = true;
+    dragOrderSaveCompleted = await persistLinkOrder(linkType, links, previousLinks);
+    dragOrderSaveInFlight = false;
     draggedWrapper = null;
 }
 
