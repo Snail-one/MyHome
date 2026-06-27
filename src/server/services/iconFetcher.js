@@ -1,3 +1,6 @@
+const dns = require('dns').promises;
+const net = require('net');
+
 const { safeFetch } = require('./httpSafety');
 const {
   getIconContentType,
@@ -107,6 +110,17 @@ function getRequestFailureEvent(error) {
   return error?.code === 'FETCH_TIMEOUT' ? 'request:timeout' : 'request:connect:fail';
 }
 
+function shouldLogDnsLookup(config, deps = {}) {
+  if (!config?.iconFetchLogEnabled) return false;
+  return Boolean(deps.dnsLookup || !deps.safeFetch);
+}
+
+function serializeDnsAddresses(addresses) {
+  return addresses
+    .filter((item) => item?.address)
+    .map((item) => `${item.address}${item.family ? `/IPv${item.family}` : ''}`);
+}
+
 /**
  * Enterprise-grade structured logging for icon fetching.
  * When ICON_FETCH_LOG=true, emits single-line JSON suitable for log aggregation,
@@ -184,6 +198,7 @@ function logIconFetch(config, event, details = {}, deps = {}) {
     if (entry.durationMs != null) extra.push(`durationMs=${entry.durationMs}`);
     if (entry.proxy) extra.push(`proxy=${entry.proxy}`);
     if (entry.errorCode) extra.push(`errorCode=${entry.errorCode}`);
+    if (entry.addresses) extra.push(`addresses=${Array.isArray(entry.addresses) ? entry.addresses.join(',') : entry.addresses}`);
     line = `[icon-fetch] ${host} | ${modeStr} | ${event}${extra.length ? ' ' + extra.join(' ') : ''}`;
   } else {
     // Enterprise structured JSON (default for non-TTY, prod, or when FORMAT=json)
@@ -192,6 +207,56 @@ function logIconFetch(config, event, details = {}, deps = {}) {
 
   if (typeof logger.log === 'function') {
     logger.log(line);
+  }
+}
+
+async function logDnsLookupForResource(config, resourceUrl, details = {}, deps = {}) {
+  if (!shouldLogDnsLookup(config, deps)) return;
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(resourceUrl);
+  } catch {
+    return;
+  }
+
+  const host = parsedUrl.hostname;
+  if (!host) return;
+
+  const startedAt = Date.now();
+  const literalFamily = net.isIP(host);
+  if (literalFamily) {
+    logIconFetch(config, 'dns:lookup', {
+      ...details,
+      host,
+      url: resourceUrl,
+      durationMs: 0,
+      addresses: [`${host}/IPv${literalFamily}`]
+    }, deps);
+    return;
+  }
+
+  const lookup = deps.dnsLookup || dns.lookup;
+  try {
+    const result = await lookup(host, { all: true, verbatim: true });
+    const records = Array.isArray(result) ? result : [result];
+    logIconFetch(config, 'dns:lookup', {
+      ...details,
+      host,
+      url: resourceUrl,
+      durationMs: Date.now() - startedAt,
+      count: records.length,
+      addresses: serializeDnsAddresses(records)
+    }, deps);
+  } catch (error) {
+    logIconFetch(config, 'dns:lookup:fail', {
+      ...details,
+      host,
+      url: resourceUrl,
+      reason: 'dns-failed',
+      durationMs: Date.now() - startedAt,
+      ...getErrorLogDetails(error)
+    }, deps);
   }
 }
 
@@ -213,6 +278,12 @@ async function safeFetchIconResource(config, resourceUrl, requestOptions, usePro
   const fetchOptions = getIconFetchOptions(config, requestOptions, useProxy);
   const proxy = formatProxyLogValue(getIconFetchProxyUrl(config, resourceUrl, useProxy));
   const startedAt = Date.now();
+
+  await logDnsLookupForResource(config, resourceUrl, {
+    phase,
+    mode,
+    proxy
+  }, deps);
 
   logIconFetch(config, 'request:start', {
     phase,

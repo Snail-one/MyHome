@@ -256,6 +256,44 @@ test('discoverIconCandidates logs request timeouts explicitly', async () => {
   }));
 });
 
+test('discoverIconCandidates logs DNS lookup addresses before requests', async () => {
+  const logs = [];
+  const candidates = await discoverIconCandidates(
+    makeIconConfig({ iconFetchLogEnabled: true }),
+    new URL('https://example.com/'),
+    {
+      logger: {
+        log(line) {
+          logs.push(line);
+        }
+      },
+      dnsLookup: async (host, options) => {
+        assert.equal(host, 'example.com');
+        assert.deepEqual(options, { all: true, verbatim: true });
+        return [
+          { address: '203.0.113.10', family: 4 },
+          { address: '2001:db8::10', family: 6 }
+        ];
+      },
+      safeFetch: async () => new Response('<link rel="icon" href="/favicon.svg">', {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' }
+      })
+    }
+  );
+
+  assert.deepEqual(candidates, ['https://example.com/favicon.svg']);
+  const dnsLogIndex = logs.findIndex((line) => JSON.parse(line).event === 'dns:lookup');
+  const requestStartIndex = logs.findIndex((line) => JSON.parse(line).event === 'request:start');
+  assert.ok(dnsLogIndex >= 0);
+  assert.ok(requestStartIndex > dnsLogIndex);
+
+  const dnsLog = JSON.parse(logs[dnsLogIndex]);
+  assert.equal(dnsLog.host, 'example.com');
+  assert.equal(dnsLog.count, 2);
+  assert.deepEqual(dnsLog.addresses, ['203.0.113.10/IPv4', '2001:db8::10/IPv6']);
+});
+
 test('discoverIconCandidates logs proxy address and access failures', async () => {
   const logs = [];
   const candidates = await discoverIconCandidates(
