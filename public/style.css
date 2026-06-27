@@ -1424,15 +1424,40 @@ body::before {
     background: rgba(255, 255, 255, 0.16);
 }
 
-/* 拖拽时的样式（拖拽反馈优先显示毛玻璃提升效果） */
-.nav-card.drag-over,
-.email-link.drag-over {
-    transform: translateY(-4px) scale(1.02);
-    border-color: rgba(255, 255, 255, 0.4) !important;
+body.edit-mode-active .nav-card[draggable="true"],
+body.edit-mode-active .email-link[draggable="true"] {
+    cursor: grab !important;
+}
+
+body.link-dragging {
+    user-select: none;
+}
+
+body.link-dragging .nav-card,
+body.link-dragging .email-link {
+    cursor: grabbing !important;
+}
+
+.navigation-links.drag-sorting .nav-card-wrapper,
+.email-links-panel.drag-sorting .email-link-wrapper {
+    will-change: transform;
+    transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.nav-card-wrapper.dragging,
+.email-link-wrapper.dragging {
+    opacity: 0.48;
+    transform: scale(0.98);
+    z-index: 20;
+}
+
+.nav-card-wrapper.dragging .nav-card,
+.email-link-wrapper.dragging .email-link {
+    border-color: rgba(255, 255, 255, 0.42) !important;
     background: var(--glass-bg-card) !important;
     backdrop-filter: blur(16px) !important;
     -webkit-backdrop-filter: blur(16px) !important;
-    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
 }
 
 /* 拖拽中禁用入场动画，防止图标跳动 */

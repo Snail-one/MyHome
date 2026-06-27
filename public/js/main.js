@@ -27,13 +27,13 @@ let bookmarkLinkSize = 'medium';
 let bookmarkGlass = true;
 let editMode = false;
 let draggedCard = null;
-let draggedIndex = null;
 let draggedLinkType = 'website';
 let isDragging = false;
 let draggedWrapper = null;
 let draggedPreviousLinks = null;
-let dragOrderSaveInFlight = false;
-let dragOrderSaveCompleted = false;
+let dragReorderFrame = null;
+let dragPointerX = 0;
+let dragPointerY = 0;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let layoutResizeTimer = null;
@@ -624,6 +624,8 @@ function createEmailLinkElement(link, index, total) {
     const isRequired = REQUIRED_EMAIL_LINK_KEYS.has(link.linkKey);
     wrapper.className = 'email-link-wrapper';
     wrapper.dataset.index = index;
+    wrapper.dataset.linkType = 'email';
+    wrapper.dataset.id = link.id;
     wrapper.innerHTML = `
         <a href="${escapeAttribute(getEffectiveEmailUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" data-link-type="email" draggable="${editMode ? 'true' : 'false'}" title="${escapeAttribute(link.title || '邮箱登录')}">
             ${getMailIconSvg()}
@@ -643,10 +645,6 @@ function createEmailLinkElement(link, index, total) {
     if (emailLink && editMode) {
         emailLink.addEventListener('dragstart', handleDragStart);
         emailLink.addEventListener('dragend', handleDragEnd);
-        emailLink.addEventListener('dragover', handleDragOver);
-        emailLink.addEventListener('drop', handleDrop);
-        emailLink.addEventListener('dragenter', handleDragEnter);
-        emailLink.addEventListener('dragleave', handleDragLeave);
     }
 
     return wrapper;
@@ -699,7 +697,7 @@ function createNavCardElement(link, index, options = {}) {
     card.dataset.id = link.id;
 
     card.innerHTML = `
-        <a href="${href}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" data-link-type="${linkType}" draggable="true">
+        <a href="${href}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" data-link-type="${linkType}" draggable="${editMode ? 'true' : 'false'}">
             <div class="nav-icon${iconDescriptor?.mode === 'none' ? ' nav-icon-empty' : ''}">
                 ${iconDescriptor?.mode === 'none'
                     ? ''
@@ -723,12 +721,10 @@ function createNavCardElement(link, index, options = {}) {
     }
 
     const navCard = card.querySelector('.nav-card');
-    navCard.addEventListener('dragstart', handleDragStart);
-    navCard.addEventListener('dragend', handleDragEnd);
-    navCard.addEventListener('dragover', handleDragOver);
-    navCard.addEventListener('drop', handleDrop);
-    navCard.addEventListener('dragenter', handleDragEnter);
-    navCard.addEventListener('dragleave', handleDragLeave);
+    if (editMode) {
+        navCard.addEventListener('dragstart', handleDragStart);
+        navCard.addEventListener('dragend', handleDragEnd);
+    }
 
     navCard.addEventListener('mouseenter', function() {
         this.classList.remove('hover-ripple');
@@ -841,14 +837,30 @@ function areLinkOrdersEqual(leftLinks, rightLinks) {
     return leftLinks.every((link, index) => link.id === rightLinks[index]?.id);
 }
 
-function getDomOrderedLinks(linkType = 'website') {
-    if (linkType === 'email') return null;
+function getSortableWrapperSelector(linkType = 'website') {
+    return linkType === 'email'
+        ? '.email-link-wrapper[data-id]'
+        : '.nav-card-wrapper[data-id]';
+}
 
+function getSortableWrappers(linkType = 'website') {
     const container = getLinkContainer(linkType);
-    const links = getLinkCollection(linkType);
-    if (!container || !links.length) return null;
+    if (!container) return [];
+    return Array.from(container.querySelectorAll(getSortableWrapperSelector(linkType)));
+}
 
-    const wrappers = Array.from(container.querySelectorAll('.nav-card-wrapper[data-id]'));
+function getDragAppendReference(linkType = 'website') {
+    const container = getLinkContainer(linkType);
+    if (!container) return null;
+    if (linkType === 'email') return container.querySelector('.email-add-link');
+    return container.querySelector('.nav-add-wrapper') || getLinkEmptyState(linkType);
+}
+
+function getDomOrderedLinks(linkType = 'website') {
+    const links = getLinkCollection(linkType);
+    if (!links.length) return null;
+
+    const wrappers = getSortableWrappers(linkType);
     if (wrappers.length !== links.length) return null;
 
     const linkMap = new Map(links.map(link => [link.id, link]));
@@ -863,6 +875,15 @@ function getDomOrderedLinks(linkType = 'website') {
     }
 
     return nextLinks;
+}
+
+function updateSortableIndices(linkType = 'website') {
+    getSortableWrappers(linkType).forEach((wrapper, index) => {
+        wrapper.dataset.index = index;
+        wrapper.querySelectorAll('[data-index]').forEach(element => {
+            element.dataset.index = index;
+        });
+    });
 }
 
 function setLinksStateFromResponse(data) {
@@ -880,7 +901,9 @@ function setLinksStateFromResponse(data) {
     return false;
 }
 
-async function persistLinkOrder(linkType, links, previousLinks) {
+async function persistLinkOrder(linkType, links, previousLinks, options = {}) {
+    const { renderOnSuccess = true } = options;
+
     try {
         const data = await apiRequest('/api/links/reorder', {
             method: 'PUT',
@@ -888,10 +911,10 @@ async function persistLinkOrder(linkType, links, previousLinks) {
         });
 
         if (setLinksStateFromResponse(data)) {
-            applyLinksResponse(data);
+            if (renderOnSuccess) applyLinksResponse(data);
         } else {
             setLinkCollection(linkType, links);
-            renderLinkCollection(linkType);
+            if (renderOnSuccess) renderLinkCollection(linkType);
         }
         return true;
     } catch (error) {
@@ -902,52 +925,148 @@ async function persistLinkOrder(linkType, links, previousLinks) {
     }
 }
 
-async function persistDraggedDomOrder(linkType, previousLinks) {
-    if (dragOrderSaveInFlight || dragOrderSaveCompleted) return false;
-
+async function commitDraggedOrder(linkType, previousLinks) {
     const nextLinks = getDomOrderedLinks(linkType);
     if (!nextLinks || !previousLinks || areLinkOrdersEqual(nextLinks, previousLinks)) {
         return false;
     }
 
-    dragOrderSaveInFlight = true;
     setLinkCollection(linkType, nextLinks);
+    updateSortableIndices(linkType);
 
-    try {
-        const data = await apiRequest('/api/links/reorder', {
-            method: 'PUT',
-            body: { ids: nextLinks.map(link => link.id), type: linkType }
-        });
-        setLinksStateFromResponse(data);
-        dragOrderSaveCompleted = true;
-        return true;
-    } catch (error) {
-        setLinkCollection(linkType, previousLinks);
-        renderLinkCollection(linkType);
-        alert(error.message);
-        return false;
-    } finally {
-        dragOrderSaveInFlight = false;
+    return persistLinkOrder(linkType, nextLinks, previousLinks, { renderOnSuccess: false });
+}
+
+function getDragInsertionReference(linkType, pointerX, pointerY) {
+    const wrappers = getSortableWrappers(linkType)
+        .filter(wrapper => wrapper !== draggedWrapper);
+
+    if (!wrappers.length) return getDragAppendReference(linkType);
+
+    const items = wrappers.map(wrapper => ({
+        wrapper,
+        rect: wrapper.getBoundingClientRect()
+    })).filter(item => item.rect.width > 0 && item.rect.height > 0);
+
+    if (!items.length) return getDragAppendReference(linkType);
+
+    const rowThreshold = Math.max(8, Math.min(...items.map(item => item.rect.height)) / 2);
+    const topEdge = Math.min(...items.map(item => item.rect.top));
+    const bottomEdge = Math.max(...items.map(item => item.rect.bottom));
+
+    if (pointerY < topEdge) return items[0].wrapper;
+    if (pointerY > bottomEdge) return getDragAppendReference(linkType);
+
+    const rows = [];
+
+    items.forEach((item) => {
+        const centerY = item.rect.top + item.rect.height / 2;
+        let row = rows.find(candidate => Math.abs(candidate.centerY - centerY) <= rowThreshold);
+        if (!row) {
+            row = { centerY, items: [] };
+            rows.push(row);
+        }
+        row.items.push(item);
+        row.centerY = row.items.reduce((sum, rowItem) => (
+            sum + rowItem.rect.top + rowItem.rect.height / 2
+        ), 0) / row.items.length;
+    });
+
+    rows.sort((left, right) => left.centerY - right.centerY);
+    rows.forEach(row => {
+        row.items.sort((left, right) => left.rect.left - right.rect.left);
+    });
+
+    const targetRow = rows.reduce((closest, row) => {
+        if (!closest) return row;
+        return Math.abs(row.centerY - pointerY) < Math.abs(closest.centerY - pointerY)
+            ? row
+            : closest;
+    }, null);
+
+    if (!targetRow) return getDragAppendReference(linkType);
+
+    const beforeItem = targetRow.items.find(item => {
+        const centerX = item.rect.left + item.rect.width / 2;
+        return pointerX < centerX;
+    });
+
+    if (beforeItem) return beforeItem.wrapper;
+
+    const lastInRow = targetRow.items[targetRow.items.length - 1]?.wrapper;
+    const lastIndex = wrappers.indexOf(lastInRow);
+    return wrappers[lastIndex + 1] || getDragAppendReference(linkType);
+}
+
+function reorderDraggedWrapperAtPointer() {
+    dragReorderFrame = null;
+
+    if (!draggedWrapper || !draggedCard) return;
+    const container = getLinkContainer(draggedLinkType);
+    if (!container) return;
+
+    const reference = getDragInsertionReference(draggedLinkType, dragPointerX, dragPointerY);
+    if (reference === draggedWrapper) return;
+    if (reference && reference.previousElementSibling === draggedWrapper) return;
+
+    container.insertBefore(draggedWrapper, reference || getDragAppendReference(draggedLinkType));
+    updateSortableIndices(draggedLinkType);
+}
+
+function scheduleDraggedWrapperReorder(event) {
+    dragPointerX = event.clientX;
+    dragPointerY = event.clientY;
+
+    if (dragReorderFrame) return;
+    dragReorderFrame = requestAnimationFrame(reorderDraggedWrapperAtPointer);
+}
+
+function flushDraggedWrapperReorder() {
+    if (dragReorderFrame) {
+        cancelAnimationFrame(dragReorderFrame);
+        dragReorderFrame = null;
+        reorderDraggedWrapperAtPointer();
     }
 }
 
+function clearDragUi() {
+    flushDraggedWrapperReorder();
+
+    draggedCard?.classList.remove('dragging');
+    draggedWrapper?.classList.remove('dragging');
+    document.body.classList.remove('link-dragging');
+    document.querySelectorAll('.drag-sorting').forEach(element => {
+        element.classList.remove('drag-sorting');
+    });
+}
+
 function handleDragStart(event) {
+    if (!editMode) {
+        event.preventDefault();
+        return;
+    }
+
     draggedCard = this;
     draggedWrapper = this.closest ? this.closest('.nav-card-wrapper') : null;
-    draggedIndex = parseInt(this.dataset.index, 10);
+    if (!draggedWrapper && this.closest) {
+        draggedWrapper = this.closest('.email-link-wrapper');
+    }
+    if (!draggedWrapper) {
+        event.preventDefault();
+        return;
+    }
+
     draggedLinkType = this.dataset.linkType || 'website';
     draggedPreviousLinks = [...getLinkCollection(draggedLinkType)];
-    dragOrderSaveInFlight = false;
-    dragOrderSaveCompleted = false;
     isDragging = true;
-    this.style.transform = 'scale(0.95)';
-    this.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.4)';
-    this.style.opacity = '0.9';
-    // No cursor change even during drag - always default mouse
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', draggedIndex);
+    document.body.classList.add('link-dragging');
+    draggedCard?.classList.add('dragging');
+    draggedWrapper?.classList.add('dragging');
+    getLinkContainer(draggedLinkType)?.classList.add('drag-sorting');
 
-    // Use a visual clone for better free-move feedback
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(this.dataset.index || ''));
+
     try {
         const dragImage = this.cloneNode(true);
         dragImage.style.width = this.offsetWidth + 'px';
@@ -967,147 +1086,44 @@ function handleDragStart(event) {
 }
 
 async function handleDragEnd() {
-    this.style.transform = '';
-    this.style.boxShadow = '';
-    this.style.opacity = '';
-    // No cursor reset needed since we never change it
-    document.querySelectorAll('.nav-card, .email-link').forEach(card => {
-        card.classList.remove('drag-over');
-    });
-
     const linkType = draggedLinkType;
     const previousLinks = draggedPreviousLinks;
 
-    try {
-        await persistDraggedDomOrder(linkType, previousLinks);
-    } finally {
-        draggedCard = null;
-        draggedIndex = null;
-        draggedLinkType = 'website';
-        draggedWrapper = null;
-        draggedPreviousLinks = null;
-        dragOrderSaveInFlight = false;
-        dragOrderSaveCompleted = false;
-        setTimeout(() => { isDragging = false; }, 100);
-    }
+    clearDragUi();
+    draggedCard = null;
+    draggedLinkType = 'website';
+    draggedWrapper = null;
+    draggedPreviousLinks = null;
+    setTimeout(() => { isDragging = false; }, 100);
+
+    await commitDraggedOrder(linkType, previousLinks);
 }
 
-function handleDragOver(event) {
+function handleLinkContainerDragOver(event, linkType) {
+    if (!draggedWrapper || linkType !== draggedLinkType) return;
+
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+    scheduleDraggedWrapperReorder(event);
 }
 
-function handleDragEnter(event) {
+function handleLinkContainerDrop(event, linkType) {
+    if (!draggedWrapper || linkType !== draggedLinkType) return;
+
     event.preventDefault();
-    if (this !== draggedCard) this.classList.add('drag-over');
-
-    // Live reorder in DOM for real-time position feedback (normal mode)
-    const linkType = this.dataset.linkType || 'website';
-    const dragType = draggedLinkType || 'website';
-    if (linkType !== dragType || linkType === 'email' || !draggedWrapper) return;
-
-    const targetWrapper = this.closest('.nav-card-wrapper');
-    if (targetWrapper && draggedWrapper !== targetWrapper && targetWrapper.parentNode) {
-        const parent = targetWrapper.parentNode;
-        const rect = targetWrapper.getBoundingClientRect();
-        // Decide before/after based on mouse position (horizontal grid assumption)
-        const before = event.clientX < rect.left + rect.width / 2;
-        if (before) {
-            parent.insertBefore(draggedWrapper, targetWrapper);
-        } else {
-            parent.insertBefore(draggedWrapper, targetWrapper.nextSibling);
-        }
+    dragPointerX = event.clientX;
+    dragPointerY = event.clientY;
+    if (dragReorderFrame) {
+        flushDraggedWrapperReorder();
+    } else {
+        reorderDraggedWrapperAtPointer();
     }
 }
 
-function handleDragLeave() {
-    this.classList.remove('drag-over');
-}
-
-async function handleDrop(event) {
-    event.preventDefault();
-
-    document.querySelectorAll('.nav-card, .email-link').forEach(card => {
-        card.classList.remove('drag-over');
-    });
-
-    if (draggedCard) {
-        draggedCard.style.transform = '';
-        draggedCard.style.boxShadow = '';
-        draggedCard.style.opacity = '';
-        // No cursor reset needed
-    }
-
-    if (this === draggedCard) return;
-
-    const linkType = this.dataset.linkType || 'website';
-    if (linkType !== draggedLinkType) return;
-
-    const container = getLinkContainer(linkType);
+function bindLinkDragContainer(container, linkType = 'website') {
     if (!container) return;
-
-    const links = getLinkCollection(linkType);
-    const previousLinks = [...links];
-
-    // Rebuild order from current DOM (after live inserts during drag)
-    const wrappers = Array.from(container.querySelectorAll('.nav-card-wrapper'));
-    if (wrappers.length > 0 && linkType !== 'email') {
-        const linkMap = new Map(links.map(l => [l.id, l]));
-        const newLinks = [];
-        wrappers.forEach(w => {
-            const id = parseInt(w.dataset.id, 10);
-            if (linkMap.has(id)) {
-                newLinks.push(linkMap.get(id));
-            }
-        });
-
-        if (newLinks.length === links.length) {
-            setLinkCollection(linkType, newLinks);
-            // update indices in place, no re-render to avoid "reloading" cards
-            wrappers.forEach((w, i) => { w.dataset.index = i; });
-            try {
-                dragOrderSaveInFlight = true;
-                await apiRequest('/api/links/reorder', {
-                    method: 'PUT',
-                    body: { ids: newLinks.map(link => link.id), type: linkType }
-                });
-                dragOrderSaveCompleted = true;
-                // success: DOM already updated, no re-render
-            } catch (error) {
-                setLinkCollection(linkType, previousLinks);
-                renderLinkCollection(linkType); // rollback
-                alert(error.message);
-            } finally {
-                dragOrderSaveInFlight = false;
-            }
-            draggedWrapper = null;
-            return;
-        }
-    }
-
-    // Fallback for email or if DOM rebuild failed: use original index logic
-    const dropIndex = parseInt(this.dataset.index, 10);
-    if (draggedIndex === null || dropIndex === draggedIndex) return;
-
-    const [draggedItem] = links.splice(draggedIndex, 1);
-    links.splice(dropIndex, 0, draggedItem);
-    setLinkCollection(linkType, links);
-
-    if (container) {
-        container.style.transition = 'none';
-    }
-    renderLinkCollection(linkType);
-    if (container) {
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                container.style.transition = '';
-            });
-        });
-    }
-    dragOrderSaveInFlight = true;
-    dragOrderSaveCompleted = await persistLinkOrder(linkType, links, previousLinks);
-    dragOrderSaveInFlight = false;
-    draggedWrapper = null;
+    container.addEventListener('dragover', event => handleLinkContainerDragOver(event, linkType));
+    container.addEventListener('drop', event => handleLinkContainerDrop(event, linkType));
 }
 
 function escapeHtml(text) {
@@ -1878,6 +1894,7 @@ function bindMenuManagement() {
     const accountForm = document.getElementById('account-form');
     const emailLinksContainer = document.getElementById('email-links-container');
     const projectLinksContainer = document.getElementById('project-links-container');
+    const navLinksContainer = document.getElementById('nav-links-container');
     const searchEngineForm = document.getElementById('search-engine-form');
     const searchEngineList = document.getElementById('search-engine-list');
     const layoutButtons = document.getElementById('layout-buttons');
@@ -1892,6 +1909,9 @@ function bindMenuManagement() {
     cancelBtn.addEventListener('click', closeLinkModal);
     if (searchEngineCancelBtn) searchEngineCancelBtn.addEventListener('click', resetSearchEngineForm);
     if (accountForm) accountForm.addEventListener('submit', submitAccountForm);
+    bindLinkDragContainer(emailLinksContainer, 'email');
+    bindLinkDragContainer(projectLinksContainer, 'project');
+    bindLinkDragContainer(navLinksContainer, 'website');
 
     if (emailLinksContainer) {
         emailLinksContainer.addEventListener('click', (event) => {
@@ -2072,7 +2092,7 @@ function bindMenuManagement() {
         }
     });
 
-    document.getElementById('nav-links-container').addEventListener('click', (event) => {
+    navLinksContainer?.addEventListener('click', (event) => {
         const addBtn = event.target.closest('.nav-add-card');
         const deleteBtn = event.target.closest('.nav-card-delete');
         const navCard = event.target.closest('.nav-card:not(.nav-add-card)');
