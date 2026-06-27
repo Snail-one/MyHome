@@ -211,7 +211,7 @@ body::before {
     z-index: 1;
 }
 
-/* ==================== 角落控制（邮箱 + 退出 + 管理菜单 + 背景） ==================== */
+/* ==================== 角落控制（邮箱 + 账户 + 管理菜单 + 背景） ==================== */
 .corner-controls {
     position: fixed;
     z-index: 100;
@@ -232,7 +232,7 @@ body::before {
     flex-direction: row-reverse;
 }
 
-.corner-logout {
+.corner-account {
     left: 0;
     bottom: 0;
 }
@@ -709,6 +709,17 @@ body::before {
     color: #86efac;
 }
 
+.account-current {
+    margin: 0 0 16px;
+    color: var(--text-tertiary);
+    font-size: 13px;
+}
+
+.account-current span {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
 .form-actions {
     display: flex;
     gap: 12px;
@@ -816,13 +827,15 @@ body::before {
 
 /* ==================== 布局设置 ==================== */
 .account-settings-section,
-.layout-settings-section {
+.layout-settings-section,
+.account-control-section {
     margin-top: 32px;
     padding-top: 24px;
     border-top: 1px solid var(--glass-border);
 }
 
 .account-settings-section h3,
+.account-control-section h3,
 .layout-settings-section h3,
 .icon-cache-section h3,
 .search-engine-settings-section h3 {
@@ -830,6 +843,10 @@ body::before {
     font-weight: 600;
     color: var(--text-secondary);
     margin-bottom: 16px;
+}
+
+.account-control-actions {
+    margin-bottom: 0;
 }
 
 .icon-cache-section {
@@ -840,6 +857,18 @@ body::before {
 
 .icon-cache-actions {
     margin-bottom: 0;
+}
+
+.icon-refresh-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.icon-refresh-action svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
 }
 
 .search-engine-settings-section {

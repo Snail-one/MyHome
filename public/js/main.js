@@ -42,7 +42,8 @@ const searchBox = document.querySelector('.search-box');
 const searchEngineSwitcher = document.querySelector('.search-engine-switcher');
 const engineIndicator = document.querySelector('.current-engine');
 const searchEngineIndicator = document.querySelector('.search-engine-indicator');
-const logoutBtn = document.getElementById('logout-btn');
+const accountBtn = document.getElementById('account-btn');
+const accountLogoutBtn = document.getElementById('account-logout-btn');
 
 // ==================== API ====================
 async function apiRequest(path, options = {}) {
@@ -188,6 +189,7 @@ function showLoggedOut(message = '') {
     currentEngine = 'google';
     searchEngines = {};
     closeModal('link-modal');
+    closeModal('account-modal');
     closeModal('manage-modal');
     closeModal('background-modal');
     clearAuthenticatedDom();
@@ -206,7 +208,9 @@ function showLoggedIn(user) {
 }
 
 function bindAuth() {
-    logoutBtn?.addEventListener('click', async () => {
+    accountBtn?.addEventListener('click', openAccountModal);
+
+    accountLogoutBtn?.addEventListener('click', async () => {
         try {
             await apiRequest('/api/logout', { method: 'POST' });
         } catch (error) {
@@ -1014,9 +1018,12 @@ function setAccountFormMessage(message, type = '') {
 function resetAccountForm() {
     const form = document.getElementById('account-form');
     const usernameInput = document.getElementById('account-username');
+    const currentUsername = document.getElementById('account-current-username');
+    const username = appState.user?.username || '';
+    if (currentUsername) currentUsername.textContent = username || '-';
     if (!form || !usernameInput) return;
     form.reset();
-    usernameInput.value = appState.user?.username || '';
+    usernameInput.value = username;
     setAccountFormMessage('');
 }
 
@@ -1045,6 +1052,8 @@ async function submitAccountForm(event) {
         form.reset();
         const usernameInput = document.getElementById('account-username');
         if (usernameInput) usernameInput.value = appState.user?.username || username;
+        const currentUsername = document.getElementById('account-current-username');
+        if (currentUsername) currentUsername.textContent = appState.user?.username || username || '-';
         setAccountFormMessage('账号已保存', 'success');
     } catch (error) {
         setAccountFormMessage(error.message, 'error');
@@ -1053,9 +1062,13 @@ async function submitAccountForm(event) {
     }
 }
 
+function openAccountModal() {
+    resetAccountForm();
+    openModal('account-modal');
+}
+
 function openManageModal() {
     openModal('manage-modal');
-    resetAccountForm();
     renderLayoutButtons();
     renderSearchEngineList();
 }
@@ -1688,7 +1701,7 @@ async function setLinkLayoutColumns(linkType, columns) {
 
 async function refreshIconCache() {
     const refreshBtn = document.getElementById('icon-refresh-btn');
-    const refreshBtnLabel = refreshBtn?.querySelector('.corner-btn-label');
+    const refreshBtnLabel = refreshBtn?.querySelector('.icon-refresh-label');
     const previousText = refreshBtnLabel?.textContent || refreshBtn?.textContent || '刷新图标';
     if (refreshBtn) {
         refreshBtn.disabled = true;

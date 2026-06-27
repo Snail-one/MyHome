@@ -11,10 +11,10 @@
     <div class="corner-controls corner-email email-links-panel" id="email-links-container" aria-label="邮箱链接">
     </div>
 
-    <div class="corner-controls corner-logout" aria-label="退出登录">
-        <button type="button" class="corner-btn logout-btn" id="logout-btn" title="退出登录">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-            <span class="corner-btn-label">退出</span>
+    <div class="corner-controls corner-account" aria-label="账户">
+        <button type="button" class="corner-btn account-btn" id="account-btn" title="账户">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+            <span class="corner-btn-label">账户</span>
         </button>
     </div>
 
@@ -23,11 +23,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             <span class="corner-btn-label">编辑模式</span>
         </button>
-        <button type="button" class="corner-btn icon-refresh-btn" id="icon-refresh-btn" title="刷新图标缓存">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
-            <span class="corner-btn-label">刷新图标</span>
-        </button>
-        <button type="button" class="corner-btn manage-menu-btn" title="管理布局和搜索引擎">
+        <button type="button" class="corner-btn manage-menu-btn" title="管理布局、图标缓存和搜索引擎">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
             <span class="corner-btn-label">管理菜单</span>
         </button>
@@ -154,16 +150,17 @@
         </div>
     </div>
 
-    <!-- 管理菜单弹窗 -->
-    <div class="modal-overlay" id="manage-modal" aria-hidden="true">
-        <div class="modal">
+    <!-- 账户弹窗 -->
+    <div class="modal-overlay" id="account-modal" aria-hidden="true">
+        <div class="modal modal-sm">
             <div class="modal-header">
-                <h2 class="modal-title">设置</h2>
-                <button type="button" class="modal-close" data-close="manage-modal" title="关闭">&times;</button>
+                <h2 class="modal-title">账户</h2>
+                <button type="button" class="modal-close" data-close="account-modal" title="关闭">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="account-settings-section">
                     <h3>管理员账号</h3>
+                    <p class="account-current">当前账号：<span id="account-current-username">-</span></p>
                     <form class="account-form" id="account-form">
                         <div class="form-group">
                             <label for="account-username">账号</label>
@@ -187,6 +184,24 @@
                         </div>
                     </form>
                 </div>
+                <div class="account-control-section">
+                    <h3>账户控制</h3>
+                    <div class="form-actions account-control-actions">
+                        <button type="button" class="btn btn-danger" id="account-logout-btn">退出登录</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 管理菜单弹窗 -->
+    <div class="modal-overlay" id="manage-modal" aria-hidden="true">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">设置</h2>
+                <button type="button" class="modal-close" data-close="manage-modal" title="关闭">&times;</button>
+            </div>
+            <div class="modal-body">
                 <div class="layout-settings-section">
                     <h3>布局设置</h3>
                     <div class="layout-options">
@@ -218,6 +233,16 @@
                     <div class="layout-options">
                         <label class="layout-option-label">书签卡片毛玻璃效果：</label>
                         <div class="layout-buttons" id="bookmark-glass-toggle"></div>
+                    </div>
+                </div>
+                <div class="icon-cache-section">
+                    <h3>图标缓存</h3>
+                    <p class="form-hint">重新获取书签、项目和搜索引擎图标。</p>
+                    <div class="form-actions icon-cache-actions">
+                        <button type="button" class="btn btn-secondary icon-refresh-action" id="icon-refresh-btn" title="刷新图标缓存">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                            <span class="icon-refresh-label">刷新图标</span>
+                        </button>
                     </div>
                 </div>
                 <div class="search-engine-settings-section">
