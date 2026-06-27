@@ -1,5 +1,6 @@
 const path = require('path');
 
+const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
 
@@ -40,21 +41,45 @@ function createSecurityHeadersMiddleware() {
   };
 }
 
-// CSRF protection: require Content-Type: application/json for state-changing API requests with a body.
-// Cross-origin forms/XHR cannot set Content-Type: application/json without a CORS preflight.
-function csrfContentTypeCheck(req, res, next) {
+function isUnsafeMethod(method) {
+  return method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+}
+
+function getRequestOrigin(req) {
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+function isSameOriginHeader(req, headerValue) {
+  if (!headerValue) return true;
+  try {
+    return new URL(headerValue).origin === getRequestOrigin(req);
+  } catch {
+    return false;
+  }
+}
+
+function createCsrfToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function csrfProtection(req, res, next) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next();
   }
-  // Only enforce Content-Type check when there is a request body
-  const contentLength = Number.parseInt(req.headers['content-length'] || '', 10);
-  const hasBody = Number.isInteger(contentLength) && contentLength > 0;
-  if (hasBody) {
-    const contentType = req.headers['content-type'] || '';
-    if (!contentType.includes('application/json')) {
-      return res.status(403).json({ error: '无效的请求格式' });
-    }
+
+  if (
+    !isSameOriginHeader(req, req.get('origin')) ||
+    !isSameOriginHeader(req, req.get('referer'))
+  ) {
+    return res.status(403).json({ error: '请求来源无效' });
   }
+
+  const sessionToken = req.session?.csrfToken;
+  const requestToken = req.get('x-csrf-token');
+  if (!sessionToken || !requestToken || requestToken !== sessionToken) {
+    return res.status(403).json({ error: 'CSRF token 无效' });
+  }
+
   next();
 }
 
@@ -84,7 +109,6 @@ function createApp(deps) {
   app.disable('x-powered-by');
 
   app.use(createSecurityHeadersMiddleware());
-  app.use(express.json({ limit: '64kb' }));
   app.use(session({
     store: sessionStore,
     name: config.sessionCookieName,
@@ -158,11 +182,16 @@ function createApp(deps) {
     stores
   };
 
-  // CSRF protection for JSON API routes (skip background upload which uses multipart/form-data)
-  app.use('/api', (req, res, next) => {
-    if (req.path === '/background' && req.method === 'POST') return next();
-    csrfContentTypeCheck(req, res, next);
+  app.get('/api/csrf', (req, res) => {
+    if (!req.session.csrfToken) {
+      req.session.csrfToken = createCsrfToken();
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({ csrfToken: req.session.csrfToken });
   });
+
+  app.use('/api', csrfProtection);
+  app.use('/api', express.json({ limit: '64kb' }));
 
   app.use('/api', createAuthRouter(apiDeps));
   app.use('/api', createSettingsRouter(apiDeps));
@@ -178,5 +207,8 @@ function createApp(deps) {
 
 module.exports = {
   createApp,
-  createSecurityHeadersMiddleware
+  createCsrfToken,
+  createSecurityHeadersMiddleware,
+  csrfProtection,
+  isUnsafeMethod
 };

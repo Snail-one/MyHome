@@ -82,6 +82,125 @@ test('resolveLinkIcon records miss metadata when fetcher finds no icon', async (
   assert.equal(await service.findCachedEntityIcon('links', link.id, link.iconVersion), null);
 });
 
+test('resolveLinkIcon reuses ready metadata without fetching remotely', async () => {
+  const config = makeIconConfig();
+  let fetchCalls = 0;
+  const service = createIconService(config, {
+    iconFetcher: {
+      normalizeIconTargetUrl: () => 'https://example.com/',
+      resolveIconForUrl: async () => {
+        fetchCalls += 1;
+        return {
+          icon: makeSvgIcon(),
+          sourceUrl: 'https://example.com/favicon.svg',
+          targetUrl: 'https://example.com/'
+        };
+      }
+    }
+  });
+  const link = {
+    id: 30,
+    linkType: 'website',
+    url: 'https://example.com',
+    iconMode: 'server',
+    iconVersion: 4
+  };
+
+  await fs.promises.mkdir(config.iconCacheDir, { recursive: true });
+  await fs.promises.writeFile(path.join(config.iconCacheDir, 'links-30.svg'), makeSvgIcon().buffer);
+  await fs.promises.writeFile(path.join(config.iconCacheDir, 'links-30.json'), JSON.stringify({
+    entityType: 'links',
+    entityId: 30,
+    version: 4,
+    status: 'ready',
+    source: 'server',
+    sourceUrl: 'https://cached.example.com/favicon.svg',
+    targetUrl: 'https://example.com/',
+    fileName: 'links-30.svg',
+    contentType: 'image/svg+xml'
+  }));
+
+  const status = await service.resolveLinkIcon(link);
+  assert.equal(status.status, 'ready');
+  assert.equal(status.sourceUrl, 'https://cached.example.com/favicon.svg');
+  assert.equal(fetchCalls, 0);
+});
+
+test('resolveLinkIcon reuses miss metadata without fetching remotely', async () => {
+  const config = makeIconConfig();
+  let fetchCalls = 0;
+  const service = createIconService(config, {
+    iconFetcher: {
+      normalizeIconTargetUrl: () => 'https://example.com/',
+      resolveIconForUrl: async () => {
+        fetchCalls += 1;
+        return {
+          icon: makeSvgIcon(),
+          sourceUrl: 'https://example.com/favicon.svg',
+          targetUrl: 'https://example.com/'
+        };
+      }
+    }
+  });
+  const link = {
+    id: 31,
+    linkType: 'website',
+    url: 'https://example.com',
+    iconMode: 'server',
+    iconVersion: 2
+  };
+
+  await fs.promises.mkdir(config.iconCacheDir, { recursive: true });
+  await fs.promises.writeFile(path.join(config.iconCacheDir, 'links-31.json'), JSON.stringify({
+    entityType: 'links',
+    entityId: 31,
+    version: 2,
+    status: 'miss',
+    source: 'server',
+    targetUrl: 'https://example.com/'
+  }));
+
+  const status = await service.resolveLinkIcon(link);
+  assert.equal(status.status, 'miss');
+  assert.equal(fetchCalls, 0);
+});
+
+test('resolveSearchEngineIcon reuses cached metadata without fetching remotely', async () => {
+  const config = makeIconConfig();
+  let fetchCalls = 0;
+  const service = createIconService(config, {
+    iconFetcher: {
+      resolveIconForUrl: async () => {
+        fetchCalls += 1;
+        return {
+          icon: makeSvgIcon(),
+          sourceUrl: 'https://example.com/favicon.svg',
+          targetUrl: 'https://example.com/'
+        };
+      }
+    }
+  });
+  const engine = {
+    id: 32,
+    urlTemplate: 'https://example.com/search?q={query}',
+    iconVersion: 1
+  };
+
+  await fs.promises.mkdir(config.iconCacheDir, { recursive: true });
+  await fs.promises.writeFile(path.join(config.iconCacheDir, 'search-engines-32.json'), JSON.stringify({
+    entityType: 'search-engines',
+    entityId: 32,
+    version: 1,
+    status: 'miss',
+    source: 'server',
+    targetUrl: 'https://example.com/'
+  }));
+
+  const status = await service.resolveSearchEngineIcon(engine);
+  assert.equal(status.status, 'miss');
+  assert.equal(fetchCalls, 0);
+});
+
 test('subdomain targets are preferred before falling back to root domain stripping', async () => {
   const resolvedTargets = [];
   const service = createIconService(makeIconConfig(), {

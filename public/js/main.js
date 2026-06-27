@@ -35,6 +35,10 @@ let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let layoutResizeTimer = null;
 const iconRefreshPromises = new Map();
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+let csrfToken = '';
+let csrfTokenPromise = null;
+let iconCacheRefreshRunning = false;
 
 // ==================== DOM 元素 ====================
 const searchInput = document.querySelector('.search-input');
@@ -46,7 +50,35 @@ const accountBtn = document.getElementById('account-btn');
 const accountLogoutBtn = document.getElementById('account-logout-btn');
 
 // ==================== API ====================
+function getRequestMethod(options = {}) {
+    return String(options.method || 'GET').toUpperCase();
+}
+
+async function getCsrfToken() {
+    if (csrfToken) return csrfToken;
+    if (!csrfTokenPromise) {
+        csrfTokenPromise = fetch('/api/csrf', {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' }
+        })
+            .then(async response => {
+                const contentType = response.headers.get('content-type') || '';
+                const data = contentType.includes('application/json') ? await response.json() : null;
+                if (!response.ok || !data?.csrfToken) {
+                    throw new Error(data?.error || '无法获取安全令牌');
+                }
+                csrfToken = data.csrfToken;
+                return csrfToken;
+            })
+            .finally(() => {
+                csrfTokenPromise = null;
+            });
+    }
+    return csrfTokenPromise;
+}
+
 async function apiRequest(path, options = {}) {
+    const method = getRequestMethod(options);
     const fetchOptions = {
         credentials: 'same-origin',
         ...options,
@@ -54,6 +86,10 @@ async function apiRequest(path, options = {}) {
             ...(options.headers || {})
         }
     };
+
+    if (!SAFE_METHODS.has(method)) {
+        fetchOptions.headers['X-CSRF-Token'] = await getCsrfToken();
+    }
 
     if (
         fetchOptions.body &&
@@ -75,6 +111,7 @@ async function apiRequest(path, options = {}) {
     const data = contentType.includes('application/json') ? await response.json() : null;
 
     if (response.status === 401 && path !== '/api/login') {
+        csrfToken = '';
         showLoggedOut('登录已过期，请重新登录');
         throw new Error(data?.error || '未登录');
     }
@@ -96,28 +133,6 @@ async function loadAppData() {
     appState.links = Array.isArray(linksData.links) ? linksData.links : [];
     appState.emailLinks = Array.isArray(linksData.emailLinks) ? linksData.emailLinks : [];
     appState.projectLinks = Array.isArray(linksData.projectLinks) ? linksData.projectLinks : [];
-
-    // Proactively resolve icons in background on load/refresh.
-    // This warms the server cache (in parallel with page render) so favicons appear faster
-    // without waiting for on-error resolve + retry.
-    // Deduped by iconRefreshPromises.
-    try {
-        const allLinks = [...(appState.links || []), ...(appState.projectLinks || [])];
-        allLinks.forEach(link => {
-            const desc = getLinkIconDescriptor(link);
-            if (desc && desc.mode === 'server') {
-                resolveIconOnServer(desc).catch(() => {});
-            }
-        });
-
-        // Also for search engines
-        (appState.searchEngineRecords || []).forEach(engine => {
-            const desc = getSearchEngineIconDescriptor(engine);
-            if (desc) {
-                resolveIconOnServer(desc).catch(() => {});
-            }
-        });
-    } catch (_) {}
 
     applySearchEnginesResponse(searchEnginesData.engines);
     applySettings(settingsData.settings || DEFAULT_SETTINGS);
@@ -554,6 +569,10 @@ function hydrateIconElement(img, descriptor) {
     img.onerror = async () => {
         img.onerror = null;
         if (descriptor.mode === 'server') {
+            if (iconCacheRefreshRunning) {
+                showIconFallback(img);
+                return;
+            }
             await resolveIconOnServer(descriptor);
             // Retry with cache-busting query to avoid sticky 404 caches.
             attemptLoad(true);
@@ -1699,6 +1718,25 @@ async function setLinkLayoutColumns(linkType, columns) {
     }
 }
 
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForIconRefreshCompletion(initialStatus) {
+    let status = initialStatus || null;
+
+    while (!status || status.state === 'running') {
+        await wait(1000);
+        status = await apiRequest('/api/icons/refresh/status');
+    }
+
+    if (status.state === 'failed') {
+        throw new Error('刷新图标缓存失败');
+    }
+
+    return status;
+}
+
 async function refreshIconCache() {
     const refreshBtn = document.getElementById('icon-refresh-btn');
     const refreshBtnLabel = refreshBtn?.querySelector('.icon-refresh-label');
@@ -1713,12 +1751,20 @@ async function refreshIconCache() {
     }
 
     try {
+        iconCacheRefreshRunning = true;
         const data = await apiRequest('/api/icons/refresh', { method: 'POST' });
         applyLinksResponse(data);
         applySearchEnginesResponse(data.engines || []);
+        const status = await waitForIconRefreshCompletion(data.refreshStatus);
+        refreshVisibleNavIconsInBackground();
+        refreshSearchEngineIconsInBackground();
+        if (status.failed > 0) {
+            console.warn(`Icon refresh completed with ${status.failed} failed task(s)`);
+        }
     } catch (error) {
         alert(error.message);
     } finally {
+        iconCacheRefreshRunning = false;
         if (refreshBtn) {
             refreshBtn.disabled = false;
             if (refreshBtnLabel) {

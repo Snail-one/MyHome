@@ -21,9 +21,88 @@ function getEntityVersion(entity) {
   return Number.parseInt(entity?.iconVersion, 10) || 1;
 }
 
+function createIdleRefreshStatus() {
+  return {
+    state: 'idle',
+    startedAt: null,
+    finishedAt: null,
+    total: 0,
+    completed: 0,
+    failed: 0
+  };
+}
+
+function serializeRefreshTask(task) {
+  if (!task) return createIdleRefreshStatus();
+  return {
+    state: task.state,
+    startedAt: task.startedAt,
+    finishedAt: task.finishedAt,
+    total: task.total,
+    completed: task.completed,
+    failed: task.failed
+  };
+}
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 function createIconsRouter(deps) {
   const { auth, iconService, stores } = deps;
   const router = express.Router();
+  let refreshTask = null;
+
+  async function runRefreshTask(task, tasks) {
+    const CONCURRENCY_LIMIT = 5;
+
+    try {
+      for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
+        const batch = tasks.slice(i, i + CONCURRENCY_LIMIT);
+        const batchResults = await Promise.allSettled(batch.map((fn) => fn()));
+        for (const result of batchResults) {
+          if (result.status === 'fulfilled') {
+            task.completed += 1;
+          } else {
+            task.failed += 1;
+          }
+        }
+        await yieldToEventLoop();
+      }
+
+      task.state = task.failed > 0 ? 'failed' : 'completed';
+    } catch (error) {
+      task.state = 'failed';
+      task.error = error.message;
+      console.warn('Failed to refresh icon cache:', error.message);
+    } finally {
+      task.finishedAt = new Date().toISOString();
+    }
+  }
+
+  function startRefreshTask(tasks) {
+    refreshTask = {
+      state: 'running',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      total: tasks.length,
+      completed: 0,
+      failed: 0
+    };
+
+    setImmediate(() => {
+      runRefreshTask(refreshTask, tasks).catch((error) => {
+        refreshTask.state = 'failed';
+        refreshTask.error = error.message;
+        refreshTask.finishedAt = new Date().toISOString();
+        console.warn('Failed to refresh icon cache:', error.message);
+      });
+    });
+
+    return refreshTask;
+  }
 
   function getLink(req, res) {
     const id = parseEntityId(req.params.id);
@@ -161,6 +240,16 @@ function createIconsRouter(deps) {
 
   router.post('/icons/refresh', auth.requireAuth, async (req, res) => {
     try {
+      if (refreshTask?.state === 'running') {
+        res.status(202).json({
+          ok: true,
+          refreshStatus: serializeRefreshTask(refreshTask),
+          ...stores.links.getResponse(),
+          engines: stores.searchEngines.get()
+        });
+        return;
+      }
+
       await iconService.clearIconCache();
       const links = stores.links.bumpAllIconVersions();
       const engines = stores.searchEngines.bumpAllIconVersions();
@@ -175,20 +264,16 @@ function createIconsRouter(deps) {
         ...engines.map((engine) => () => iconService.resolveSearchEngineIcon(engine))
       ];
 
-      // Process with bounded concurrency to avoid memory spikes
-      const CONCURRENCY_LIMIT = 5;
-      const results = [];
-      for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
-        const batch = tasks.slice(i, i + CONCURRENCY_LIMIT);
-        const batchResults = await Promise.allSettled(batch.map((fn) => fn()));
-        results.push(...batchResults);
-      }
-
-      res.json({ ok: true, ...links, engines });
+      const task = startRefreshTask(tasks);
+      res.status(202).json({ ok: true, refreshStatus: serializeRefreshTask(task), ...links, engines });
     } catch (error) {
       console.warn('Failed to refresh icon cache:', error.message);
       res.status(500).json({ error: '刷新图标缓存失败' });
     }
+  });
+
+  router.get('/icons/refresh/status', auth.requireAuth, (req, res) => {
+    res.json(serializeRefreshTask(refreshTask));
   });
 
   return router;

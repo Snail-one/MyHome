@@ -289,6 +289,25 @@ function createIconService(config, deps = {}) {
     };
   }
 
+  async function getReusableEntityIconStatus(entityType, entity, options = {}) {
+    if (options.force) return null;
+
+    const version = Number(entity.iconVersion || 1);
+    const metadata = await readEntityIconMetadata(entityType, entity.id);
+    if (!metadata || Number(metadata.version) !== version) return null;
+
+    if (metadata.status === 'miss') {
+      return getEntityIconStatus(entityType, entity);
+    }
+
+    if (metadata.status === 'ready') {
+      const cachedIcon = await findCachedEntityIcon(entityType, entity.id, version);
+      if (cachedIcon) return getEntityIconStatus(entityType, entity);
+    }
+
+    return null;
+  }
+
   async function writeEntityIcon(entityType, entityId, version, icon, metadata = {}) {
     await fs.promises.mkdir(config.iconCacheDir, { recursive: true });
     const prefix = getEntityCachePrefix(entityType, entityId);
@@ -338,12 +357,15 @@ function createIconService(config, deps = {}) {
     });
   }
 
-  async function resolveLinkIcon(link) {
+  async function resolveLinkIcon(link, options = {}) {
     if (!link) return { notFound: true };
     if (link.linkType === 'email') return getEntityIconStatus('links', link, { iconMode: 'none' });
     if (link.iconMode === 'none') return getEntityIconStatus('links', link, { iconMode: 'none' });
     if (link.iconMode === 'upload') return getEntityIconStatus('links', link, { iconMode: 'upload' });
     if (link.iconMode === 'local') return getEntityIconStatus('links', link, { iconMode: 'local' });
+
+    const cachedStatus = await getReusableEntityIconStatus('links', link, options);
+    if (cachedStatus) return cachedStatus;
 
     const resolved = await resolveIconForTarget(link.url);
     if (resolved?.icon) {
@@ -368,8 +390,11 @@ function createIconService(config, deps = {}) {
     return getPrimaryTargetUrl(sampleUrl);
   }
 
-  async function resolveSearchEngineIcon(engine) {
+  async function resolveSearchEngineIcon(engine, options = {}) {
     if (!engine) return { notFound: true };
+    const cachedStatus = await getReusableEntityIconStatus('search-engines', engine, options);
+    if (cachedStatus) return cachedStatus;
+
     const targetUrl = getSearchEngineTargetUrl(engine);
     const resolved = await resolveIconForTarget(targetUrl);
     if (resolved?.icon) {

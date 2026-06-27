@@ -7,20 +7,47 @@ const passwordInput = document.getElementById('login-password');
 const confirmGroup = document.getElementById('register-confirm-group');
 const confirmInput = document.getElementById('register-password-confirm');
 let setupMode = false;
+let csrfToken = '';
+let csrfTokenPromise = null;
 
 const reason = new URLSearchParams(window.location.search).get('reason');
 if (reason && loginError) {
     loginError.textContent = reason;
 }
 
+async function getCsrfToken() {
+    if (csrfToken) return csrfToken;
+    if (!csrfTokenPromise) {
+        csrfTokenPromise = fetch('/api/csrf', {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' }
+        })
+            .then(async response => {
+                const contentType = response.headers.get('content-type') || '';
+                const data = contentType.includes('application/json') ? await response.json() : null;
+                if (!response.ok || !data?.csrfToken) {
+                    throw new Error(data?.error || '无法获取安全令牌');
+                }
+                csrfToken = data.csrfToken;
+                return csrfToken;
+            })
+            .finally(() => {
+                csrfTokenPromise = null;
+            });
+    }
+    return csrfTokenPromise;
+}
+
 async function apiRequest(path, body) {
+    const token = await getCsrfToken();
     let response;
     try {
         response = await fetch(path, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': token
             },
             body: JSON.stringify(body)
         });

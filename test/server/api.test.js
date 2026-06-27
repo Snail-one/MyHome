@@ -46,19 +46,41 @@ async function startApp(overrides, options = {}) {
   const app = createApp({
     config,
     db: database.db,
+    iconService: options.iconService,
     stores: database.stores
   });
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let cookie = '';
+  let csrfToken = '';
+
+  function updateCookie(response) {
+    const setCookie = response.headers.get('set-cookie');
+    if (setCookie) {
+      cookie = setCookie.split(';')[0];
+      csrfToken = '';
+    }
+  }
+
+  async function getCsrfToken() {
+    if (csrfToken) return csrfToken;
+
+    const headers = {};
+    if (cookie) headers.cookie = cookie;
+    const response = await fetch(`${baseUrl}/api/csrf`, { headers });
+    updateCookie(response);
+    const data = await response.json();
+    csrfToken = data.csrfToken;
+    return csrfToken;
+  }
 
   async function request(route, options = {}) {
+    const { csrf = true, ...requestOptions } = options;
     const headers = {
-      ...(options.headers || {})
+      ...(requestOptions.headers || {})
     };
-    if (cookie) headers.cookie = cookie;
-    let body = options.body;
+    let body = requestOptions.body;
     if (
       body &&
       !(body instanceof FormData) &&
@@ -69,13 +91,18 @@ async function startApp(overrides, options = {}) {
       body = JSON.stringify(body);
     }
 
+    const method = String(requestOptions.method || 'GET').toUpperCase();
+    if (csrf && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      headers['x-csrf-token'] = await getCsrfToken();
+    }
+    if (cookie) headers.cookie = cookie;
+
     const response = await fetch(`${baseUrl}${route}`, {
-      ...options,
+      ...requestOptions,
       headers,
       body
     });
-    const setCookie = response.headers.get('set-cookie');
-    if (setCookie) cookie = setCookie.split(';')[0];
+    updateCookie(response);
     return response;
   }
 
@@ -237,6 +264,44 @@ test('protected APIs require login and authenticated user can manage settings, l
   assert.equal(docsEngine.iconVersion, 1);
 });
 
+test('csrf protection requires tokens and rejects cross-origin unsafe requests', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  await app.login();
+
+  let result = await app.requestJson('/api/links', {
+    method: 'POST',
+    body: { title: 'Delete Me', url: 'https://delete.example.com' }
+  });
+  assert.equal(result.response.status, 201);
+  const link = result.data.links.find((item) => item.title === 'Delete Me');
+  assert.ok(link);
+
+  result = await app.requestJson('/api/logout', { method: 'POST', csrf: false });
+  assert.equal(result.response.status, 403);
+
+  result = await app.requestJson('/api/icons/refresh', { method: 'POST', csrf: false });
+  assert.equal(result.response.status, 403);
+
+  result = await app.requestJson(`/api/links/${link.id}`, { method: 'DELETE', csrf: false });
+  assert.equal(result.response.status, 403);
+
+  const formData = new FormData();
+  formData.append('background', new Blob([Buffer.from('not an image')], { type: 'image/png' }), 'fake.png');
+  const backgroundResponse = await app.request('/api/background', {
+    method: 'POST',
+    body: formData,
+    csrf: false
+  });
+  assert.equal(backgroundResponse.status, 403);
+
+  result = await app.requestJson('/api/icons/refresh', {
+    method: 'POST',
+    headers: { Origin: 'https://evil.example.com' }
+  });
+  assert.equal(result.response.status, 403);
+});
+
 test('authenticated user can update username and password hash', async (t) => {
   const app = await startApp();
   t.after(app.close);
@@ -304,6 +369,91 @@ test('background upload rejects forged image data', async (t) => {
     body: formData
   });
   assert.equal(response.status, 400);
+});
+
+test('icon refresh returns 202 and reuses a running background task', async (t) => {
+  let releaseTasks;
+  const taskGate = new Promise((resolve) => {
+    releaseTasks = resolve;
+  });
+  let clearCount = 0;
+  let taskRuns = 0;
+  const iconService = {
+    clearIconCache: async () => {
+      clearCount += 1;
+    },
+    resolveLinkIcon: async () => {
+      taskRuns += 1;
+      await taskGate;
+      return { status: 'ready' };
+    },
+    resolveSearchEngineIcon: async () => {
+      taskRuns += 1;
+      await taskGate;
+      return { status: 'ready' };
+    }
+  };
+
+  const app = await startApp(undefined, { iconService });
+  t.after(app.close);
+  await app.login();
+
+  let result = await app.requestJson('/api/icons/refresh', { method: 'POST' });
+  assert.equal(result.response.status, 202);
+  assert.equal(result.data.refreshStatus.state, 'running');
+  assert.ok(result.data.refreshStatus.total > 0);
+  assert.equal(clearCount, 1);
+
+  result = await app.requestJson('/api/icons/refresh', { method: 'POST' });
+  assert.equal(result.response.status, 202);
+  assert.equal(result.data.refreshStatus.state, 'running');
+  assert.equal(clearCount, 1);
+
+  result = await app.requestJson('/api/icons/refresh/status');
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.state, 'running');
+
+  releaseTasks();
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    result = await app.requestJson('/api/icons/refresh/status');
+    if (result.data.state !== 'running') break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert.equal(result.data.state, 'completed');
+  assert.equal(result.data.completed, result.data.total);
+  assert.equal(result.data.failed, 0);
+  assert.equal(taskRuns, result.data.total);
+});
+
+test('icon refresh status reports failed background tasks', async (t) => {
+  const iconService = {
+    clearIconCache: async () => {},
+    resolveLinkIcon: async () => {
+      throw new Error('link failed');
+    },
+    resolveSearchEngineIcon: async () => {
+      throw new Error('engine failed');
+    }
+  };
+
+  const app = await startApp(undefined, { iconService });
+  t.after(app.close);
+  await app.login();
+
+  let result = await app.requestJson('/api/icons/refresh', { method: 'POST' });
+  assert.equal(result.response.status, 202);
+  assert.equal(result.data.refreshStatus.state, 'running');
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    result = await app.requestJson('/api/icons/refresh/status');
+    if (result.data.state !== 'running') break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert.equal(result.data.state, 'failed');
+  assert.ok(result.data.failed > 0);
+  assert.equal(result.data.completed + result.data.failed, result.data.total);
 });
 
 test('server icon resolve allows private targets for configured links', async (t) => {
