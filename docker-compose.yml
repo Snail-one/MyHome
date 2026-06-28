@@ -2,7 +2,7 @@ services:
   my-home:
     build: .
     ports:
-      - "3000:3000"
+      - "127.0.0.1:18888:3000"
     env_file:
       - .env
     environment:
