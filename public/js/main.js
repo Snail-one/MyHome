@@ -1628,9 +1628,12 @@ function applyLinkSizes() {
 }
 
 function applyBookmarkGlass() {
-    const container = document.getElementById('nav-links-container');
-    if (!container) return;
-    container.classList.toggle('glass-off', !bookmarkGlass);
+    [
+        document.getElementById('project-links-container'),
+        document.getElementById('nav-links-container')
+    ].forEach(container => {
+        container?.classList.toggle('glass-off', !bookmarkGlass);
+    });
 }
 
 function updateDisplayModeButtonState() {

@@ -1380,7 +1380,8 @@ body::before {
     overflow: hidden;
 }
 
-#nav-links-container.glass-off .nav-card {
+#nav-links-container.glass-off .nav-card,
+#project-links-container.glass-off .nav-card {
     background: rgba(255, 255, 255, 0.148) !important;
     border-color: rgba(232, 223, 223, 0.187) !important;
     backdrop-filter: none !important;
@@ -1388,7 +1389,8 @@ body::before {
 }
 
 /* 毛玻璃关闭时的 hover 也要保持扁平效果 */
-#nav-links-container.glass-off .nav-card:hover {
+#nav-links-container.glass-off .nav-card:hover,
+#project-links-container.glass-off .nav-card:hover {
     background: rgba(255, 255, 255, 0.05) !important;
     border-color: rgba(255, 255, 255, 0.08) !important;
     box-shadow: var(--shadow-xl);
