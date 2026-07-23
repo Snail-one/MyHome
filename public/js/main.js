@@ -222,7 +222,9 @@ function showLoggedIn(user) {
     appState.user = user;
     document.body.classList.remove('app-loading', 'logged-out');
     document.body.classList.add('logged-in');
-    setTimeout(() => searchInput?.focus(), 0);
+    if (window.matchMedia('(min-width: 769px) and (pointer: fine)').matches) {
+        setTimeout(() => searchInput?.focus(), 0);
+    }
 }
 
 function bindAuth() {
@@ -1277,6 +1279,10 @@ function closeModal(modalId) {
     if (!modal) return;
     modal.setAttribute('aria-hidden', 'true');
     modal.classList.remove('modal-open');
+    document.body.classList.toggle(
+        'has-modal-open',
+        Boolean(document.querySelector('.modal-overlay.modal-open'))
+    );
 }
 
 function closeActiveModal() {
@@ -1309,6 +1315,7 @@ function openModal(modalId) {
     if (!modal) return;
     modal.setAttribute('aria-hidden', 'false');
     modal.classList.add('modal-open');
+    document.body.classList.add('has-modal-open');
 }
 
 // 自定义确认弹窗（替代浏览器原生 confirm）
@@ -1523,9 +1530,12 @@ function parseCssPixelValue(value, fallback = 0) {
 }
 
 function getMaxAvailableLayoutColumns(linkType = 'website') {
-    if (window.matchMedia('(max-width: 768px)').matches) return 1;
-
     const container = getLinkContainer(linkType);
+    if (window.matchMedia('(max-width: 768px)').matches) {
+        const linkCount = Math.max(1, getLinkCollection(linkType).length);
+        return Math.min(2, linkCount);
+    }
+
     const rootStyles = getComputedStyle(document.documentElement);
     const containerStyles = container ? getComputedStyle(container) : null;
     const configuredMax = Number.parseInt(rootStyles.getPropertyValue('--layout-max-cols'), 10) || 6;
