@@ -5,10 +5,6 @@
     box-sizing: border-box;
 }
 
-html {
-    min-height: 100%;
-}
-
 :root {
     /* 主色调 */
     --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -59,15 +55,6 @@ body {
     min-height: 100vh;
     color: var(--text-primary);
     overflow-x: hidden;
-    -webkit-tap-highlight-color: transparent;
-    text-rendering: optimizeLegibility;
-}
-
-button,
-input,
-select,
-textarea {
-    font: inherit;
 }
 
 body.has-modal-open {
@@ -136,10 +123,6 @@ body.logged-out .auth-screen {
 .auth-card p {
     color: #94a3b8;
     font-size: 13px;
-}
-
-.auth-form-group {
-    margin-bottom: 16px;
 }
 
 .auth-form-group label {
@@ -228,7 +211,6 @@ body::before {
     padding-top: 15vh;
     gap: var(--section-margin);
     min-height: 100vh;
-    min-height: 100dvh;
     position: relative;
     z-index: 1;
 }
@@ -249,14 +231,14 @@ body::before {
 }
 
 .corner-right {
-    right: env(safe-area-inset-right, 0px);
-    bottom: env(safe-area-inset-bottom, 0px);
+    right: 0;
+    bottom: 0;
     flex-direction: row-reverse;
 }
 
 .corner-account {
-    left: env(safe-area-inset-left, 0px);
-    bottom: env(safe-area-inset-bottom, 0px);
+    left: 0;
+    bottom: 0;
 }
 
 .corner-left {
@@ -267,8 +249,8 @@ body::before {
 }
 
 .corner-email {
-    right: env(safe-area-inset-right, 0px);
-    top: env(safe-area-inset-top, 0px);
+    right: 0;
+    top: 0;
 }
 
 .email-links-panel {
@@ -467,7 +449,6 @@ body::before {
     max-width: 480px;
     width: 100%;
     max-height: 90vh;
-    max-height: 90dvh;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -636,8 +617,6 @@ body::before {
 .modal-body {
     padding: 24px;
     overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
 }
 
 .modal-body > .account-settings-section:first-child,
@@ -753,7 +732,6 @@ body::before {
 
 .btn {
     padding: 10px 20px;
-    min-height: 44px;
     border-radius: var(--radius-md);
     font-size: 14px;
     font-weight: 500;
@@ -1161,8 +1139,6 @@ body::before {
     transition: all var(--transition-normal);
     position: relative;
     overflow: hidden;
-    min-height: 40px;
-    touch-action: manipulation;
 }
 
 .engine-btn::before {
@@ -1331,10 +1307,6 @@ body::before {
     white-space: nowrap;
     cursor: default !important;
     transition: all var(--transition-fast);
-    min-width: 44px;
-    min-height: 40px;
-    justify-content: center;
-    touch-action: manipulation;
 }
 
 .search-engine-indicator:hover {
@@ -1406,7 +1378,6 @@ body::before {
     cursor: default !important;
     position: relative;
     overflow: hidden;
-    touch-action: manipulation;
 }
 
 #nav-links-container.glass-off .nav-card {
@@ -1709,7 +1680,7 @@ body.link-dragging .email-link {
     }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px) and (pointer: coarse) {
     :root {
         --container-padding-x: 16px;
         --container-padding-y: 24px;
@@ -1721,6 +1692,7 @@ body.link-dragging .email-link {
 
     body {
         background-attachment: scroll;
+        -webkit-tap-highlight-color: transparent;
     }
 
     body::before {
@@ -1742,6 +1714,16 @@ body.link-dragging .email-link {
     .corner-controls {
         padding: 8px;
         gap: 6px;
+    }
+
+    .corner-right {
+        right: env(safe-area-inset-right, 0px);
+        bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .corner-account {
+        left: env(safe-area-inset-left, 0px);
+        bottom: env(safe-area-inset-bottom, 0px);
     }
 
     .corner-btn,
@@ -1857,9 +1839,11 @@ body.link-dragging .email-link {
     
     .engine-btn {
         flex: 0 0 auto;
+        min-height: 40px;
         padding: 6px 12px;
         font-size: 12px;
         scroll-snap-align: start;
+        touch-action: manipulation;
     }
     
     .engine-btn .icon {
@@ -1887,6 +1871,13 @@ body.link-dragging .email-link {
     .search-input {
         font-size: 16px;
         padding-right: 6px;
+    }
+
+    .search-engine-indicator {
+        min-width: 44px;
+        min-height: 40px;
+        justify-content: center;
+        touch-action: manipulation;
     }
     
     .navigation-links {
@@ -1957,6 +1948,7 @@ body.link-dragging .email-link {
         min-height: 92px;
         padding: 12px 8px;
         gap: 7px;
+        touch-action: manipulation;
     }
     
     .nav-icon {
@@ -2034,6 +2026,8 @@ body.link-dragging .email-link {
 
     .modal-body {
         padding: 18px 16px max(20px, env(safe-area-inset-bottom, 0px));
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
     }
 
     .account-form input[type="text"],
@@ -2051,6 +2045,10 @@ body.link-dragging .email-link {
 
     .form-actions {
         gap: 10px;
+    }
+
+    .btn {
+        min-height: 44px;
     }
 
     .form-actions .btn {
@@ -2078,9 +2076,13 @@ body.link-dragging .email-link {
     .confirm-actions .btn {
         min-width: 0;
     }
+
+    .auth-form-group {
+        margin-bottom: 16px;
+    }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 480px) and (pointer: coarse) {
     :root {
         --container-padding-x: 12px;
         --container-padding-y: 24px;
@@ -2130,7 +2132,7 @@ body.link-dragging .email-link {
     }
 }
 
-@media (max-width: 360px) {
+@media (max-width: 360px) and (pointer: coarse) {
     :root {
         --container-padding-x: 10px;
         --nav-gap: 10px;
@@ -2141,7 +2143,7 @@ body.link-dragging .email-link {
     }
 }
 
-@media (hover: none) {
+@media (max-width: 768px) and (pointer: coarse) and (hover: none) {
     .search-box:hover,
     .nav-card:hover,
     .corner-btn:hover,

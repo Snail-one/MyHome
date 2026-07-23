@@ -222,7 +222,7 @@ function showLoggedIn(user) {
     appState.user = user;
     document.body.classList.remove('app-loading', 'logged-out');
     document.body.classList.add('logged-in');
-    if (window.matchMedia('(min-width: 769px) and (pointer: fine)').matches) {
+    if (window.matchMedia('(pointer: fine)').matches) {
         setTimeout(() => searchInput?.focus(), 0);
     }
 }
@@ -1531,7 +1531,7 @@ function parseCssPixelValue(value, fallback = 0) {
 
 function getMaxAvailableLayoutColumns(linkType = 'website') {
     const container = getLinkContainer(linkType);
-    if (window.matchMedia('(max-width: 768px)').matches) {
+    if (window.matchMedia('(max-width: 768px) and (pointer: coarse)').matches) {
         const linkCount = Math.max(1, getLinkCollection(linkType).length);
         return Math.min(2, linkCount);
     }
