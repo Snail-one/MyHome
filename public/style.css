@@ -1757,30 +1757,80 @@ body.link-dragging .email-link {
         touch-action: manipulation;
     }
 
-    .corner-btn-label,
-    .email-link-label {
+    .corner-btn-label {
         display: none;
     }
 
     .corner-email {
+        left: 50%;
+        right: auto;
         max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px);
+        width: max-content;
+        justify-content: flex-start;
         flex-wrap: nowrap;
         overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scroll-padding-inline: 8px;
+        scroll-snap-type: x proximity;
         scrollbar-width: none;
+        transform: translateX(-50%);
+        -webkit-overflow-scrolling: touch;
     }
 
     .corner-email::-webkit-scrollbar {
         display: none;
     }
 
+    .corner-email .email-link-wrapper {
+        flex: 0 0 auto;
+        scroll-snap-align: center;
+    }
+
+    .corner-email .email-link {
+        width: auto;
+        max-width: 148px;
+        padding: 0 12px;
+        gap: 7px;
+    }
+
+    .corner-email .email-link-icon,
+    .corner-email .email-link-favicon {
+        width: 19px;
+        height: 19px;
+    }
+
+    .corner-email .email-link-label {
+        display: block;
+        max-width: 94px;
+        font-size: 12px;
+        line-height: 1;
+    }
+
+    .corner-email .email-add-link {
+        width: 44px;
+        padding: 0;
+    }
+
+    .corner-email .email-add-link .nav-add-icon {
+        width: 28px;
+        height: 28px;
+        background: rgba(255, 255, 255, 0.06);
+    }
+
+    .corner-email .email-add-link .nav-add-icon svg {
+        width: 18px;
+        height: 18px;
+    }
+
     .email-link-actions {
-        top: -4px;
-        right: -4px;
+        top: -2px;
+        right: -2px;
     }
 
     .email-link-delete {
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
     }
     
     .search-engine-switcher {
