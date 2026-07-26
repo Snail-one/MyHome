@@ -105,7 +105,7 @@ http://localhost:3000
 
 ### 使用已发布镜像
 
-GitHub Actions 会在代码推送到 `main` 分支或推送 `v*` 版本标签时，自动测试并构建一个同时支持 `linux/amd64`、`linux/arm64` 的多架构镜像，然后发布到 GitHub Container Registry：
+GitHub Actions 会在代码推送到 `main` 分支时自动运行测试，但不会发布容器。只有推送 `v*` 版本标签时，才会构建一个同时支持 `linux/amd64`、`linux/arm64` 的多架构镜像并发布到 GitHub Container Registry：
 
 ```text
 ghcr.io/snail-one/myhome
@@ -113,10 +113,9 @@ ghcr.io/snail-one/myhome
 
 镜像标签规则：
 
-- 推送 `main`：生成 `main`、`sha-*`，用于开发版本
 - 推送版本标签（例如 `v1.2.3`）：生成 `1.2.3`、`1.2`、`sha-*` 和 `latest`
 
-`latest` 只随正式版本标签更新，不会被日常的 `main` 分支构建覆盖。
+`latest` 只随正式版本标签更新，日常推送和手动运行工作流都不会发布容器。
 
 拉取并运行最新正式版：
 
@@ -132,7 +131,7 @@ docker run -d \
 	ghcr.io/snail-one/myhome:latest
 ```
 
-Docker 会根据宿主机自动选择 AMD64 或 ARM64 镜像。需要测试 `main` 分支版本时，将标签替换为 `main`。
+Docker 会根据宿主机自动选择 AMD64 或 ARM64 镜像。
 
 工作流也支持在 GitHub 的 Actions 页面手动触发。发布使用仓库自带的 `GITHUB_TOKEN`，无需额外创建 Registry 密钥。如果需要匿名拉取镜像，请在 GitHub Packages 中把该容器包的可见性设为 Public。
 
