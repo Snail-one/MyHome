@@ -319,8 +319,45 @@ body::before {
 }
 
 .email-add-link {
+    --link-add-icon-size: 24px;
+    --link-add-icon-svg-size: 16px;
+    gap: 7px;
+    padding: 8px 12px 8px 9px;
     border-style: dashed;
-    color: var(--text-secondary);
+    border-color: rgba(255, 255, 255, 0.28);
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(168, 85, 247, 0.16));
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.email-add-link .nav-add-icon {
+    flex: 0 0 auto;
+    background: rgba(255, 255, 255, 0.13);
+}
+
+.email-add-label {
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.email-add-link:hover {
+    border-color: rgba(255, 255, 255, 0.46);
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.34), rgba(168, 85, 247, 0.28));
+}
+
+.email-add-link:hover .nav-add-icon {
+    background: rgba(255, 255, 255, 0.2);
+    transform: rotate(90deg) scale(1.05);
+}
+
+.email-add-link:active {
+    transform: translateY(0) scale(0.97);
+}
+
+.email-add-link:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 3px;
 }
 
 .email-link-actions {
@@ -424,6 +461,9 @@ body::before {
         width: 42px;
         justify-content: center;
         padding: 10px 12px;
+    }
+    .email-add-label {
+        display: none;
     }
 }
 
@@ -1806,6 +1846,10 @@ body.link-dragging .email-link {
     .corner-email .email-add-link {
         width: 44px;
         padding: 0;
+    }
+
+    .corner-email .email-add-label {
+        display: none;
     }
 
     .corner-email .email-add-link .nav-add-icon {

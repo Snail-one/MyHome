@@ -665,6 +665,7 @@ function createAddEmailLinkElement() {
                 <line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
         </span>
+        <span class="email-add-label">添加邮箱</span>
     `;
     return button;
 }
