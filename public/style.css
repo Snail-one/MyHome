@@ -215,7 +215,7 @@ body::before {
     z-index: 1;
 }
 
-/* ==================== 角落控制（邮箱 + 账户 + 管理菜单 + 背景） ==================== */
+/* ==================== 角落控制（邮箱 + 账户 + 页面设置） ==================== */
 .corner-controls {
     position: fixed;
     z-index: 100;
@@ -445,6 +445,11 @@ body::before {
 
 .corner-btn-label {
     white-space: nowrap;
+}
+
+.corner-btn:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
 }
 
 @media (max-width: 640px) {
@@ -1592,10 +1597,11 @@ body.link-dragging .email-link {
 }
 
 /* 编辑模式按钮激活状态 */
-.edit-mode-btn.active {
-    background: rgba(102, 126, 234, 0.4);
-    border-color: rgba(102, 126, 234, 0.6);
-    box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+.corner-right .edit-mode-btn.active {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.72), rgba(139, 92, 246, 0.64));
+    border-color: rgba(196, 181, 253, 0.52);
+    color: #fff;
+    box-shadow: 0 5px 16px rgba(76, 29, 149, 0.3);
 }
 
 /* 水滴涟漪效果 - 多层涟漪 */

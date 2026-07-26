@@ -1497,7 +1497,13 @@ async function toggleEditMode() {
 function updateEditModeUI() {
     const editModeBtn = document.getElementById('edit-mode-btn');
     document.body.classList.toggle('edit-mode-active', editMode);
-    if (editModeBtn) editModeBtn.classList.toggle('active', editMode);
+    if (editModeBtn) {
+        editModeBtn.classList.toggle('active', editMode);
+        editModeBtn.setAttribute('aria-pressed', String(editMode));
+        editModeBtn.title = editMode ? '完成编辑' : '进入编辑模式';
+        const label = editModeBtn.querySelector('.corner-btn-label');
+        if (label) label.textContent = editMode ? '完成' : '编辑';
+    }
     renderEmailLinks();
     renderNavCards();
     const projectSection = document.getElementById('project-links-section');
