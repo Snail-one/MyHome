@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "dotenv": "^16.4.7",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-session": "^1.18.1",
     "multer": "^2.0.2",
