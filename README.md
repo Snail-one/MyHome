@@ -105,23 +105,23 @@ http://localhost:3000
 
 ### 使用已发布镜像
 
-GitHub Actions 会在代码推送到 `main` 分支或推送 `v*` 版本标签时，自动测试并分别构建 `linux/amd64`、`linux/arm64` 镜像，然后发布到 GitHub Container Registry：
+GitHub Actions 会在代码推送到 `main` 分支或推送 `v*` 版本标签时，自动测试并构建一个同时支持 `linux/amd64`、`linux/arm64` 的多架构镜像，然后发布到 GitHub Container Registry：
 
 ```text
 ghcr.io/snail-one/myhome
 ```
 
-两个架构使用独立标签：
+镜像标签规则：
 
-- AMD64：`latest-amd64`、`main-amd64`、`sha-*-amd64`
-- ARM64：`latest-arm64`、`main-arm64`、`sha-*-arm64`
+- 推送 `main`：生成 `main`、`sha-*`，用于开发版本
+- 推送版本标签（例如 `v1.2.3`）：生成 `1.2.3`、`1.2`、`sha-*` 和 `latest`
 
-例如推送 `v1.2.3` 标签时，会分别生成 `v1.2.3-amd64`、`1.2.3-amd64`、`1.2-amd64` 以及对应的 `-arm64` 标签。
+`latest` 只随正式版本标签更新，不会被日常的 `main` 分支构建覆盖。
 
-拉取并运行 AMD64 最新版：
+拉取并运行最新正式版：
 
 ```bash
-docker pull ghcr.io/snail-one/myhome:latest-amd64
+docker pull ghcr.io/snail-one/myhome:latest
 docker run -d \
 	--name my-home \
 	--env-file .env \
@@ -129,10 +129,10 @@ docker run -d \
 	-e DATABASE_PATH=/app/data/my-home.sqlite \
 	-p 3000:3000 \
 	-v my-home-data:/app/data \
-	ghcr.io/snail-one/myhome:latest-amd64
+	ghcr.io/snail-one/myhome:latest
 ```
 
-ARM64 设备将标签替换为 `latest-arm64`。
+Docker 会根据宿主机自动选择 AMD64 或 ARM64 镜像。需要测试 `main` 分支版本时，将标签替换为 `main`。
 
 工作流也支持在 GitHub 的 Actions 页面手动触发。发布使用仓库自带的 `GITHUB_TOKEN`，无需额外创建 Registry 密钥。如果需要匿名拉取镜像，请在 GitHub Packages 中把该容器包的可见性设为 Public。
 
