@@ -515,6 +515,8 @@ body::before {
 
 #manage-modal .modal {
     max-width: min(760px, calc(100vw - 40px));
+    height: min(720px, 90vh);
+    height: min(720px, 90dvh);
 }
 
 .background-section label {
@@ -1094,6 +1096,8 @@ body::before {
 
 /* 设置弹窗二级菜单 */
 #manage-modal .modal-body {
+    min-height: 0;
+    flex: 1 1 auto;
     padding-top: 0;
 }
 
@@ -2216,6 +2220,11 @@ body.link-dragging .email-link {
         border-radius: 22px 22px 0 0;
         transform: translateY(24px);
         transition: transform var(--transition-normal);
+    }
+
+    #manage-modal .modal {
+        height: min(92vh, 760px);
+        height: min(92dvh, 760px);
     }
 
     .modal-overlay.modal-open .modal {
