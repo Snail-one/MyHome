@@ -105,7 +105,7 @@ http://localhost:3000
 
 ### 使用已发布镜像
 
-GitHub Actions 会在代码推送到 `main` 分支时自动运行测试，但不会发布容器。只有推送 `v*` 版本标签时，才会构建一个同时支持 `linux/amd64`、`linux/arm64` 的多架构镜像并发布到 GitHub Container Registry：
+GitHub Actions 只在推送 `v*` 版本标签时触发。工作流会先运行测试，通过后构建一个同时支持 `linux/amd64`、`linux/arm64` 的多架构镜像并发布到 GitHub Container Registry：
 
 ```text
 ghcr.io/snail-one/myhome
@@ -115,7 +115,7 @@ ghcr.io/snail-one/myhome
 
 - 推送版本标签（例如 `v1.2.3`）：生成 `1.2.3`、`1.2`、`sha-*` 和 `latest`
 
-`latest` 只随正式版本标签更新，日常推送和手动运行工作流都不会发布容器。
+`latest` 只随正式版本标签更新，普通分支和 Pull Request 推送不会触发该工作流。
 
 拉取并运行最新正式版：
 
@@ -133,7 +133,7 @@ docker run -d \
 
 Docker 会根据宿主机自动选择 AMD64 或 ARM64 镜像。
 
-工作流也支持在 GitHub 的 Actions 页面手动触发。发布使用仓库自带的 `GITHUB_TOKEN`，无需额外创建 Registry 密钥。如果需要匿名拉取镜像，请在 GitHub Packages 中把该容器包的可见性设为 Public。
+发布使用仓库自带的 `GITHUB_TOKEN`，无需额外创建 Registry 密钥。如果需要匿名拉取镜像，请在 GitHub Packages 中把该容器包的可见性设为 Public。
 
 Dependabot 每周一会分别检查 npm 依赖、Docker 基础镜像和 GitHub Actions，并为可用更新创建 Pull Request。
 
