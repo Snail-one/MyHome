@@ -105,7 +105,7 @@ http://localhost:3000
 
 ### 使用已发布镜像
 
-GitHub Actions 只在推送 `v*` 版本标签时触发。工作流会先运行测试，通过后构建一个同时支持 `linux/amd64`、`linux/arm64` 的多架构镜像并发布到 GitHub Container Registry：
+GitHub Actions 只在推送 `v*` 版本标签时触发，直接构建一个同时支持 `linux/amd64`、`linux/arm64` 的多架构镜像并发布到 GitHub Container Registry，不运行测试任务：
 
 ```text
 ghcr.io/snail-one/myhome
