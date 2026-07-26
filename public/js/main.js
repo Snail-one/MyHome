@@ -1200,6 +1200,31 @@ function openAccountModal() {
     openModal('account-modal');
 }
 
+function activateSettingsPanel(panelId, shouldFocus = false) {
+    const modal = document.getElementById('manage-modal');
+    if (!modal) return;
+
+    const tabs = Array.from(modal.querySelectorAll('.settings-tab'));
+    const panels = Array.from(modal.querySelectorAll('.settings-panel'));
+    const activeTab = tabs.find(tab => tab.dataset.settingsPanel === panelId) || tabs[0];
+    if (!activeTab) return;
+
+    tabs.forEach(tab => {
+        const isActive = tab === activeTab;
+        tab.classList.toggle('active', isActive);
+        tab.setAttribute('aria-selected', String(isActive));
+        tab.tabIndex = isActive ? 0 : -1;
+    });
+
+    panels.forEach(panel => {
+        panel.hidden = panel.id !== activeTab.dataset.settingsPanel;
+    });
+
+    const modalBody = modal.querySelector('.modal-body');
+    if (modalBody) modalBody.scrollTop = 0;
+    if (shouldFocus) activeTab.focus();
+}
+
 function openManageModal() {
     openModal('manage-modal');
     renderLayoutButtons();
@@ -1919,11 +1944,33 @@ function bindMenuManagement() {
     const searchEngineList = document.getElementById('search-engine-list');
     const layoutButtons = document.getElementById('layout-buttons');
     const layoutSettingsSection = document.querySelector('.layout-settings-section');
+    const settingsTabs = document.querySelector('.settings-tabs');
     const iconRefreshBtn = document.getElementById('icon-refresh-btn');
     const cancelBtn = document.getElementById('link-form-cancel');
     const searchEngineCancelBtn = document.getElementById('search-engine-form-cancel');
 
     manageBtn.addEventListener('click', () => openManageModal());
+
+    settingsTabs?.addEventListener('click', event => {
+        const tab = event.target.closest('.settings-tab');
+        if (!tab) return;
+        activateSettingsPanel(tab.dataset.settingsPanel);
+    });
+
+    settingsTabs?.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        const tabs = Array.from(settingsTabs.querySelectorAll('.settings-tab'));
+        const currentIndex = tabs.indexOf(event.target.closest('.settings-tab'));
+        if (currentIndex < 0) return;
+
+        event.preventDefault();
+        let nextIndex = currentIndex;
+        if (event.key === 'Home') nextIndex = 0;
+        if (event.key === 'End') nextIndex = tabs.length - 1;
+        if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+        activateSettingsPanel(tabs[nextIndex].dataset.settingsPanel, true);
+    });
     if (editModeBtn) editModeBtn.addEventListener('click', toggleEditMode);
     if (iconRefreshBtn) iconRefreshBtn.addEventListener('click', refreshIconCache);
     cancelBtn.addEventListener('click', closeLinkModal);
