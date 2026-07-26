@@ -254,15 +254,24 @@ body::before {
 }
 
 .email-links-panel {
-    max-width: min(320px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
     flex-direction: row;
     align-items: center;
     justify-content: flex-end;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+.email-links-panel::-webkit-scrollbar {
+    display: none;
 }
 
 .email-link-wrapper {
     position: relative;
+    flex: 0 0 auto;
 }
 
 .email-link {
