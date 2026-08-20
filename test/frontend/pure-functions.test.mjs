@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   getIconFileUrl,
   getIconResolveUrl,
+  getIconStatusUrl,
 } from '../../public/js/icons.js';
 import { buildSearchUrl } from '../../public/js/search.js';
 import { calculateMaxAvailableLayoutColumns, getLayoutColumnOptions, isValidBackgroundUrl } from '../../public/js/settings.js';
@@ -31,6 +32,10 @@ test('icon URL helpers build server endpoints', () => {
   assert.equal(
     getIconResolveUrl('search-engines', 7),
     '/api/icons/search-engines/7/resolve'
+  );
+  assert.equal(
+    getIconStatusUrl('links', 12),
+    '/api/icons/links/12/status'
   );
 });
 

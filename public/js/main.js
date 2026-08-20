@@ -1,7 +1,8 @@
 import { buildSearchUrl as buildSearchUrlFromTemplate } from './search.js';
 import {
     getIconFileUrl,
-    getIconResolveUrl
+    getIconResolveUrl,
+    getIconStatusUrl
 } from './icons.js';
 import {
     DEFAULT_SETTINGS,
@@ -481,13 +482,42 @@ function getEntityIconVersion(entity) {
     return Number.parseInt(entity?.iconVersion, 10) || 1;
 }
 
+function isTerminalIconStatus(status) {
+    return status === 'ready' || status === 'miss' || status === 'none';
+}
+
 function resolveIconOnServer(descriptor) {
     if (!descriptor || !descriptor.resolveUrl) return null;
 
     const refreshKey = `${descriptor.entityType}:${descriptor.id}:${descriptor.version}:server`;
     if (iconRefreshPromises.has(refreshKey)) return iconRefreshPromises.get(refreshKey);
 
-    const promise = apiRequest(descriptor.resolveUrl, { method: 'POST' })
+    const promise = (async () => {
+        let status = null;
+        try {
+            status = await apiRequest(descriptor.resolveUrl, { method: 'POST' });
+        } catch {
+            status = null;
+        }
+
+        if (isTerminalIconStatus(status?.status)) return status;
+
+        const statusUrl = descriptor.statusUrl || getIconStatusUrl(descriptor.entityType, descriptor.id);
+        if (!statusUrl) return status;
+
+        const deadline = Date.now() + 60000;
+        while (Date.now() < deadline) {
+            await wait(400);
+            try {
+                status = await apiRequest(statusUrl);
+            } catch {
+                continue;
+            }
+            if (isTerminalIconStatus(status?.status)) return status;
+        }
+
+        return status;
+    })()
         .catch(() => null)
         .finally(() => {
             iconRefreshPromises.delete(refreshKey);
@@ -530,8 +560,10 @@ function getLinkIconDescriptor(link, linkType = 'website') {
         id: link.id,
         mode,
         version,
+        status: link.iconStatus || '',
         fileUrl: getIconFileUrl('links', link.id, version),
-        resolveUrl: getIconResolveUrl('links', link.id)
+        resolveUrl: getIconResolveUrl('links', link.id),
+        statusUrl: getIconStatusUrl('links', link.id)
     };
 }
 
@@ -544,55 +576,43 @@ function getSearchEngineIconDescriptor(engine) {
         id: engine.id,
         mode: 'server',
         version,
+        status: engine.iconStatus || '',
         fileUrl: getIconFileUrl('search-engines', engine.id, version),
-        resolveUrl: getIconResolveUrl('search-engines', engine.id)
+        resolveUrl: getIconResolveUrl('search-engines', engine.id),
+        statusUrl: getIconStatusUrl('search-engines', engine.id)
     };
 }
 
 function hydrateIconElement(img, descriptor) {
-    if (!img || !descriptor || descriptor.mode === 'none') {
+    if (!img || !descriptor || descriptor.mode === 'none' || descriptor.status === 'none' || descriptor.status === 'miss') {
         showIconFallback(img);
         return;
     }
 
-    // Use direct image source; browser performs the fetch.
-    // On error for server mode, attempt a one-time server resolve then retry.
     img.iconDescriptor = descriptor;
     img.loading = 'lazy';
     img.decoding = 'async';
-    const fileUrl = descriptor.fileUrl;
 
-    const attemptLoad = (bust = false) => {
-        let url = fileUrl;
-        if (bust) {
-            const sep = url.includes('?') ? '&' : '?';
-            url = `${url}${sep}_=${Date.now()}`;
-        }
-        setIconImageUrl(img, url);
+    const showFile = () => {
+        img.onerror = () => {
+            img.onerror = null;
+            showIconFallback(img);
+        };
+        setIconImageUrl(img, descriptor.fileUrl);
     };
 
-    img.onerror = async () => {
-        img.onerror = null;
-        if (descriptor.mode === 'server') {
-            if (iconCacheRefreshRunning) {
-                showIconFallback(img);
-                return;
-            }
-            await resolveIconOnServer(descriptor);
-            // Retry with cache-busting query to avoid sticky 404 caches.
-            attemptLoad(true);
-            // If still fails after retry, fallback will be handled by the new error handler below.
-            const current = img;
-            current.onerror = () => {
-                current.onerror = null;
-                showIconFallback(current);
-            };
-            return;
-        }
-        showIconFallback(img);
-    };
+    if (descriptor.status === 'ready') {
+        showFile();
+        return;
+    }
 
-    attemptLoad(false);
+    showIconFallback(img);
+    if (descriptor.mode !== 'server' || iconCacheRefreshRunning) return;
+
+    Promise.resolve(resolveIconOnServer(descriptor)).then((status) => {
+        if (!img.isConnected || img.iconDescriptor !== descriptor) return;
+        if (status?.status === 'ready') showFile();
+    });
 }
 
 function getEffectiveUrl(link) {
@@ -817,12 +837,6 @@ function renderProjectCards(options = {}) {
         section.hidden = !getProjectLinks().length && !editMode;
     }
     renderLinkCards('project', options);
-}
-
-function refreshVisibleNavIconsInBackground() {
-    renderEmailLinks();
-    renderProjectCards();
-    renderNavCards();
 }
 
 function renderLinkCollection(linkType = 'website') {
@@ -1498,11 +1512,6 @@ async function moveSearchEngine(engineId, direction) {
     }
 }
 
-function refreshSearchEngineIconsInBackground() {
-    renderSearchEngineButtons();
-    renderSearchEngineList();
-}
-
 async function toggleEditMode() {
     const previous = editMode;
     editMode = !editMode;
@@ -1912,8 +1921,12 @@ async function refreshIconCache() {
         applyLinksResponse(data);
         applySearchEnginesResponse(data.engines || []);
         const status = await waitForIconRefreshCompletion(data.refreshStatus);
-        refreshVisibleNavIconsInBackground();
-        refreshSearchEngineIconsInBackground();
+        const [linksData, searchEnginesData] = await Promise.all([
+            apiRequest('/api/links'),
+            apiRequest('/api/search-engines')
+        ]);
+        applyLinksResponse(linksData);
+        applySearchEnginesResponse(searchEnginesData.engines || []);
         if (status.failed > 0) {
             console.warn(`Icon refresh completed with ${status.failed} failed task(s)`);
         }

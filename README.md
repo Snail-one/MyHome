@@ -14,6 +14,7 @@
 - SQLite 保存用户设置和链接数据
 - 上传的背景图片保存到服务器 `data/uploads/backgrounds/`，数据库只保存图片路径
 - 邮箱入口使用默认图标；其他链接图标统一由服务器获取
+- 链接和搜索引擎列表会带上图标缓存状态；已就绪的直接显示，未缓存的由前端后台解析并轮询，不再靠图片 404 去同步抓取
 - 自动 favicon 抓取由服务端完成，带登录鉴权、协议/凭据校验、重定向次数、响应大小和文件类型限制
 
 ## 运行方式
@@ -49,7 +50,7 @@ LOGIN_WINDOW_MS=900000
 LOGIN_LOCKOUT_MS=900000
 ICON_FETCH_TIMEOUT_MS=5000
 ICON_MAX_REDIRECTS=3
-ICON_MAX_CANDIDATES=40
+ICON_MAX_CANDIDATES=12
 ICON_FETCH_CONCURRENCY=8
 ICON_FETCH_LOG=false
 #ICON_FETCH_PROXY=http://127.0.0.1:7890

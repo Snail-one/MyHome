@@ -198,6 +198,7 @@ test('protected APIs require login and authenticated user can manage settings, l
   result = await app.requestJson('/api/links');
   assert.equal(result.response.status, 200);
   assert.equal(result.data.emailLinks[0].iconMode, 'none');
+  assert.equal(result.data.emailLinks[0].iconStatus, 'none');
   const defaultEmailLink = result.data.emailLinks[0];
   result = await app.requestJson(`/api/icons/links/${defaultEmailLink.id}/resolve`, { method: 'POST' });
   assert.equal(result.response.status, 200);
@@ -473,12 +474,81 @@ test('server icon resolve allows private targets for configured links', async (t
 
   const link = result.data.links.find((item) => item.title === 'Local App');
   result = await app.requestJson(`/api/icons/links/${link.id}/resolve`, { method: 'POST' });
-  assert.equal(result.response.status, 200);
-  assert.equal(result.data.status, 'ready');
+  assert.ok([200, 202].includes(result.response.status));
+
+  let status = result.data;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (status?.status === 'ready' || status?.status === 'miss') break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    result = await app.requestJson(`/api/icons/links/${link.id}/status`);
+    status = result.data;
+  }
+
+  assert.equal(status.status, 'ready');
 
   const response = await app.request(`/api/icons/links/${link.id}/file?v=${link.iconVersion}`);
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') || '', /image\/svg\+xml/);
+});
+
+test('icon resolve returns 202 while a background fetch is running', async (t) => {
+  let releaseFetch;
+  const fetchGate = new Promise((resolve) => {
+    releaseFetch = resolve;
+  });
+  const iconService = {
+    decorateLinksResponse: async (payload) => ({
+      ...payload,
+      links: (payload.links || []).map((link) => ({ ...link, iconStatus: 'empty' })),
+      emailLinks: (payload.emailLinks || []).map((link) => ({ ...link, iconStatus: 'none' })),
+      projectLinks: (payload.projectLinks || []).map((link) => ({ ...link, iconStatus: 'empty' }))
+    }),
+    decorateSearchEngines: async (engines) => (engines || []).map((engine) => ({
+      ...engine,
+      iconStatus: 'empty'
+    })),
+    prefetchLinksResponse() {},
+    prefetchSearchEngines() {},
+    deleteEntityIcon: async () => {},
+    clearIconCache: async () => {},
+    findCachedEntityIcon: async () => null,
+    getEntityIconStatus: async (_type, entity) => ({
+      status: 'pending',
+      id: entity.id,
+      iconVersion: entity.iconVersion || 1
+    }),
+    ensureLinkIcon: async (link) => {
+      if (link.linkType === 'email' || link.iconMode === 'none') {
+        return { accepted: false, status: { status: 'none', id: link.id } };
+      }
+      return { accepted: true, status: { status: 'pending', id: link.id } };
+    },
+    resolveLinkIcon: async () => {
+      await fetchGate;
+      return { status: 'ready' };
+    },
+    resolveSearchEngineIcon: async () => ({ status: 'ready' })
+  };
+
+  const app = await startApp(undefined, { iconService });
+  t.after(() => {
+    releaseFetch();
+    return app.close();
+  });
+  await app.login();
+
+  let result = await app.requestJson('/api/links', {
+    method: 'POST',
+    body: { title: 'Slow Icon', url: 'https://slow-icon.example.com' }
+  });
+  assert.equal(result.response.status, 201);
+  const link = result.data.links.find((item) => item.title === 'Slow Icon');
+  assert.ok(link);
+
+  result = await app.requestJson(`/api/icons/links/${link.id}/resolve`, { method: 'POST' });
+  assert.equal(result.response.status, 202);
+  assert.equal(result.data.status, 'pending');
+  releaseFetch();
 });
 
 test('link icon upload route is not exposed', async (t) => {

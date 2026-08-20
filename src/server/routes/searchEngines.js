@@ -3,32 +3,47 @@ const express = require('express');
 const { validateSearchEnginePayload } = require('../services/validation');
 const { parseIdList } = require('./links');
 
+async function sendSearchEnginesResponse(res, iconService, engines, options = {}) {
+  if (options.prefetch && typeof iconService.prefetchSearchEngines === 'function') {
+    iconService.prefetchSearchEngines(engines);
+  }
+
+  const payload = typeof iconService.decorateSearchEngines === 'function'
+    ? { engines: await iconService.decorateSearchEngines(engines) }
+    : { engines };
+
+  res.status(options.status || 200).json(payload);
+}
+
 function createSearchEnginesRouter(deps) {
   const { auth, iconService, stores } = deps;
   const router = express.Router();
 
-  router.get('/search-engines', auth.requireAuth, (req, res) => {
-    res.json({ engines: stores.searchEngines.get() });
+  router.get('/search-engines', auth.requireAuth, async (req, res) => {
+    await sendSearchEnginesResponse(res, iconService, stores.searchEngines.get());
   });
 
-  router.post('/search-engines', auth.requireAuth, (req, res) => {
+  router.post('/search-engines', auth.requireAuth, async (req, res) => {
     const result = validateSearchEnginePayload(req.body);
     if (result.error) {
       res.status(400).json({ error: result.error });
       return;
     }
 
-    res.status(201).json({ engines: stores.searchEngines.create(result.value) });
+    await sendSearchEnginesResponse(res, iconService, stores.searchEngines.create(result.value), {
+      status: 201,
+      prefetch: true
+    });
   });
 
-  router.put('/search-engines/reorder', auth.requireAuth, (req, res) => {
+  router.put('/search-engines/reorder', auth.requireAuth, async (req, res) => {
     const result = stores.searchEngines.reorder(parseIdList(req.body.ids));
     if (result.error) {
       res.status(400).json({ error: result.error });
       return;
     }
 
-    res.json({ engines: result.value });
+    await sendSearchEnginesResponse(res, iconService, result.value);
   });
 
   router.put('/search-engines/:id', auth.requireAuth, async (req, res) => {
@@ -49,7 +64,7 @@ function createSearchEnginesRouter(deps) {
         .catch((error) => console.warn('Failed to delete stale search engine icon:', error.message));
     }
 
-    res.json({ engines: result.value });
+    await sendSearchEnginesResponse(res, iconService, result.value, { prefetch: true });
   });
 
   router.delete('/search-engines/:id', auth.requireAuth, async (req, res) => {
@@ -68,7 +83,7 @@ function createSearchEnginesRouter(deps) {
         .catch((error) => console.warn('Failed to delete search engine icon:', error.message));
     }
 
-    res.json({ engines: result.value });
+    await sendSearchEnginesResponse(res, iconService, result.value);
   });
 
   return router;

@@ -25,8 +25,12 @@ const COMMON_SECOND_LEVEL_PUBLIC_SUFFIXES = new Set([
 function createIconService(config, deps = {}) {
   const iconFetcher = deps.iconFetcher || createIconFetcher(config);
   const iconResolutionCache = new Map();
+  const inFlightResolves = new Map();
+  const resolveWaiters = [];
   const ICON_CACHE_MAX_SIZE = 200;
   const ICON_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  const MAX_PARALLEL_RESOLVES = 5;
+  let activeResolves = 0;
 
   function evictExpiredCacheEntries(now) {
     for (const [key, entry] of iconResolutionCache) {
@@ -259,6 +263,43 @@ function createIconService(config, deps = {}) {
     };
   }
 
+  function getResolveKey(entityType, entity) {
+    return `${entityType}:${Number.parseInt(entity?.id, 10) || 0}:${Number(entity?.iconVersion || 1)}`;
+  }
+
+  function isResolveInFlight(entityType, entity) {
+    return inFlightResolves.has(getResolveKey(entityType, entity));
+  }
+
+  async function withResolveSlot(work) {
+    if (activeResolves >= MAX_PARALLEL_RESOLVES) {
+      await new Promise((resolve) => {
+        resolveWaiters.push(resolve);
+      });
+    }
+
+    activeResolves += 1;
+    try {
+      return await work();
+    } finally {
+      activeResolves -= 1;
+      const next = resolveWaiters.shift();
+      if (next) next();
+    }
+  }
+
+  function startTrackedResolve(entityType, entity, work) {
+    const key = getResolveKey(entityType, entity);
+    const existing = inFlightResolves.get(key);
+    if (existing) return existing;
+
+    const promise = withResolveSlot(work).finally(() => {
+      if (inFlightResolves.get(key) === promise) inFlightResolves.delete(key);
+    });
+    inFlightResolves.set(key, promise);
+    return promise;
+  }
+
   async function getEntityIconStatus(entityType, entity, options = {}) {
     const metadata = await readEntityIconMetadata(entityType, entity.id);
     const version = Number(entity.iconVersion || 1);
@@ -275,18 +316,22 @@ function createIconService(config, deps = {}) {
       return { ...baseStatus, status: 'none' };
     }
 
-    if (!metadata || Number(metadata.version) !== version) {
-      return { ...baseStatus, status: 'empty' };
+    if (metadata && Number(metadata.version) === version) {
+      return {
+        ...baseStatus,
+        status: metadata.status || 'empty',
+        source: metadata.source || null,
+        sourceUrl: metadata.sourceUrl || '',
+        contentType: metadata.contentType || '',
+        savedAt: metadata.savedAt || ''
+      };
     }
 
-    return {
-      ...baseStatus,
-      status: metadata.status || 'empty',
-      source: metadata.source || null,
-      sourceUrl: metadata.sourceUrl || '',
-      contentType: metadata.contentType || '',
-      savedAt: metadata.savedAt || ''
-    };
+    if (isResolveInFlight(entityType, entity)) {
+      return { ...baseStatus, status: 'pending' };
+    }
+
+    return { ...baseStatus, status: 'empty' };
   }
 
   async function getReusableEntityIconStatus(entityType, entity, options = {}) {
@@ -309,6 +354,11 @@ function createIconService(config, deps = {}) {
   }
 
   async function writeEntityIcon(entityType, entityId, version, icon, metadata = {}) {
+    const existing = await readEntityIconMetadata(entityType, entityId);
+    if (existing && Number(existing.version) > Number(version || 1)) {
+      return { skipped: true };
+    }
+
     await fs.promises.mkdir(config.iconCacheDir, { recursive: true });
     const prefix = getEntityCachePrefix(entityType, entityId);
     const finalFileName = `${prefix}${icon.extension}`;
@@ -344,6 +394,11 @@ function createIconService(config, deps = {}) {
   }
 
   async function markEntityIconMiss(entityType, entityId, version, metadata = {}) {
+    const existing = await readEntityIconMetadata(entityType, entityId);
+    if (existing && Number(existing.version) > Number(version || 1)) {
+      return { skipped: true };
+    }
+
     await deleteEntityIconFiles(entityType, entityId);
     await writeEntityIconMetadata(entityType, entityId, {
       entityType,
@@ -357,16 +412,16 @@ function createIconService(config, deps = {}) {
     });
   }
 
-  async function resolveLinkIcon(link, options = {}) {
+  async function getImmediateLinkIconStatus(link, options = {}) {
     if (!link) return { notFound: true };
     if (link.linkType === 'email') return getEntityIconStatus('links', link, { iconMode: 'none' });
     if (link.iconMode === 'none') return getEntityIconStatus('links', link, { iconMode: 'none' });
     if (link.iconMode === 'upload') return getEntityIconStatus('links', link, { iconMode: 'upload' });
     if (link.iconMode === 'local') return getEntityIconStatus('links', link, { iconMode: 'local' });
+    return getReusableEntityIconStatus('links', link, options);
+  }
 
-    const cachedStatus = await getReusableEntityIconStatus('links', link, options);
-    if (cachedStatus) return cachedStatus;
-
+  async function fetchAndStoreLinkIcon(link) {
     const resolved = await resolveIconForTarget(link.url);
     if (resolved?.icon) {
       await writeEntityIcon('links', link.id, link.iconVersion, resolved.icon, {
@@ -384,17 +439,38 @@ function createIconService(config, deps = {}) {
     return getEntityIconStatus('links', link);
   }
 
+  async function resolveLinkIcon(link, options = {}) {
+    const immediate = await getImmediateLinkIconStatus(link, options);
+    if (immediate) return immediate;
+    return startTrackedResolve('links', link, () => fetchAndStoreLinkIcon(link));
+  }
+
+  async function ensureLinkIcon(link, options = {}) {
+    const immediate = await getImmediateLinkIconStatus(link, options);
+    if (immediate?.notFound) return immediate;
+    if (immediate) return { accepted: false, status: immediate };
+    startTrackedResolve('links', link, () => fetchAndStoreLinkIcon(link));
+    return { accepted: true, status: await getEntityIconStatus('links', link, options) };
+  }
+
+  function prefetchLinkIcon(link) {
+    ensureLinkIcon(link).catch((error) => {
+      console.warn('Failed to prefetch link icon:', error.message);
+    });
+  }
+
   function getSearchEngineTargetUrl(engine) {
     if (!engine?.urlTemplate) return null;
     const sampleUrl = engine.urlTemplate.replaceAll('{query}', 'test');
     return getPrimaryTargetUrl(sampleUrl);
   }
 
-  async function resolveSearchEngineIcon(engine, options = {}) {
+  async function getImmediateSearchEngineIconStatus(engine, options = {}) {
     if (!engine) return { notFound: true };
-    const cachedStatus = await getReusableEntityIconStatus('search-engines', engine, options);
-    if (cachedStatus) return cachedStatus;
+    return getReusableEntityIconStatus('search-engines', engine, options);
+  }
 
+  async function fetchAndStoreSearchEngineIcon(engine) {
     const targetUrl = getSearchEngineTargetUrl(engine);
     const resolved = await resolveIconForTarget(targetUrl);
     if (resolved?.icon) {
@@ -413,14 +489,71 @@ function createIconService(config, deps = {}) {
     return getEntityIconStatus('search-engines', engine);
   }
 
+  async function resolveSearchEngineIcon(engine, options = {}) {
+    const immediate = await getImmediateSearchEngineIconStatus(engine, options);
+    if (immediate) return immediate;
+    return startTrackedResolve('search-engines', engine, () => fetchAndStoreSearchEngineIcon(engine));
+  }
+
+  async function ensureSearchEngineIcon(engine, options = {}) {
+    const immediate = await getImmediateSearchEngineIconStatus(engine, options);
+    if (immediate?.notFound) return immediate;
+    if (immediate) return { accepted: false, status: immediate };
+    startTrackedResolve('search-engines', engine, () => fetchAndStoreSearchEngineIcon(engine));
+    return { accepted: true, status: await getEntityIconStatus('search-engines', engine, options) };
+  }
+
+  function prefetchSearchEngineIcon(engine) {
+    ensureSearchEngineIcon(engine).catch((error) => {
+      console.warn('Failed to prefetch search engine icon:', error.message);
+    });
+  }
+
+  async function decorateLink(link) {
+    const status = await getEntityIconStatus('links', link);
+    return { ...link, iconStatus: status.status };
+  }
+
+  async function decorateLinksResponse(payload = {}) {
+    const [links, emailLinks, projectLinks] = await Promise.all([
+      Promise.all((payload.links || []).map(decorateLink)),
+      Promise.all((payload.emailLinks || []).map(decorateLink)),
+      Promise.all((payload.projectLinks || []).map(decorateLink))
+    ]);
+    return { ...payload, links, emailLinks, projectLinks };
+  }
+
+  async function decorateSearchEngines(engines = []) {
+    return Promise.all(engines.map(async (engine) => {
+      const status = await getEntityIconStatus('search-engines', engine);
+      return { ...engine, iconStatus: status.status };
+    }));
+  }
+
+  function prefetchLinksResponse(payload = {}) {
+    [...(payload.links || []), ...(payload.projectLinks || [])].forEach(prefetchLinkIcon);
+  }
+
+  function prefetchSearchEngines(engines = []) {
+    engines.forEach(prefetchSearchEngineIcon);
+  }
+
   return {
     clearIconCache,
+    decorateLinksResponse,
+    decorateSearchEngines,
     deleteEntityIcon,
+    ensureLinkIcon,
+    ensureSearchEngineIcon,
     findCachedEntityIcon,
     getEntityFileUrl,
     getEntityIconStatus,
     getSearchEngineTargetUrl,
     normalizeIconTargetUrl: normalizeFetcherTargetUrl,
+    prefetchLinkIcon,
+    prefetchLinksResponse,
+    prefetchSearchEngineIcon,
+    prefetchSearchEngines,
     resolveLinkIcon,
     resolveSearchEngineIcon
   };

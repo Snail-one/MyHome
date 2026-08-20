@@ -8,25 +8,41 @@ function parseIdList(value) {
     : [];
 }
 
+async function sendLinksResponse(res, iconService, payload, options = {}) {
+  if (options.prefetch && typeof iconService.prefetchLinksResponse === 'function') {
+    iconService.prefetchLinksResponse(payload);
+  }
+
+  if (typeof iconService.decorateLinksResponse === 'function') {
+    res.status(options.status || 200).json(await iconService.decorateLinksResponse(payload));
+    return;
+  }
+
+  res.status(options.status || 200).json(payload);
+}
+
 function createLinksRouter(deps) {
   const { auth, iconService, stores } = deps;
   const router = express.Router();
 
-  router.get('/links', auth.requireAuth, (req, res) => {
-    res.json(stores.links.getResponse());
+  router.get('/links', auth.requireAuth, async (req, res) => {
+    await sendLinksResponse(res, iconService, stores.links.getResponse());
   });
 
-  router.post('/links', auth.requireAuth, (req, res) => {
+  router.post('/links', auth.requireAuth, async (req, res) => {
     const result = validateLinkPayload(req.body);
     if (result.error) {
       res.status(400).json({ error: result.error });
       return;
     }
 
-    res.status(201).json(stores.links.create(result.value));
+    await sendLinksResponse(res, iconService, stores.links.create(result.value), {
+      status: 201,
+      prefetch: true
+    });
   });
 
-  router.put('/links/reorder', auth.requireAuth, (req, res) => {
+  router.put('/links/reorder', auth.requireAuth, async (req, res) => {
     const ids = parseIdList(req.body.ids);
     const linkType = normalizeLinkType(req.body.type || req.body.linkType);
     const result = stores.links.reorder(linkType, ids);
@@ -35,7 +51,7 @@ function createLinksRouter(deps) {
       return;
     }
 
-    res.json(result.value);
+    await sendLinksResponse(res, iconService, result.value);
   });
 
   router.put('/links/:id', auth.requireAuth, async (req, res) => {
@@ -56,7 +72,7 @@ function createLinksRouter(deps) {
         .catch((error) => console.warn('Failed to delete stale link icon:', error.message));
     }
 
-    res.json(result.value);
+    await sendLinksResponse(res, iconService, result.value, { prefetch: true });
   });
 
   router.delete('/links/:id', auth.requireAuth, async (req, res) => {
@@ -75,7 +91,7 @@ function createLinksRouter(deps) {
         .catch((error) => console.warn('Failed to delete link icon:', error.message));
     }
 
-    res.json(result.value);
+    await sendLinksResponse(res, iconService, result.value);
   });
 
   return router;

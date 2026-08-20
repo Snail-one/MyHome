@@ -389,3 +389,101 @@ test('search engine target URLs prefer original hostname and fall back to root d
     null
   );
 });
+
+test('ensureLinkIcon starts a background fetch and reports pending', async () => {
+  let releaseFetch;
+  const fetchGate = new Promise((resolve) => {
+    releaseFetch = resolve;
+  });
+  let startedFetch;
+  const fetchBegan = new Promise((resolve) => {
+    startedFetch = resolve;
+  });
+  let fetchCalls = 0;
+  const service = createIconService(makeIconConfig(), {
+    iconFetcher: {
+      normalizeIconTargetUrl: () => 'https://example.com/',
+      resolveIconForUrl: async () => {
+        fetchCalls += 1;
+        startedFetch();
+        await fetchGate;
+        return {
+          icon: makeSvgIcon(),
+          sourceUrl: 'https://example.com/favicon.svg',
+          targetUrl: 'https://example.com/'
+        };
+      }
+    }
+  });
+  const link = {
+    id: 40,
+    linkType: 'website',
+    url: 'https://example.com',
+    iconMode: 'server',
+    iconVersion: 1
+  };
+
+  const ensured = await service.ensureLinkIcon(link);
+  await fetchBegan;
+  assert.equal(ensured.accepted, true);
+  assert.equal(ensured.status.status, 'pending');
+  assert.equal((await service.getEntityIconStatus('links', link)).status, 'pending');
+  assert.equal(fetchCalls, 1);
+
+  const decorated = (await service.decorateLinksResponse({
+    links: [link],
+    emailLinks: [],
+    projectLinks: []
+  })).links[0];
+  assert.equal(decorated.iconStatus, 'pending');
+
+  const waiting = service.resolveLinkIcon(link);
+  releaseFetch();
+  const resolved = await waiting;
+  assert.equal(resolved.status, 'ready');
+  assert.equal(fetchCalls, 1);
+  assert.equal((await service.getEntityIconStatus('links', link)).status, 'ready');
+});
+
+test('ensureLinkIcon reuses ready cache without fetching', async () => {
+  const config = makeIconConfig();
+  let fetchCalls = 0;
+  const service = createIconService(config, {
+    iconFetcher: {
+      normalizeIconTargetUrl: () => 'https://example.com/',
+      resolveIconForUrl: async () => {
+        fetchCalls += 1;
+        return {
+          icon: makeSvgIcon(),
+          sourceUrl: 'https://example.com/favicon.svg',
+          targetUrl: 'https://example.com/'
+        };
+      }
+    }
+  });
+  const link = {
+    id: 41,
+    linkType: 'website',
+    url: 'https://example.com',
+    iconMode: 'server',
+    iconVersion: 3
+  };
+
+  await fs.promises.mkdir(config.iconCacheDir, { recursive: true });
+  await fs.promises.writeFile(path.join(config.iconCacheDir, 'links-41.svg'), makeSvgIcon().buffer);
+  await fs.promises.writeFile(path.join(config.iconCacheDir, 'links-41.json'), JSON.stringify({
+    entityType: 'links',
+    entityId: 41,
+    version: 3,
+    status: 'ready',
+    source: 'server',
+    sourceUrl: 'https://cached.example.com/favicon.svg',
+    fileName: 'links-41.svg',
+    contentType: 'image/svg+xml'
+  }));
+
+  const ensured = await service.ensureLinkIcon(link);
+  assert.equal(ensured.accepted, false);
+  assert.equal(ensured.status.status, 'ready');
+  assert.equal(fetchCalls, 0);
+});

@@ -169,11 +169,26 @@ function createIconsRouter(deps) {
     res.json(await iconService.getEntityIconStatus('links', link));
   });
 
+  async function sendEnsureIconResponse(res, ensureResult) {
+    if (ensureResult?.notFound) {
+      res.status(404).json({ error: '图标不存在' });
+      return;
+    }
+
+    const status = ensureResult?.status || ensureResult;
+    res.status(status?.status === 'pending' ? 202 : 200).json(status);
+  }
+
   router.post('/icons/links/:id/resolve', auth.requireAuth, async (req, res) => {
     const link = getLink(req, res);
     if (!link) return;
 
     try {
+      if (typeof iconService.ensureLinkIcon === 'function') {
+        await sendEnsureIconResponse(res, await iconService.ensureLinkIcon(link));
+        return;
+      }
+
       res.json(await iconService.resolveLinkIcon(link));
     } catch (error) {
       console.warn('Failed to resolve link icon:', error.message);
@@ -218,6 +233,11 @@ function createIconsRouter(deps) {
     if (!engine) return;
 
     try {
+      if (typeof iconService.ensureSearchEngineIcon === 'function') {
+        await sendEnsureIconResponse(res, await iconService.ensureSearchEngineIcon(engine));
+        return;
+      }
+
       res.json(await iconService.resolveSearchEngineIcon(engine));
     } catch (error) {
       console.warn('Failed to resolve search engine icon:', error.message);
@@ -265,7 +285,18 @@ function createIconsRouter(deps) {
       ];
 
       const task = startRefreshTask(tasks);
-      res.status(202).json({ ok: true, refreshStatus: serializeRefreshTask(task), ...links, engines });
+      const decoratedLinks = typeof iconService.decorateLinksResponse === 'function'
+        ? await iconService.decorateLinksResponse(links)
+        : links;
+      const decoratedEngines = typeof iconService.decorateSearchEngines === 'function'
+        ? await iconService.decorateSearchEngines(engines)
+        : engines;
+      res.status(202).json({
+        ok: true,
+        refreshStatus: serializeRefreshTask(task),
+        ...decoratedLinks,
+        engines: decoratedEngines
+      });
     } catch (error) {
       console.warn('Failed to refresh icon cache:', error.message);
       res.status(500).json({ error: '刷新图标缓存失败' });
