@@ -122,7 +122,9 @@ function createLinksStore(db, config) {
         title,
         url,
         icon_mode AS iconMode,
-        icon_version AS iconVersion
+        icon_version AS iconVersion,
+        icon_status AS iconStatus,
+        icon_file_name AS iconFileName
       FROM nav_links
       WHERE user_id = ? AND link_type = ?
       ORDER BY sort_order ASC, id ASC
@@ -133,14 +135,16 @@ function createLinksStore(db, config) {
       WHERE user_id = ? AND link_type = ?
     `),
     insert: db.prepare(`
-      INSERT INTO nav_links (user_id, link_key, link_type, title, url, icon_mode, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO nav_links (user_id, link_key, link_type, title, url, icon_mode, icon_status, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `),
     findByKey: db.prepare('SELECT id FROM nav_links WHERE user_id = ? AND link_key = ?'),
     normalizeRequiredEmailLink: db.prepare(`
       UPDATE nav_links
       SET link_type = 'email',
           icon_mode = 'none',
+          icon_status = 'none',
+          icon_file_name = NULL,
           icon_version = CASE
             WHEN icon_mode = 'none' THEN icon_version
             ELSE icon_version + 1
@@ -156,7 +160,9 @@ function createLinksStore(db, config) {
         title,
         url,
         icon_mode AS iconMode,
-        icon_version AS iconVersion
+        icon_version AS iconVersion,
+        icon_status AS iconStatus,
+        icon_file_name AS iconFileName
       FROM nav_links
       WHERE user_id = ? AND id = ?
     `),
@@ -173,12 +179,14 @@ function createLinksStore(db, config) {
           title = ?,
           link_type = 'email',
           icon_mode = 'none',
+          icon_status = 'none',
+          icon_file_name = NULL,
           icon_version = icon_version + 1,
           updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND id = ?
     `),
     findForUpdate: db.prepare(`
-      SELECT link_key, url, icon_mode, icon_version
+      SELECT link_key, url, icon_mode, icon_version, icon_status, icon_file_name
       FROM nav_links
       WHERE user_id = ? AND id = ?
     `),
@@ -189,18 +197,33 @@ function createLinksStore(db, config) {
           url = ?,
           icon_mode = ?,
           icon_version = ?,
+          icon_status = ?,
+          icon_file_name = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND id = ?
+    `),
+    updateIconState: db.prepare(`
+      UPDATE nav_links
+      SET icon_status = ?,
+          icon_file_name = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND id = ?
     `),
     delete: db.prepare('DELETE FROM nav_links WHERE user_id = ? AND id = ?'),
     bumpIconVersion: db.prepare(`
       UPDATE nav_links
-      SET icon_version = icon_version + 1, updated_at = CURRENT_TIMESTAMP
+      SET icon_version = icon_version + 1,
+          icon_status = CASE WHEN icon_mode = 'none' THEN 'none' ELSE 'empty' END,
+          icon_file_name = NULL,
+          updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND id = ?
     `),
     bumpAllIconVersions: db.prepare(`
       UPDATE nav_links
-      SET icon_version = icon_version + 1, updated_at = CURRENT_TIMESTAMP
+      SET icon_version = icon_version + 1,
+          icon_status = 'empty',
+          icon_file_name = NULL,
+          updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND icon_mode != 'none'
     `),
     updateSort: db.prepare(`
@@ -226,6 +249,7 @@ function createLinksStore(db, config) {
     create(payload) {
       const row = statements.nextSortOrder.get(config.userId, payload.linkType);
       const iconMode = payload.linkType === 'email' ? 'none' : payload.iconMode;
+      const iconStatus = iconMode === 'none' ? 'none' : 'empty';
       statements.insert.run(
         config.userId,
         payload.linkKey || null,
@@ -233,6 +257,7 @@ function createLinksStore(db, config) {
         payload.title,
         payload.url,
         iconMode,
+        iconStatus,
         row.next_order
       );
       return this.getResponse();
@@ -263,6 +288,7 @@ function createLinksStore(db, config) {
         emailLink.title,
         emailLink.url,
         'none',
+        'none',
         row.next_order
       );
     },
@@ -277,12 +303,16 @@ function createLinksStore(db, config) {
       const iconMode = nextLinkType === 'email' ? 'none' : payload.iconMode;
       const iconChanged = existing.url !== payload.url || existing.icon_mode !== iconMode;
       const iconVersion = iconChanged ? Number(existing.icon_version || 1) + 1 : Number(existing.icon_version || 1);
+      const iconStatus = iconMode === 'none' ? 'none' : (iconChanged ? 'empty' : (existing.icon_status || 'empty'));
+      const iconFileName = iconChanged || iconMode === 'none' ? null : (existing.icon_file_name || null);
       const result = statements.update.run(
         nextLinkType,
         payload.title,
         payload.url,
         iconMode,
         iconVersion,
+        iconStatus,
+        iconFileName,
         config.userId,
         id
       );
@@ -312,6 +342,14 @@ function createLinksStore(db, config) {
     bumpAllIconVersions() {
       statements.bumpAllIconVersions.run(config.userId);
       return this.getResponse();
+    },
+    updateIconState(id, patch = {}) {
+      statements.updateIconState.run(
+        patch.iconStatus || 'empty',
+        patch.iconFileName || null,
+        config.userId,
+        id
+      );
     },
     reorder(linkType, ids) {
       const currentIds = get(linkType).map((link) => link.id);
@@ -348,7 +386,9 @@ function createSearchEnginesStore(db, config) {
         engine_key AS engineKey,
         name,
         url_template AS urlTemplate,
-        icon_version AS iconVersion
+        icon_version AS iconVersion,
+        icon_status AS iconStatus,
+        icon_file_name AS iconFileName
       FROM search_engines
       WHERE user_id = ?
       ORDER BY sort_order ASC, id ASC
@@ -366,7 +406,9 @@ function createSearchEnginesStore(db, config) {
         engine_key AS engineKey,
         name,
         url_template AS urlTemplate,
-        icon_version AS iconVersion
+        icon_version AS iconVersion,
+        icon_status AS iconStatus,
+        icon_file_name AS iconFileName
       FROM search_engines
       WHERE user_id = ? AND id = ?
     `),
@@ -416,11 +458,18 @@ function createSearchEnginesStore(db, config) {
     `),
     update: db.prepare(`
       UPDATE search_engines
-      SET name = ?, url_template = ?, icon_version = ?, updated_at = CURRENT_TIMESTAMP
+      SET name = ?, url_template = ?, icon_version = ?, icon_status = ?, icon_file_name = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND id = ?
+    `),
+    updateIconState: db.prepare(`
+      UPDATE search_engines
+      SET icon_status = ?,
+          icon_file_name = ?,
+          updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND id = ?
     `),
     findForUpdate: db.prepare(`
-      SELECT engine_key, url_template, icon_version
+      SELECT engine_key, url_template, icon_version, icon_status, icon_file_name
       FROM search_engines
       WHERE user_id = ? AND id = ?
     `),
@@ -428,7 +477,10 @@ function createSearchEnginesStore(db, config) {
     delete: db.prepare('DELETE FROM search_engines WHERE user_id = ? AND id = ?'),
     bumpAllIconVersions: db.prepare(`
       UPDATE search_engines
-      SET icon_version = icon_version + 1, updated_at = CURRENT_TIMESTAMP
+      SET icon_version = icon_version + 1,
+          icon_status = 'empty',
+          icon_file_name = NULL,
+          updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ?
     `),
     nextSortOrder: db.prepare(`
@@ -520,7 +572,17 @@ function createSearchEnginesStore(db, config) {
 
       const iconChanged = existing.url_template !== payload.urlTemplate;
       const iconVersion = iconChanged ? Number(existing.icon_version || 1) + 1 : Number(existing.icon_version || 1);
-      const result = statements.update.run(payload.name, payload.urlTemplate, iconVersion, config.userId, id);
+      const iconStatus = iconChanged ? 'empty' : (existing.icon_status || 'empty');
+      const iconFileName = iconChanged ? null : (existing.icon_file_name || null);
+      const result = statements.update.run(
+        payload.name,
+        payload.urlTemplate,
+        iconVersion,
+        iconStatus,
+        iconFileName,
+        config.userId,
+        id
+      );
       if (Number(result.changes) === 0) return { notFound: true };
       return {
         invalidatedIcon: iconChanged ? { entityType: 'search-engines', id: Number(id) } : null,
@@ -542,6 +604,14 @@ function createSearchEnginesStore(db, config) {
     bumpAllIconVersions() {
       statements.bumpAllIconVersions.run(config.userId);
       return this.get();
+    },
+    updateIconState(id, patch = {}) {
+      statements.updateIconState.run(
+        patch.iconStatus || 'empty',
+        patch.iconFileName || null,
+        config.userId,
+        id
+      );
     }
   };
 }

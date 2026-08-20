@@ -23,6 +23,7 @@ function makeConfig(overrides = {}) {
       UPLOADS_DIR: path.join(tmpDir, 'uploads'),
       PUBLIC_DIR: path.join(repoRoot, 'public'),
       DATABASE_PATH: path.join(tmpDir, 'app.sqlite'),
+      ICON_PREFETCH_ON_READ: 'false',
       BCRYPT_ROUNDS: '4',
       LOGIN_MAX_FAILED_ATTEMPTS: '2',
       LOGIN_WINDOW_MS: '60000',
@@ -485,10 +486,18 @@ test('server icon resolve allows private targets for configured links', async (t
   }
 
   assert.equal(status.status, 'ready');
+  assert.match(status.fileUrl || '', /\/icon-cache\/links-\d+\.svg/);
 
   const response = await app.request(`/api/icons/links/${link.id}/file?v=${link.iconVersion}`);
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') || '', /image\/svg\+xml/);
+
+  const publicResponse = await fetch(`${app.baseUrl}${status.fileUrl}`);
+  assert.equal(publicResponse.status, 200);
+  assert.match(publicResponse.headers.get('content-type') || '', /image\/svg\+xml/);
+
+  const blockedJson = await fetch(`${app.baseUrl}/icon-cache/links-${link.id}.json`);
+  assert.equal(blockedJson.status, 404);
 });
 
 test('icon resolve returns 202 while a background fetch is running', async (t) => {

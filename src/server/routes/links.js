@@ -22,11 +22,13 @@ async function sendLinksResponse(res, iconService, payload, options = {}) {
 }
 
 function createLinksRouter(deps) {
-  const { auth, iconService, stores } = deps;
+  const { auth, iconService, stores, config } = deps;
   const router = express.Router();
 
   router.get('/links', auth.requireAuth, async (req, res) => {
-    await sendLinksResponse(res, iconService, stores.links.getResponse());
+    await sendLinksResponse(res, iconService, stores.links.getResponse(), {
+      prefetch: config?.iconPrefetchOnRead !== false
+    });
   });
 
   router.post('/links', auth.requireAuth, async (req, res) => {
@@ -38,7 +40,7 @@ function createLinksRouter(deps) {
 
     await sendLinksResponse(res, iconService, stores.links.create(result.value), {
       status: 201,
-      prefetch: true
+      prefetch: config?.iconPrefetchOnRead !== false
     });
   });
 
@@ -72,7 +74,9 @@ function createLinksRouter(deps) {
         .catch((error) => console.warn('Failed to delete stale link icon:', error.message));
     }
 
-    await sendLinksResponse(res, iconService, result.value, { prefetch: true });
+    await sendLinksResponse(res, iconService, result.value, {
+      prefetch: config?.iconPrefetchOnRead !== false
+    });
   });
 
   router.delete('/links/:id', auth.requireAuth, async (req, res) => {

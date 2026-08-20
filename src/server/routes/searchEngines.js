@@ -16,11 +16,13 @@ async function sendSearchEnginesResponse(res, iconService, engines, options = {}
 }
 
 function createSearchEnginesRouter(deps) {
-  const { auth, iconService, stores } = deps;
+  const { auth, iconService, stores, config } = deps;
   const router = express.Router();
 
   router.get('/search-engines', auth.requireAuth, async (req, res) => {
-    await sendSearchEnginesResponse(res, iconService, stores.searchEngines.get());
+    await sendSearchEnginesResponse(res, iconService, stores.searchEngines.get(), {
+      prefetch: config?.iconPrefetchOnRead !== false
+    });
   });
 
   router.post('/search-engines', auth.requireAuth, async (req, res) => {
@@ -32,7 +34,7 @@ function createSearchEnginesRouter(deps) {
 
     await sendSearchEnginesResponse(res, iconService, stores.searchEngines.create(result.value), {
       status: 201,
-      prefetch: true
+      prefetch: config?.iconPrefetchOnRead !== false
     });
   });
 
@@ -64,7 +66,9 @@ function createSearchEnginesRouter(deps) {
         .catch((error) => console.warn('Failed to delete stale search engine icon:', error.message));
     }
 
-    await sendSearchEnginesResponse(res, iconService, result.value, { prefetch: true });
+    await sendSearchEnginesResponse(res, iconService, result.value, {
+      prefetch: config?.iconPrefetchOnRead !== false
+    });
   });
 
   router.delete('/search-engines/:id', auth.requireAuth, async (req, res) => {

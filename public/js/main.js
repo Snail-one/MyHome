@@ -1,8 +1,6 @@
 import { buildSearchUrl as buildSearchUrlFromTemplate } from './search.js';
 import {
-    getIconFileUrl,
-    getIconResolveUrl,
-    getIconStatusUrl
+    getIconFileUrl
 } from './icons.js';
 import {
     DEFAULT_SETTINGS,
@@ -38,11 +36,11 @@ let dragPointerY = 0;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let layoutResizeTimer = null;
-const iconRefreshPromises = new Map();
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 let csrfToken = '';
 let csrfTokenPromise = null;
 let iconCacheRefreshRunning = false;
+let iconEventSource = null;
 
 // ==================== DOM 元素 ====================
 const searchInput = document.querySelector('.search-input');
@@ -215,6 +213,7 @@ function showLoggedOut(message = '') {
     applySettings(DEFAULT_SETTINGS);
     document.body.classList.remove('app-loading', 'logged-in');
     document.body.classList.add('logged-out');
+    disconnectIconEvents();
     const loginUrl = message ? `/login?reason=${encodeURIComponent(message)}` : '/login';
     window.location.replace(loginUrl);
 }
@@ -250,6 +249,7 @@ async function restoreSession() {
             return;
         }
 
+        connectIconEvents();
         await loadAppData();
         showLoggedIn(data.user);
     } catch (error) {
@@ -328,7 +328,7 @@ function renderSearchEngineButtons() {
         btn.dataset.engine = key;
         btn.innerHTML = `
             ${iconDescriptor
-                ? '<img alt="" class="engine-favicon">'
+                ? `<img alt="" class="engine-favicon" data-icon-entity="search-engines" data-icon-id="${escapeAttribute(String(engine.id))}">`
                 : '<span class="engine-favicon" aria-hidden="true"></span>'
             }
             <span>${escapeHtml(engine.name)}</span>
@@ -482,48 +482,94 @@ function getEntityIconVersion(entity) {
     return Number.parseInt(entity?.iconVersion, 10) || 1;
 }
 
-function isTerminalIconStatus(status) {
-    return status === 'ready' || status === 'miss' || status === 'none';
+function patchEntityIconState(list, entityId, patch) {
+    const index = list.findIndex((item) => String(item.id) === String(entityId));
+    if (index < 0) return list;
+    const next = list.slice();
+    next[index] = { ...next[index], ...patch };
+    return next;
 }
 
-function resolveIconOnServer(descriptor) {
-    if (!descriptor || !descriptor.resolveUrl) return null;
+function applyIconEvent(event) {
+    if (!event?.entityType || !event.id) return;
 
-    const refreshKey = `${descriptor.entityType}:${descriptor.id}:${descriptor.version}:server`;
-    if (iconRefreshPromises.has(refreshKey)) return iconRefreshPromises.get(refreshKey);
+    const patch = {
+        iconStatus: event.status,
+        iconFileUrl: event.fileUrl || '',
+        iconVersion: event.iconVersion || 1
+    };
 
-    const promise = (async () => {
-        let status = null;
+    if (event.entityType === 'links') {
+        appState.links = patchEntityIconState(appState.links, event.id, patch);
+        appState.projectLinks = patchEntityIconState(appState.projectLinks, event.id, patch);
+    } else if (event.entityType === 'search-engines') {
+        appState.searchEngineRecords = patchEntityIconState(appState.searchEngineRecords, event.id, patch);
+    }
+
+    const selector = `img[data-icon-entity="${event.entityType}"][data-icon-id="${event.id}"]`;
+    document.querySelectorAll(selector).forEach((img) => {
+        const descriptor = {
+            ...(img.iconDescriptor || {}),
+            entityType: event.entityType,
+            id: event.id,
+            mode: 'server',
+            version: patch.iconVersion,
+            status: patch.iconStatus,
+            fileUrl: patch.iconFileUrl
+        };
+        hydrateIconElement(img, descriptor);
+    });
+}
+
+function disconnectIconEvents() {
+    if (!iconEventSource) return;
+    iconEventSource.close();
+    iconEventSource = null;
+}
+
+function connectIconEvents() {
+    if (iconEventSource) return;
+    if (typeof EventSource === 'undefined') return;
+
+    iconEventSource = new EventSource('/api/icons/events');
+    iconEventSource.addEventListener('icon', (message) => {
         try {
-            status = await apiRequest(descriptor.resolveUrl, { method: 'POST' });
-        } catch {
-            status = null;
+            applyIconEvent(JSON.parse(message.data));
+        } catch (error) {
+            console.warn('Failed to apply icon event:', error.message);
         }
+    });
+    iconEventSource.addEventListener('open', () => {
+        syncVisibleIconStatuses();
+    });
+    iconEventSource.onerror = () => {
+        // Browser will reconnect EventSource automatically.
+    };
+}
 
-        if (isTerminalIconStatus(status?.status)) return status;
-
-        const statusUrl = descriptor.statusUrl || getIconStatusUrl(descriptor.entityType, descriptor.id);
-        if (!statusUrl) return status;
-
-        const deadline = Date.now() + 60000;
-        while (Date.now() < deadline) {
-            await wait(400);
-            try {
-                status = await apiRequest(statusUrl);
-            } catch {
-                continue;
-            }
-            if (isTerminalIconStatus(status?.status)) return status;
-        }
-
-        return status;
-    })()
-        .catch(() => null)
-        .finally(() => {
-            iconRefreshPromises.delete(refreshKey);
+async function syncVisibleIconStatuses() {
+    try {
+        const [linksData, searchEnginesData] = await Promise.all([
+            apiRequest('/api/links'),
+            apiRequest('/api/search-engines')
+        ]);
+        const entities = [
+            ...(linksData.links || []).map((link) => ({ ...link, entityType: 'links' })),
+            ...(linksData.projectLinks || []).map((link) => ({ ...link, entityType: 'links' })),
+            ...(searchEnginesData.engines || []).map((engine) => ({ ...engine, entityType: 'search-engines' }))
+        ];
+        entities.forEach((entity) => {
+            applyIconEvent({
+                entityType: entity.entityType,
+                id: entity.id,
+                status: entity.iconStatus,
+                fileUrl: entity.iconFileUrl || '',
+                iconVersion: entity.iconVersion
+            });
         });
-    iconRefreshPromises.set(refreshKey, promise);
-    return promise;
+    } catch (error) {
+        console.warn('Failed to sync icon statuses:', error.message);
+    }
 }
 
 function getIconFallbackElement(img) {
@@ -561,9 +607,7 @@ function getLinkIconDescriptor(link, linkType = 'website') {
         mode,
         version,
         status: link.iconStatus || '',
-        fileUrl: getIconFileUrl('links', link.id, version),
-        resolveUrl: getIconResolveUrl('links', link.id),
-        statusUrl: getIconStatusUrl('links', link.id)
+        fileUrl: link.iconFileUrl || getIconFileUrl('links', link.id, version)
     };
 }
 
@@ -577,9 +621,7 @@ function getSearchEngineIconDescriptor(engine) {
         mode: 'server',
         version,
         status: engine.iconStatus || '',
-        fileUrl: getIconFileUrl('search-engines', engine.id, version),
-        resolveUrl: getIconResolveUrl('search-engines', engine.id),
-        statusUrl: getIconStatusUrl('search-engines', engine.id)
+        fileUrl: engine.iconFileUrl || getIconFileUrl('search-engines', engine.id, version)
     };
 }
 
@@ -590,29 +632,21 @@ function hydrateIconElement(img, descriptor) {
     }
 
     img.iconDescriptor = descriptor;
+    img.dataset.iconEntity = descriptor.entityType || '';
+    img.dataset.iconId = String(descriptor.id || '');
     img.loading = 'lazy';
     img.decoding = 'async';
 
-    const showFile = () => {
+    if (descriptor.status === 'ready' && descriptor.fileUrl) {
         img.onerror = () => {
             img.onerror = null;
             showIconFallback(img);
         };
         setIconImageUrl(img, descriptor.fileUrl);
-    };
-
-    if (descriptor.status === 'ready') {
-        showFile();
         return;
     }
 
     showIconFallback(img);
-    if (descriptor.mode !== 'server' || iconCacheRefreshRunning) return;
-
-    Promise.resolve(resolveIconOnServer(descriptor)).then((status) => {
-        if (!img.isConnected || img.iconDescriptor !== descriptor) return;
-        if (status?.status === 'ready') showFile();
-    });
 }
 
 function getEffectiveUrl(link) {
@@ -724,7 +758,7 @@ function createNavCardElement(link, index, options = {}) {
             <div class="nav-icon${iconDescriptor?.mode === 'none' ? ' nav-icon-empty' : ''}">
                 ${iconDescriptor?.mode === 'none'
                     ? ''
-                    : `<img alt="" class="nav-favicon" loading="lazy" decoding="async">${fallbackFavicon}`
+                    : `<img alt="" class="nav-favicon" loading="lazy" decoding="async" data-icon-entity="links" data-icon-id="${escapeAttribute(String(link.id))}">${fallbackFavicon}`
                 }
             </div>
             <div class="nav-info">
@@ -1450,7 +1484,7 @@ function renderSearchEngineList() {
         return `
             <div class="engine-list-item">
                 ${iconDescriptor
-                    ? `<img alt="" class="engine-list-icon" data-engine-icon-id="${escapeAttribute(String(engine.id))}">`
+                    ? `<img alt="" class="engine-list-icon" data-engine-icon-id="${escapeAttribute(String(engine.id))}" data-icon-entity="search-engines" data-icon-id="${escapeAttribute(String(engine.id))}">`
                     : '<span class="engine-list-icon" aria-hidden="true"></span>'
                 }
                 <div class="engine-list-info">

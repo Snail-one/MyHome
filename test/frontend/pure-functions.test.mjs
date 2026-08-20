@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  getIconCacheUrl,
   getIconFileUrl,
   getIconResolveUrl,
   getIconStatusUrl,
@@ -36,6 +37,10 @@ test('icon URL helpers build server endpoints', () => {
   assert.equal(
     getIconStatusUrl('links', 12),
     '/api/icons/links/12/status'
+  );
+  assert.equal(
+    getIconCacheUrl('links-12.svg', 3),
+    '/icon-cache/links-12.svg?v=3'
   );
 });
 

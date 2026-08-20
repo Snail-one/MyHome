@@ -8,7 +8,7 @@ const { createAuthMiddleware } = require('./middleware/auth');
 const { errorHandler, notFoundApi } = require('./middleware/errors');
 const { createAuthRouter } = require('./routes/auth');
 const { createBackgroundsRouter } = require('./routes/backgrounds');
-const { createIconsRouter } = require('./routes/icons');
+const { createIconEventHub, createIconsRouter } = require('./routes/icons');
 const { createLinksRouter } = require('./routes/links');
 const { createSearchEnginesRouter } = require('./routes/searchEngines');
 const { createSettingsRouter } = require('./routes/settings');
@@ -101,7 +101,14 @@ function createApp(deps) {
     windowMs: config.loginWindowMs,
     lockoutMs: config.loginLockoutMs
   });
-  const iconService = deps.iconService || createIconService(config);
+  const iconEventHub = deps.iconEventHub || createIconEventHub();
+  const iconService = deps.iconService || createIconService(config, {
+    stores,
+    broadcastIcon: (payload) => iconEventHub.broadcast(payload)
+  });
+  if (typeof iconService.hydrateFromDisk === 'function') {
+    iconService.hydrateFromDisk();
+  }
   const htmlRenderer = deps.htmlRenderer || createHtmlRenderer(config, stores.settings);
 
   app.locals.sessionStore = sessionStore;
@@ -126,6 +133,21 @@ function createApp(deps) {
   app.use('/uploads', express.static(config.uploadsDir, {
     dotfiles: 'deny',
     fallthrough: false,
+    maxAge: '7d'
+  }));
+
+  const publicIconFilePattern = /^(links|search-engines)-\d+\.(ico|png|svg|jpg|jpeg|webp|gif)$/i;
+  app.use('/icon-cache', (req, res, next) => {
+    const fileName = path.basename(req.path);
+    if (!publicIconFilePattern.test(fileName)) {
+      res.status(404).end();
+      return;
+    }
+    next();
+  }, express.static(config.iconCacheDir, {
+    dotfiles: 'deny',
+    fallthrough: false,
+    index: false,
     maxAge: '7d'
   }));
 
@@ -178,6 +200,7 @@ function createApp(deps) {
     auth,
     config,
     iconService,
+    iconEventHub,
     limiter,
     stores
   };

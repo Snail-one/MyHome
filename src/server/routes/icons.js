@@ -50,8 +50,45 @@ function yieldToEventLoop() {
   });
 }
 
+function createIconEventHub() {
+  const clients = new Set();
+  const heartbeat = setInterval(() => {
+    for (const res of clients) {
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        clients.delete(res);
+      }
+    }
+  }, 15000);
+  if (typeof heartbeat.unref === 'function') heartbeat.unref();
+
+  return {
+    subscribe(res) {
+      clients.add(res);
+    },
+    unsubscribe(res) {
+      clients.delete(res);
+    },
+    broadcast(payload) {
+      const frame = `event: icon\ndata: ${JSON.stringify(payload)}\n\n`;
+      for (const res of clients) {
+        try {
+          res.write(frame);
+        } catch {
+          clients.delete(res);
+        }
+      }
+    },
+    close() {
+      clearInterval(heartbeat);
+      clients.clear();
+    }
+  };
+}
+
 function createIconsRouter(deps) {
-  const { auth, iconService, stores } = deps;
+  const { auth, iconService, stores, iconEventHub } = deps;
   const router = express.Router();
   let refreshTask = null;
 
@@ -307,10 +344,29 @@ function createIconsRouter(deps) {
     res.json(serializeRefreshTask(refreshTask));
   });
 
+  router.get('/icons/events', auth.requireAuth, (req, res) => {
+    if (!iconEventHub) {
+      res.status(404).json({ error: '图标事件流不可用' });
+      return;
+    }
+
+    res.set({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.flushHeaders?.();
+    res.write(': connected\n\n');
+    iconEventHub.subscribe(res);
+    req.on('close', () => iconEventHub.unsubscribe(res));
+  });
+
   return router;
 }
 
 module.exports = {
+  createIconEventHub,
   createIconsRouter,
   sendCachedIcon
 };

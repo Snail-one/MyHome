@@ -70,6 +70,8 @@ function createSchema(db, schemaVersion) {
       url TEXT NOT NULL,
       icon_mode TEXT NOT NULL DEFAULT 'server',
       icon_version INTEGER NOT NULL DEFAULT 1,
+      icon_status TEXT NOT NULL DEFAULT 'empty',
+      icon_file_name TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -93,6 +95,8 @@ function createSchema(db, schemaVersion) {
       name TEXT NOT NULL,
       url_template TEXT NOT NULL,
       icon_version INTEGER NOT NULL DEFAULT 1,
+      icon_status TEXT NOT NULL DEFAULT 'empty',
+      icon_file_name TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -131,6 +135,21 @@ function ensureIconColumns(db) {
   }
   if (tableExists(db, 'search_engines') && !columnExists(db, 'search_engines', 'icon_version')) {
     db.exec('ALTER TABLE search_engines ADD COLUMN icon_version INTEGER NOT NULL DEFAULT 1');
+  }
+  if (tableExists(db, 'nav_links') && !columnExists(db, 'nav_links', 'icon_status')) {
+    db.exec("ALTER TABLE nav_links ADD COLUMN icon_status TEXT NOT NULL DEFAULT 'empty'");
+  }
+  if (tableExists(db, 'nav_links') && !columnExists(db, 'nav_links', 'icon_file_name')) {
+    db.exec('ALTER TABLE nav_links ADD COLUMN icon_file_name TEXT');
+  }
+  if (tableExists(db, 'search_engines') && !columnExists(db, 'search_engines', 'icon_status')) {
+    db.exec("ALTER TABLE search_engines ADD COLUMN icon_status TEXT NOT NULL DEFAULT 'empty'");
+  }
+  if (tableExists(db, 'search_engines') && !columnExists(db, 'search_engines', 'icon_file_name')) {
+    db.exec('ALTER TABLE search_engines ADD COLUMN icon_file_name TEXT');
+  }
+  if (tableExists(db, 'nav_links') && columnExists(db, 'nav_links', 'icon_status')) {
+    db.exec("UPDATE nav_links SET icon_status = 'none' WHERE icon_mode = 'none' AND icon_status != 'none'");
   }
 }
 

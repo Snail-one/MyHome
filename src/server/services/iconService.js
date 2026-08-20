@@ -22,8 +22,14 @@ const COMMON_SECOND_LEVEL_PUBLIC_SUFFIXES = new Set([
   'org'
 ]);
 
+function getPublicIconFileUrl(fileName, version = 1) {
+  if (!fileName) return '';
+  return `/icon-cache/${encodeURIComponent(String(fileName))}?v=${encodeURIComponent(String(version || 1))}`;
+}
+
 function createIconService(config, deps = {}) {
   const iconFetcher = deps.iconFetcher || createIconFetcher(config);
+  const stores = deps.stores;
   const iconResolutionCache = new Map();
   const inFlightResolves = new Map();
   const resolveWaiters = [];
@@ -184,6 +190,34 @@ function createIconService(config, deps = {}) {
     return `/api/icons/${entityType}/${Number.parseInt(entityId, 10)}/file?v=${encodeURIComponent(String(version || 1))}`;
   }
 
+  function persistIconState(entityType, entityId, patch) {
+    try {
+      if (entityType === 'links') stores?.links?.updateIconState?.(entityId, patch);
+      if (entityType === 'search-engines') stores?.searchEngines?.updateIconState?.(entityId, patch);
+    } catch (error) {
+      if (!/finalized|closed/i.test(error.message || '')) throw error;
+    }
+  }
+
+  function broadcastIconState(entityType, entityId, version, status, fileName) {
+    if (typeof deps.broadcastIcon !== 'function') return;
+    deps.broadcastIcon({
+      entityType,
+      id: Number.parseInt(entityId, 10),
+      iconVersion: Number(version || 1),
+      status,
+      fileUrl: status === 'ready' ? getPublicIconFileUrl(fileName, version) : ''
+    });
+  }
+
+  function persistAndBroadcast(entityType, entityId, version, status, fileName) {
+    persistIconState(entityType, entityId, {
+      iconStatus: status,
+      iconFileName: fileName || null
+    });
+    broadcastIconState(entityType, entityId, version, status, fileName);
+  }
+
   async function readEntityIconMetadata(entityType, entityId) {
     try {
       const content = await fs.promises.readFile(getEntityMetadataPath(entityType, entityId), 'utf8');
@@ -231,6 +265,7 @@ function createIconService(config, deps = {}) {
       .map((entry) => fs.promises.unlink(path.join(config.iconCacheDir, entry.name)).catch((error) => {
         if (error.code !== 'ENOENT') throw error;
       })));
+    persistIconState(entityType, entityId, { iconStatus: 'empty', iconFileName: null });
   }
 
   async function clearIconCache() {
@@ -301,29 +336,47 @@ function createIconService(config, deps = {}) {
   }
 
   async function getEntityIconStatus(entityType, entity, options = {}) {
-    const metadata = await readEntityIconMetadata(entityType, entity.id);
     const version = Number(entity.iconVersion || 1);
     const iconMode = options.iconMode || entity.iconMode || 'server';
+    const dbFileName = entity.iconFileName || '';
+    const dbStatus = entity.iconStatus;
     const baseStatus = {
       entityType,
       id: entity.id,
       iconMode,
       iconVersion: version,
-      fileUrl: getEntityFileUrl(entityType, entity.id, version)
+      fileUrl: ''
     };
 
     if (iconMode === 'none') {
       return { ...baseStatus, status: 'none' };
     }
 
+    if (dbStatus === 'ready' && dbFileName) {
+      return {
+        ...baseStatus,
+        status: 'ready',
+        fileUrl: getPublicIconFileUrl(dbFileName, version)
+      };
+    }
+
+    if (dbStatus === 'miss') {
+      return { ...baseStatus, status: 'miss' };
+    }
+
+    const metadata = await readEntityIconMetadata(entityType, entity.id);
     if (metadata && Number(metadata.version) === version) {
+      const fileUrl = metadata.status === 'ready' && metadata.fileName
+        ? getPublicIconFileUrl(metadata.fileName, version)
+        : '';
       return {
         ...baseStatus,
         status: metadata.status || 'empty',
         source: metadata.source || null,
         sourceUrl: metadata.sourceUrl || '',
         contentType: metadata.contentType || '',
-        savedAt: metadata.savedAt || ''
+        savedAt: metadata.savedAt || '',
+        fileUrl
       };
     }
 
@@ -331,7 +384,7 @@ function createIconService(config, deps = {}) {
       return { ...baseStatus, status: 'pending' };
     }
 
-    return { ...baseStatus, status: 'empty' };
+    return { ...baseStatus, status: dbStatus || 'empty' };
   }
 
   async function getReusableEntityIconStatus(entityType, entity, options = {}) {
@@ -381,6 +434,7 @@ function createIconService(config, deps = {}) {
         contentType: icon.contentType,
         savedAt: new Date().toISOString()
       });
+      persistAndBroadcast(entityType, entityId, version, 'ready', finalFileName);
     } catch (error) {
       // Clean up temp file on any failure after write
       await fs.promises.unlink(tempPath).catch(() => {});
@@ -410,6 +464,7 @@ function createIconService(config, deps = {}) {
       error: metadata.error || '',
       savedAt: new Date().toISOString()
     });
+    persistAndBroadcast(entityType, entityId, version, 'miss', '');
   }
 
   async function getImmediateLinkIconStatus(link, options = {}) {
@@ -418,6 +473,9 @@ function createIconService(config, deps = {}) {
     if (link.iconMode === 'none') return getEntityIconStatus('links', link, { iconMode: 'none' });
     if (link.iconMode === 'upload') return getEntityIconStatus('links', link, { iconMode: 'upload' });
     if (link.iconMode === 'local') return getEntityIconStatus('links', link, { iconMode: 'local' });
+    if (options.force) return null;
+    const status = await getEntityIconStatus('links', link, options);
+    if (status.status === 'ready' || status.status === 'miss') return status;
     return getReusableEntityIconStatus('links', link, options);
   }
 
@@ -467,6 +525,9 @@ function createIconService(config, deps = {}) {
 
   async function getImmediateSearchEngineIconStatus(engine, options = {}) {
     if (!engine) return { notFound: true };
+    if (options.force) return null;
+    const status = await getEntityIconStatus('search-engines', engine, options);
+    if (status.status === 'ready' || status.status === 'miss') return status;
     return getReusableEntityIconStatus('search-engines', engine, options);
   }
 
@@ -511,7 +572,7 @@ function createIconService(config, deps = {}) {
 
   async function decorateLink(link) {
     const status = await getEntityIconStatus('links', link);
-    return { ...link, iconStatus: status.status };
+    return { ...link, iconStatus: status.status, iconFileUrl: status.fileUrl || '' };
   }
 
   async function decorateLinksResponse(payload = {}) {
@@ -526,8 +587,55 @@ function createIconService(config, deps = {}) {
   async function decorateSearchEngines(engines = []) {
     return Promise.all(engines.map(async (engine) => {
       const status = await getEntityIconStatus('search-engines', engine);
-      return { ...engine, iconStatus: status.status };
+      return { ...engine, iconStatus: status.status, iconFileUrl: status.fileUrl || '' };
     }));
+  }
+
+  function hydrateFromDisk() {
+    if (!stores) return;
+
+    (stores.links.get('email') || []).forEach((link) => {
+      if (link.iconMode === 'none' && link.iconStatus !== 'none') {
+        persistIconState('links', link.id, { iconStatus: 'none', iconFileName: null });
+      }
+    });
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(config.iconCacheDir);
+    } catch {
+      return;
+    }
+
+    entries.forEach((name) => {
+      if (!name.endsWith('.json')) return;
+      let metadata;
+      try {
+        metadata = JSON.parse(fs.readFileSync(path.join(config.iconCacheDir, name), 'utf8'));
+      } catch {
+        return;
+      }
+      if (!metadata?.entityType || !metadata.entityId) return;
+
+      const entity = metadata.entityType === 'links'
+        ? stores.links.findById(metadata.entityId)
+        : stores.searchEngines?.findById(metadata.entityId);
+      if (!entity) return;
+      if (Number(metadata.version) !== Number(entity.iconVersion || 1)) return;
+      if (entity.iconStatus === 'ready' || entity.iconStatus === 'miss') return;
+
+      if (metadata.status === 'ready' && metadata.fileName) {
+        persistIconState(metadata.entityType, metadata.entityId, {
+          iconStatus: 'ready',
+          iconFileName: metadata.fileName
+        });
+      } else if (metadata.status === 'miss') {
+        persistIconState(metadata.entityType, metadata.entityId, {
+          iconStatus: 'miss',
+          iconFileName: null
+        });
+      }
+    });
   }
 
   function prefetchLinksResponse(payload = {}) {
@@ -547,7 +655,9 @@ function createIconService(config, deps = {}) {
     ensureSearchEngineIcon,
     findCachedEntityIcon,
     getEntityFileUrl,
+    getPublicIconFileUrl,
     getEntityIconStatus,
+    hydrateFromDisk,
     getSearchEngineTargetUrl,
     normalizeIconTargetUrl: normalizeFetcherTargetUrl,
     prefetchLinkIcon,
@@ -560,5 +670,6 @@ function createIconService(config, deps = {}) {
 }
 
 module.exports = {
-  createIconService
+  createIconService,
+  getPublicIconFileUrl
 };
