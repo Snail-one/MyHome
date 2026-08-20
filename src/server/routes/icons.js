@@ -50,41 +50,17 @@ function yieldToEventLoop() {
   });
 }
 
-function createIconEventHub() {
-  const clients = new Set();
-  const heartbeat = setInterval(() => {
-    for (const res of clients) {
-      try {
-        res.write(': ping\n\n');
-      } catch {
-        clients.delete(res);
-      }
-    }
-  }, 15000);
-  if (typeof heartbeat.unref === 'function') heartbeat.unref();
+function isSameOriginEventRequest(req) {
+  const fetchSite = String(req.get('sec-fetch-site') || '').toLowerCase();
+  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') return false;
 
-  return {
-    subscribe(res) {
-      clients.add(res);
-    },
-    unsubscribe(res) {
-      clients.delete(res);
-    },
-    broadcast(payload) {
-      const frame = `event: icon\ndata: ${JSON.stringify(payload)}\n\n`;
-      for (const res of clients) {
-        try {
-          res.write(frame);
-        } catch {
-          clients.delete(res);
-        }
-      }
-    },
-    close() {
-      clearInterval(heartbeat);
-      clients.clear();
-    }
-  };
+  const origin = req.get('origin');
+  if (!origin) return true;
+  try {
+    return new URL(origin).origin === new URL(`${req.protocol}://${req.get('host')}`).origin;
+  } catch {
+    return false;
+  }
 }
 
 function createIconsRouter(deps) {
@@ -350,15 +326,34 @@ function createIconsRouter(deps) {
       return;
     }
 
+    if (!isSameOriginEventRequest(req)) {
+      res.status(403).json({ error: '请求来源无效' });
+      return;
+    }
+
+    const subscription = iconEventHub.subscribe({
+      res,
+      sessionId: req.sessionID,
+      userId: req.session.userId
+    });
+    if (!subscription?.accepted) {
+      res.status(429).json({ error: 'SSE 连接数已达上限' });
+      return;
+    }
+
     res.set({
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
+      'Cache-Control': 'private, no-store, no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no'
     });
+    res.vary('Cookie');
     res.flushHeaders?.();
-    res.write(': connected\n\n');
-    iconEventHub.subscribe(res);
+    if (res.write(': connected\n\n') === false) {
+      iconEventHub.unsubscribe(res);
+      res.destroy?.();
+      return;
+    }
     req.on('close', () => iconEventHub.unsubscribe(res));
   });
 
@@ -366,7 +361,7 @@ function createIconsRouter(deps) {
 }
 
 module.exports = {
-  createIconEventHub,
   createIconsRouter,
+  isSameOriginEventRequest,
   sendCachedIcon
 };

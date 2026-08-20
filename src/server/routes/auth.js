@@ -44,7 +44,7 @@ function establishSession(req, res, config, user, statusCode = 200) {
 }
 
 function createAuthRouter(deps) {
-  const { auth, config, limiter, stores } = deps;
+  const { auth, config, iconEventHub, limiter, stores } = deps;
   const router = express.Router();
 
   router.get('/setup', (req, res) => {
@@ -161,11 +161,13 @@ function createAuthRouter(deps) {
   });
 
   router.post('/logout', auth.requireAuth, (req, res) => {
+    const sessionId = req.sessionID;
     req.session.destroy((error) => {
       if (error) {
         res.status(500).json({ error: '退出失败，请重试' });
         return;
       }
+      iconEventHub?.disconnectSession?.(sessionId);
       res.clearCookie(config.sessionCookieName, {
         httpOnly: true,
         sameSite: 'lax',

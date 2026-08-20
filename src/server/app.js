@@ -8,11 +8,12 @@ const { createAuthMiddleware } = require('./middleware/auth');
 const { errorHandler, notFoundApi } = require('./middleware/errors');
 const { createAuthRouter } = require('./routes/auth');
 const { createBackgroundsRouter } = require('./routes/backgrounds');
-const { createIconEventHub, createIconsRouter } = require('./routes/icons');
+const { createIconsRouter } = require('./routes/icons');
 const { createLinksRouter } = require('./routes/links');
 const { createSearchEnginesRouter } = require('./routes/searchEngines');
 const { createSettingsRouter } = require('./routes/settings');
 const { createHtmlRenderer } = require('./services/htmlRenderer');
+const { createIconEventHub } = require('./services/iconEventHub');
 const { createIconService } = require('./services/iconService');
 const { createLoginLimiter } = require('./services/loginLimiter');
 const { SQLiteSessionStore } = require('./services/sessionStore');
@@ -101,10 +102,15 @@ function createApp(deps) {
     windowMs: config.loginWindowMs,
     lockoutMs: config.loginLockoutMs
   });
-  const iconEventHub = deps.iconEventHub || createIconEventHub();
+  const iconEventHub = deps.iconEventHub || createIconEventHub({
+    sessionStore,
+    heartbeatMs: config.iconSseHeartbeatMs,
+    maxConnections: config.iconSseMaxConnections,
+    maxConnectionsPerSession: config.iconSseMaxConnectionsPerSession
+  });
   const iconService = deps.iconService || createIconService(config, {
     stores,
-    broadcastIcon: (payload) => iconEventHub.broadcast(payload)
+    broadcastIcon: (payload) => iconEventHub.broadcast(payload, config.userId)
   });
   if (typeof iconService.hydrateFromDisk === 'function') {
     iconService.hydrateFromDisk();
@@ -112,6 +118,7 @@ function createApp(deps) {
   const htmlRenderer = deps.htmlRenderer || createHtmlRenderer(config, stores.settings);
 
   app.locals.sessionStore = sessionStore;
+  app.locals.iconEventHub = iconEventHub;
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
 

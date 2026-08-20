@@ -48,6 +48,9 @@ test('loadConfig builds expected runtime paths', () => {
   assert.equal(config.iconFetchLogEnabled, false);
   assert.equal(config.iconFetchConcurrency, 8);
   assert.equal(config.iconPrefetchOnRead, true);
+  assert.equal(config.iconSseHeartbeatMs, 15000);
+  assert.equal(config.iconSseMaxConnections, 32);
+  assert.equal(config.iconSseMaxConnectionsPerSession, 4);
 });
 
 test('loadConfig builds icon fetch proxy settings', () => {

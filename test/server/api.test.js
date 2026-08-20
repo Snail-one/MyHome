@@ -47,6 +47,7 @@ async function startApp(overrides, options = {}) {
   const app = createApp({
     config,
     db: database.db,
+    iconEventHub: options.iconEventHub,
     iconService: options.iconService,
     stores: database.stores
   });
@@ -122,6 +123,7 @@ async function startApp(overrides, options = {}) {
   }
 
   async function close() {
+    app.locals.iconEventHub?.close?.();
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
@@ -129,7 +131,15 @@ async function startApp(overrides, options = {}) {
     database.close();
   }
 
-  return { baseUrl, close, database, login, request, requestJson };
+  return {
+    baseUrl,
+    close,
+    database,
+    iconEventHub: app.locals.iconEventHub,
+    login,
+    request,
+    requestJson
+  };
 }
 
 test('first deployment registration creates hashed admin and authenticated defaults', async (t) => {
@@ -302,6 +312,50 @@ test('csrf protection requires tokens and rejects cross-origin unsafe requests',
     headers: { Origin: 'https://evil.example.com' }
   });
   assert.equal(result.response.status, 403);
+});
+
+test('SSE requires authentication, enforces origin and connection limits, and closes on logout', async (t) => {
+  const app = await startApp({
+    ICON_SSE_MAX_CONNECTIONS: '2',
+    ICON_SSE_MAX_CONNECTIONS_PER_SESSION: '1'
+  });
+  t.after(app.close);
+
+  let response = await app.request('/api/icons/events');
+  assert.equal(response.status, 401);
+
+  await app.login();
+  response = await app.request('/api/icons/events', {
+    headers: {
+      Origin: 'https://evil.example.com',
+      'Sec-Fetch-Site': 'cross-site'
+    }
+  });
+  assert.equal(response.status, 403);
+
+  const stream = await app.request('/api/icons/events', {
+    headers: {
+      Origin: app.baseUrl,
+      'Sec-Fetch-Site': 'same-origin'
+    }
+  });
+  assert.equal(stream.status, 200);
+  assert.match(stream.headers.get('content-type') || '', /^text\/event-stream/);
+  assert.match(stream.headers.get('cache-control') || '', /no-store/);
+  assert.equal(app.iconEventHub.getConnectionCount(), 1);
+
+  const limited = await app.request('/api/icons/events', {
+    headers: {
+      Origin: app.baseUrl,
+      'Sec-Fetch-Site': 'same-origin'
+    }
+  });
+  assert.equal(limited.status, 429);
+
+  const logout = await app.requestJson('/api/logout', { method: 'POST' });
+  assert.equal(logout.response.status, 200);
+  assert.equal(app.iconEventHub.getConnectionCount(), 0);
+  await stream.body.cancel().catch(() => {});
 });
 
 test('authenticated user can update username and password hash', async (t) => {

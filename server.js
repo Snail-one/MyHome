@@ -24,6 +24,13 @@ function main() {
   function gracefulShutdown(signal) {
     console.log(`\nReceived ${signal}, shutting down gracefully...`);
 
+    try {
+      const iconEventHub = app.locals.iconEventHub;
+      if (iconEventHub && typeof iconEventHub.close === 'function') {
+        iconEventHub.close();
+      }
+    } catch (_) { /* ignore */ }
+
     server.close(() => {
       console.log('HTTP server closed');
       try {
