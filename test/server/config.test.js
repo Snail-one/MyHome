@@ -46,6 +46,7 @@ test('loadConfig builds expected runtime paths', () => {
   assert.equal(config.trustProxy, true);
   assert.equal(config.sessionCookieName, 'my_home_sid');
   assert.equal(config.iconFetchLogEnabled, false);
+  assert.equal(config.iconFetchConcurrency, 8);
 });
 
 test('loadConfig builds icon fetch proxy settings', () => {

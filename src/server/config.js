@@ -142,6 +142,7 @@ function loadConfig(env = process.env, options = {}) {
     iconHtmlSampleSize: 128 * 1024,
     iconMaxRedirects: parseIntegerEnv(env.ICON_MAX_REDIRECTS, 3, 0),
     iconMaxCandidates: parseIntegerEnv(env.ICON_MAX_CANDIDATES, 12, 1),
+    iconFetchConcurrency: parseIntegerEnv(env.ICON_FETCH_CONCURRENCY, 8, 1),
     iconFetchProxy: {
       httpProxy: iconFetchHttpProxy,
       httpsProxy: iconFetchHttpsProxy,

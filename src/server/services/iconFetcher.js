@@ -77,6 +77,76 @@ function getIconFetchTimeoutMs(config, useProxy = false) {
   return useProxy ? Math.max(timeoutMs, 10000) : timeoutMs;
 }
 
+function getIconFetchConcurrency(config, fallback = 8) {
+  const parsed = Number.parseInt(config?.iconFetchConcurrency, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function firstTruthyResult(taskFns, options = {}) {
+  const tasks = Array.isArray(taskFns) ? taskFns.map((fn) => (typeof fn === 'function' ? fn : () => fn)) : [];
+  if (!tasks.length) return Promise.resolve(null);
+
+  const parsedConcurrency = Number.parseInt(options.concurrency, 10);
+  const limit = Math.max(1, Number.isInteger(parsedConcurrency) ? Math.min(parsedConcurrency, tasks.length) : tasks.length);
+
+  return new Promise((resolve, reject) => {
+    let nextIndex = 0;
+    let inFlight = 0;
+    let unfinished = tasks.length;
+    let lastError = null;
+    let done = false;
+
+    const finish = (value, error) => {
+      if (done) return;
+      done = true;
+      if (value) {
+        resolve(value);
+        return;
+      }
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(null);
+    };
+
+    const onSettle = (result) => {
+      inFlight -= 1;
+      unfinished -= 1;
+
+      if (result.status === 'fulfilled' && result.value) {
+        finish(result.value);
+        launchMore();
+        return;
+      }
+
+      if (result.status === 'rejected') lastError = result.reason;
+      if (unfinished === 0) {
+        finish(null, lastError);
+        return;
+      }
+
+      launchMore();
+    };
+
+    const launchMore = () => {
+      while (!done && nextIndex < tasks.length && inFlight < limit) {
+        const task = tasks[nextIndex];
+        nextIndex += 1;
+        inFlight += 1;
+        Promise.resolve()
+          .then(task)
+          .then(
+            (value) => onSettle({ status: 'fulfilled', value }),
+            (reason) => onSettle({ status: 'rejected', reason })
+          );
+      }
+    };
+
+    launchMore();
+  });
+}
+
 function formatProxyLogValue(proxyUrl) {
   if (!proxyUrl) return '';
 
@@ -493,26 +563,22 @@ async function fetchDocumentIconHints(config, parsedUrl, useProxy = false, deps 
 }
 
 async function discoverDocumentIconHints(config, parsedUrl, deps = {}) {
-  let directHints = null;
+  const loadHints = (useProxy) => async () => {
+    const hints = await fetchDocumentIconHints(config, parsedUrl, useProxy, deps);
+    return hints?.iconCandidates?.length ? hints : null;
+  };
+
+  const tasks = [loadHints(false)];
+  if (hasIconFetchProxy(config)) {
+    logIconFetch(config, 'html:proxy-parallel', { url: parsedUrl.href }, deps);
+    tasks.push(loadHints(true));
+  }
 
   try {
-    directHints = await fetchDocumentIconHints(config, parsedUrl, false, deps);
-    if (directHints?.iconCandidates?.length) return directHints;
+    return await firstTruthyResult(tasks);
   } catch {
-    directHints = null;
+    return null;
   }
-
-  if (hasIconFetchProxy(config)) {
-    logIconFetch(config, 'html:proxy-fallback', { url: parsedUrl.href }, deps);
-    try {
-      const proxyHints = await fetchDocumentIconHints(config, parsedUrl, true, deps);
-      if (proxyHints?.iconCandidates?.length) return proxyHints;
-    } catch {
-      // HTML icon hints are optional; callers can handle an empty candidate list.
-    }
-  }
-
-  return directHints;
 }
 
 async function readIconCandidate(config, candidateUrl, useProxy = false, deps = {}) {
@@ -568,33 +634,15 @@ function getCandidateUrl(candidate) {
 
 async function fetchIconCandidate(config, candidate, deps = {}) {
   const candidateUrl = getCandidateUrl(candidate);
-  const preferredFetchMode = typeof candidate === 'string' ? '' : candidate?.fetchMode;
   if (!candidateUrl) return null;
 
-  const hasP = hasIconFetchProxy(config);
-  // Use preferred only to decide attempt *order*. Always allow fallback to the other
-  // mode when proxy is configured. This ensures icon resources (often cross-origin
-  // CDNs) are fetched independently of how the HTML page was discovered.
-  const tryProxyFirst = (preferredFetchMode === 'proxy' && hasP);
-  const attempts = tryProxyFirst ? [true, false] : [false, true];
-
-  let lastErr = null;
-  for (const useProxy of attempts) {
-    if (useProxy && !hasP) continue;
-    try {
-      const icon = await readIconCandidate(config, candidateUrl, useProxy, deps);
-      if (icon) return icon;
-    } catch (error) {
-      lastErr = error;
-      // Log proxy fallback only on the transition in the normal (direct-first) case
-      if (!useProxy && hasP && !tryProxyFirst) {
-        logIconFetch(config, 'icon:proxy-fallback', { url: candidateUrl }, deps);
-      }
-    }
+  const tasks = [() => readIconCandidate(config, candidateUrl, false, deps)];
+  if (hasIconFetchProxy(config)) {
+    logIconFetch(config, 'icon:proxy-parallel', { url: candidateUrl }, deps);
+    tasks.push(() => readIconCandidate(config, candidateUrl, true, deps));
   }
 
-  if (lastErr) throw lastErr;
-  return null;
+  return firstTruthyResult(tasks);
 }
 
 function getLargestIconSizeFromText(value, options = {}) {
@@ -712,27 +760,32 @@ async function resolveIconForUrl(config, targetUrl, deps = {}) {
   const parsedUrl = new URL(normalizedTargetUrl);
   logIconFetch(config, 'resolve:start', { url: normalizedTargetUrl }, deps);
   const candidates = await discoverIconCandidateDetails(config, parsedUrl, deps);
+  const resolved = await firstTruthyResult(
+    candidates.map((candidate) => async () => {
+      const candidateUrl = candidate.url;
+      try {
+        const icon = await fetchIconCandidate(config, candidate, deps);
+        if (!icon) return null;
+        return { icon, sourceUrl: candidateUrl, targetUrl: normalizedTargetUrl };
+      } catch (error) {
+        logIconFetch(config, 'resolve:candidate-error', {
+          target: normalizedTargetUrl,
+          source: candidateUrl,
+          ...getErrorLogDetails(error)
+        }, deps);
+        return null;
+      }
+    }),
+    { concurrency: getIconFetchConcurrency(config) }
+  );
 
-  for (const candidate of candidates) {
-    const candidateUrl = candidate.url;
-    try {
-      const icon = await fetchIconCandidate(config, candidate, deps);
-      if (!icon) continue;
-
-      logIconFetch(config, 'resolve:hit', {
-        target: normalizedTargetUrl,
-        source: candidateUrl,
-        contentType: icon.contentType
-      }, deps);
-      return { icon, sourceUrl: candidateUrl, targetUrl: normalizedTargetUrl };
-    } catch (error) {
-      logIconFetch(config, 'resolve:candidate-error', {
-        target: normalizedTargetUrl,
-        source: candidateUrl,
-        ...getErrorLogDetails(error)
-      }, deps);
-      // Try the next candidate.
-    }
+  if (resolved?.icon) {
+    logIconFetch(config, 'resolve:hit', {
+      target: normalizedTargetUrl,
+      source: resolved.sourceUrl,
+      contentType: resolved.icon.contentType
+    }, deps);
+    return resolved;
   }
 
   logIconFetch(config, 'resolve:miss', {
@@ -757,6 +810,7 @@ module.exports = {
   discoverIconCandidates,
   extractIconLinksFromHtml,
   fetchIconCandidate,
+  firstTruthyResult,
   getIconCandidateScore,
   getLargestIconSizeFromText,
   normalizeIconTargetUrl,

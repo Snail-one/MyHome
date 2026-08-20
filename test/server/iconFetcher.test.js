@@ -12,9 +12,18 @@ const {
   discoverIconCandidates,
   extractIconLinksFromHtml,
   fetchIconCandidate,
+  firstTruthyResult,
   normalizeIconTargetUrl,
   toHttpUrl
 } = require('../../src/server/services/iconFetcher');
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function callModes(calls) {
+  return new Set(calls.map((call) => Boolean(call.hasProxy)));
+}
 
 function makeIconConfig(overrides = {}) {
   const rootDir = path.resolve(__dirname, '../..');
@@ -374,7 +383,29 @@ test('fetchIconCandidate accepts valid image magic and rejects forged image data
   );
 });
 
-test('icon fetcher tries direct requests before proxy fallback', async () => {
+test('firstTruthyResult returns the first successful value and stops launching more work', async () => {
+  const started = [];
+  const result = await firstTruthyResult([
+    async () => {
+      started.push('slow-miss');
+      await delay(40);
+      return null;
+    },
+    async () => {
+      started.push('fast-hit');
+      return 'ok';
+    },
+    async () => {
+      started.push('late');
+      return 'late';
+    }
+  ], { concurrency: 2 });
+
+  assert.equal(result, 'ok');
+  assert.deepEqual(started, ['slow-miss', 'fast-hit']);
+});
+
+test('icon fetcher races direct and proxy requests together', async () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
   const config = makeIconConfig({
     iconFetchProxy: {
@@ -388,7 +419,7 @@ test('icon fetcher tries direct requests before proxy fallback', async () => {
   let fetcher = createIconFetcher(config, {
     safeFetch: async (url, options) => {
       calls.push({ url, hasProxy: Boolean(options.proxy) });
-      if (calls.length === 1) {
+      if (!options.proxy) {
         return new Response('not an image', {
           status: 200,
           headers: { 'content-type': 'image/png' }
@@ -403,13 +434,13 @@ test('icon fetcher tries direct requests before proxy fallback', async () => {
 
   let icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
   assert.equal(icon.contentType, 'image/svg+xml');
-  assert.deepEqual(calls.map((call) => call.hasProxy), [false, true]);
+  assert.deepEqual(callModes(calls), new Set([false, true]));
 
   calls = [];
   fetcher = createIconFetcher(config, {
     safeFetch: async (url, options) => {
       calls.push({ url, hasProxy: Boolean(options.proxy) });
-      if (calls.length === 1) throw new Error('direct failed');
+      if (!options.proxy) throw new Error('direct failed');
       return new Response(svg, {
         status: 200,
         headers: { 'content-type': 'image/svg+xml' }
@@ -419,7 +450,7 @@ test('icon fetcher tries direct requests before proxy fallback', async () => {
 
   icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
   assert.equal(icon.contentType, 'image/svg+xml');
-  assert.deepEqual(calls.map((call) => call.hasProxy), [false, true]);
+  assert.deepEqual(callModes(calls), new Set([false, true]));
 
   calls = [];
   fetcher = createIconFetcher(config, {
@@ -434,10 +465,44 @@ test('icon fetcher tries direct requests before proxy fallback', async () => {
 
   icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
   assert.equal(icon.contentType, 'image/svg+xml');
-  assert.deepEqual(calls.map((call) => call.hasProxy), [false]);
+  assert.deepEqual(callModes(calls), new Set([false, true]));
 });
 
-test('resolved icons use the same fetch mode as the HTML discovery', async () => {
+test('icon fetcher uses the first of direct or proxy without waiting for the slower path', async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
+  const config = makeIconConfig({
+    iconFetchProxy: {
+      httpProxy: 'http://proxy.example:8080',
+      httpsProxy: 'http://proxy.example:8080',
+      noProxy: ''
+    }
+  });
+
+  const calls = [];
+  const fetcher = createIconFetcher(config, {
+    safeFetch: async (url, options) => {
+      calls.push({ url, hasProxy: Boolean(options.proxy) });
+      if (!options.proxy) {
+        await delay(200);
+        throw new Error('direct too slow');
+      }
+      return new Response(svg, {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+  });
+
+  const startedAt = Date.now();
+  const icon = await fetcher.fetchIconCandidate('https://example.com/icon.svg');
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(icon.contentType, 'image/svg+xml');
+  assert.deepEqual(callModes(calls), new Set([false, true]));
+  assert.ok(elapsedMs < 150, `expected proxy win in well under 200ms, got ${elapsedMs}ms`);
+});
+
+test('resolved icons race HTML and icon fetches over direct and proxy', async () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
   const html = '<link rel="icon" href="https://cdn.example.com/icon.svg" type="image/svg+xml">';
   const config = makeIconConfig({
@@ -468,10 +533,10 @@ test('resolved icons use the same fetch mode as the HTML discovery', async () =>
 
   let resolved = await fetcher.resolveIconForUrl('https://example.com/');
   assert.equal(resolved.icon.contentType, 'image/svg+xml');
-  assert.deepEqual(calls, [
-    { url: 'https://example.com/', hasProxy: false },
-    { url: 'https://cdn.example.com/icon.svg', hasProxy: false }
-  ]);
+  assert.ok(calls.some((call) => call.url === 'https://example.com/' && !call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://example.com/' && call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://cdn.example.com/icon.svg' && !call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://cdn.example.com/icon.svg' && call.hasProxy));
 
   calls = [];
   fetcher = createIconFetcher(config, {
@@ -494,14 +559,12 @@ test('resolved icons use the same fetch mode as the HTML discovery', async () =>
 
   resolved = await fetcher.resolveIconForUrl('https://example.com/');
   assert.equal(resolved.icon.contentType, 'image/svg+xml');
-  assert.deepEqual(calls, [
-    { url: 'https://example.com/', hasProxy: false },
-    { url: 'https://example.com/', hasProxy: true },
-    { url: 'https://cdn.example.com/icon.svg', hasProxy: true }
-  ]);
+  assert.ok(calls.some((call) => call.url === 'https://example.com/' && !call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://example.com/' && call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://cdn.example.com/icon.svg'));
 });
 
-test('icon candidates discovered via direct HTML still fall back to proxy when the icon asset itself requires it', async () => {
+test('icon candidates discovered via direct HTML still fetch the asset over proxy in parallel', async () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
   const html = '<link rel="icon" href="https://cdn.example.com/icon.svg" type="image/svg+xml">';
   const config = makeIconConfig({
@@ -512,19 +575,17 @@ test('icon candidates discovered via direct HTML still fall back to proxy when t
     }
   });
 
-  let calls = [];
+  const calls = [];
   const fetcher = createIconFetcher(config, {
     safeFetch: async (url, options) => {
       calls.push({ url, hasProxy: Boolean(options.proxy) });
       if (url === 'https://example.com/') {
-        // HTML succeeds directly
         return new Response(html, {
           status: 200,
           headers: { 'content-type': 'text/html; charset=utf-8' }
         });
       }
       if (url === 'https://cdn.example.com/icon.svg' && !options.proxy) {
-        // Icon asset direct fails (e.g. CDN blocked), but proxy works
         throw new Error('direct icon failed');
       }
       return new Response(svg, {
@@ -536,15 +597,11 @@ test('icon candidates discovered via direct HTML still fall back to proxy when t
 
   const resolved = await fetcher.resolveIconForUrl('https://example.com/');
   assert.equal(resolved.icon.contentType, 'image/svg+xml');
-  // HTML direct, then icon: direct attempt (fails) + proxy fallback (succeeds)
-  assert.deepEqual(calls, [
-    { url: 'https://example.com/', hasProxy: false },
-    { url: 'https://cdn.example.com/icon.svg', hasProxy: false },
-    { url: 'https://cdn.example.com/icon.svg', hasProxy: true }
-  ]);
+  assert.ok(calls.some((call) => call.url === 'https://cdn.example.com/icon.svg' && !call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://cdn.example.com/icon.svg' && call.hasProxy));
 });
 
-test('default favicon uses the same fetch mode as the HTML discovery', async () => {
+test('default favicon races the same direct and proxy modes as HTML discovery', async () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
   const html = '<html><head><title>No icons</title></head></html>';
   const config = makeIconConfig({
@@ -575,10 +632,10 @@ test('default favicon uses the same fetch mode as the HTML discovery', async () 
 
   let resolved = await fetcher.resolveIconForUrl('https://example.com/');
   assert.equal(resolved.icon.contentType, 'image/svg+xml');
-  assert.deepEqual(calls, [
-    { url: 'https://example.com/', hasProxy: false },
-    { url: 'https://example.com/favicon.ico', hasProxy: false }
-  ]);
+  assert.ok(calls.some((call) => call.url === 'https://example.com/' && !call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://example.com/' && call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://example.com/favicon.ico' && !call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://example.com/favicon.ico' && call.hasProxy));
 
   calls = [];
   fetcher = createIconFetcher(config, {
@@ -601,11 +658,50 @@ test('default favicon uses the same fetch mode as the HTML discovery', async () 
 
   resolved = await fetcher.resolveIconForUrl('https://example.com/');
   assert.equal(resolved.icon.contentType, 'image/svg+xml');
-  assert.deepEqual(calls, [
-    { url: 'https://example.com/', hasProxy: false },
-    { url: 'https://example.com/', hasProxy: true },
-    { url: 'https://example.com/favicon.ico', hasProxy: true }
-  ]);
+  assert.ok(calls.some((call) => call.url === 'https://example.com/' && call.hasProxy));
+  assert.ok(calls.some((call) => call.url === 'https://example.com/favicon.ico'));
+});
+
+test('resolveIconForUrl fetches icon candidates concurrently and keeps the first success', async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
+  const html = [
+    '<link rel="icon" href="https://cdn.example.com/slow.svg" type="image/svg+xml">',
+    '<link rel="icon" href="https://cdn.example.com/fast.svg" type="image/svg+xml">'
+  ].join('');
+  const config = makeIconConfig({ iconFetchConcurrency: 2 });
+  const started = [];
+  const fetcher = createIconFetcher(config, {
+    safeFetch: async (url) => {
+      if (url === 'https://example.com/') {
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      started.push(url);
+      if (url.endsWith('/slow.svg')) {
+        await delay(200);
+      }
+
+      return new Response(svg, {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+  });
+
+  const startedAt = Date.now();
+  const resolved = await fetcher.resolveIconForUrl('https://example.com/');
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(resolved.icon.contentType, 'image/svg+xml');
+  assert.equal(resolved.sourceUrl, 'https://cdn.example.com/fast.svg');
+  assert.deepEqual(new Set(started), new Set([
+    'https://cdn.example.com/slow.svg',
+    'https://cdn.example.com/fast.svg'
+  ]));
+  assert.ok(elapsedMs < 150, `expected the faster candidate to win, got ${elapsedMs}ms`);
 });
 
 test('icon fetcher logs only when enabled', async () => {
