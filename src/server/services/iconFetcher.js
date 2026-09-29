@@ -356,6 +356,7 @@ function getIconFetchOptions(config, requestOptions = {}, useProxy = false) {
     timeoutMs: getIconFetchTimeoutMs(config, useProxy),
     maxRedirects: config.iconMaxRedirects,
     privateNetworkHosts: privateNetworkHosts || [],
+    allowedNetworks: config.iconFetchAllowNetworks || '',
     ...(useProxy && hasIconFetchProxy(config) ? { proxy: config.iconFetchProxy } : {})
   };
 }

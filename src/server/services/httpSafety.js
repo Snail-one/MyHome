@@ -225,7 +225,7 @@ function parsePublicHttpUrl(value, baseUrl, options = {}) {
   if (!permitPrivateNetwork && isBlockedHostname(hostname)) {
     throw new Error('URL host is not allowed');
   }
-  if (!permitPrivateNetwork && net.isIP(hostname) && isBlockedAddress(hostname)) {
+  if (!permitPrivateNetwork && net.isIP(hostname) && isBlockedResolvedAddress(hostname, options)) {
     throw new Error('URL address is not allowed');
   }
   return parsedUrl;
@@ -238,6 +238,76 @@ function permitsPrivateNetwork(hostname, options = {}) {
   if (!normalized || !allowlist) return false;
   const hosts = Array.isArray(allowlist) ? allowlist : [allowlist];
   return hosts.some((host) => normalizeHostname(host) === normalized);
+}
+
+function parseAllowedNetworkEntry(entry) {
+  const text = String(entry || '').trim();
+  if (!text) return null;
+
+  const slash = text.lastIndexOf('/');
+  const hostText = slash === -1 ? text : text.slice(0, slash);
+  const bitsText = slash === -1 ? '' : text.slice(slash + 1);
+  const bare = normalizeHostname(hostText);
+  const family = net.isIP(bare);
+  if (!family) return null;
+
+  const maxBits = family === 4 ? 32 : 128;
+  const bits = bitsText ? Number.parseInt(bitsText, 10) : maxBits;
+  if (!Number.isInteger(bits) || bits < 0 || bits > maxBits) return null;
+  if (family === 4) {
+    const prefix = parseIPv4(bare);
+    if (prefix === null) return null;
+    return { family, prefix, bits };
+  }
+
+  const hextets = parseIPv6Hextets(bare);
+  if (!hextets || hextets.mappedPrivateIPv4) return null;
+  return { family, hextets, bits };
+}
+
+function allowedNetworksFrom(value) {
+  const entries = Array.isArray(value) ? value : String(value || '').split(/[,\s]+/);
+  return entries.map(parseAllowedNetworkEntry).filter(Boolean);
+}
+
+function embeddedIPv4(address) {
+  const normalized = normalizeHostname(address);
+  if (!normalized.includes('.')) return '';
+  const ipv4 = normalized.slice(normalized.lastIndexOf(':') + 1);
+  return net.isIP(ipv4) === 4 ? ipv4 : '';
+}
+
+function ipv6InRange(address, prefixHextets, bits) {
+  const hextets = parseIPv6Hextets(address);
+  if (!hextets || hextets.mappedPrivateIPv4) return false;
+
+  let remaining = bits;
+  for (let index = 0; index < 8 && remaining > 0; index += 1) {
+    const width = Math.min(16, remaining);
+    const mask = width === 16 ? 0xffff : ((0xffff << (16 - width)) & 0xffff);
+    if ((hextets[index] & mask) !== (prefixHextets[index] & mask)) return false;
+    remaining -= width;
+  }
+  return true;
+}
+
+function isAllowedNetworkAddress(address, networks) {
+  const parsedNetworks = allowedNetworksFrom(networks);
+  if (!parsedNetworks.length) return false;
+
+  const bare = normalizeHostname(address);
+  const mappedIPv4 = embeddedIPv4(bare);
+  const ipv4 = parseIPv4(bare) ?? (mappedIPv4 ? parseIPv4(mappedIPv4) : null);
+
+  return parsedNetworks.some((entry) => {
+    if (entry.family === 4) return ipv4 !== null && ipv4InRange(ipv4, entry.prefix, entry.bits);
+    if (mappedIPv4) return false;
+    return ipv6InRange(bare, entry.hextets, entry.bits);
+  });
+}
+
+function isBlockedResolvedAddress(address, options) {
+  return isBlockedAddress(address) && !isAllowedNetworkAddress(address, options.allowedNetworks);
 }
 
 function normalizeResolvedAddresses(addresses) {
@@ -269,7 +339,10 @@ async function resolvePinnedAddresses(hostname, options = {}) {
   if (!pinnedAddresses.length) {
     throw new Error('URL host could not be resolved');
   }
-  if (!permitsPrivateNetwork(hostname, options) && pinnedAddresses.some((entry) => isBlockedAddress(entry.address))) {
+  if (
+    !permitsPrivateNetwork(hostname, options) &&
+    pinnedAddresses.some((entry) => isBlockedResolvedAddress(entry.address, options))
+  ) {
     throw new Error('URL resolved to a blocked address');
   }
   return pinnedAddresses;
@@ -447,6 +520,7 @@ function fetchWithTimeout(url, options = {}) {
     delete fetchOptions.lookup;
     delete fetchOptions.allowPrivateNetwork;
     delete fetchOptions.privateNetworkHosts;
+    delete fetchOptions.allowedNetworks;
     delete fetchOptions.addresses;
     delete fetchOptions.proxy;
     delete fetchOptions.fetch;
@@ -526,10 +600,12 @@ async function safeFetch(url, options = {}) {
   const lookup = options.lookup;
   const allowPrivateNetwork = Boolean(options.allowPrivateNetwork);
   const privateNetworkHosts = options.privateNetworkHosts;
+  const allowedNetworks = options.allowedNetworks;
   let currentTarget = await assertPublicHttpUrl(url, {
     lookup,
     allowPrivateNetwork,
     privateNetworkHosts,
+    allowedNetworks,
     proxy: options.proxy
   });
 
@@ -556,6 +632,7 @@ async function safeFetch(url, options = {}) {
       lookup,
       allowPrivateNetwork,
       privateNetworkHosts,
+      allowedNetworks,
       proxy: options.proxy
     });
   }

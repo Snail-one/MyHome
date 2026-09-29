@@ -438,6 +438,24 @@ test('a private bookmark can fetch its own icon but not another private host', a
   assert.equal(fetched.some((url) => new URL(url).hostname === '192.168.1.1'), false);
 });
 
+test('icon fetch passes configured network ranges to each request', async () => {
+  let allowedNetworks = null;
+  const resolved = await resolveIconForUrl(makeIconConfig({
+    iconFetchAllowNetworks: '192.168.31.111,192.168.31.0/24'
+  }), 'http://192.168.31.111/favicon.svg', {
+    safeFetch: async (url, options) => {
+      allowedNetworks = options.allowedNetworks;
+      return new Response(ICON_SVG, {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    }
+  });
+
+  assert.equal(allowedNetworks, '192.168.31.111,192.168.31.0/24');
+  assert.ok(resolved);
+});
+
 test('a bookmark domain is not allowed to follow a private DNS answer', async (t) => {
   let hits = 0;
   const server = http.createServer((req, res) => {

@@ -50,6 +50,42 @@ test('safeFetch validates every redirect target before following it', async () =
   }));
 });
 
+test('allowed networks permit a listed address or CIDR range', async () => {
+  await assert.rejects(() => assertPublicHttpUrl('http://192.168.31.111/'));
+  await assert.rejects(() => assertPublicHttpUrl('http://192.168.31.111/', {
+    allowedNetworks: '192.168.31.112'
+  }));
+  await assert.rejects(() => assertPublicHttpUrl('http://127.0.0.1/', {
+    allowedNetworks: '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
+  }));
+  await assert.rejects(() => assertPublicHttpUrl('http://localhost/', {
+    allowedNetworks: '127.0.0.1'
+  }));
+
+  const literal = await assertPublicHttpUrl('http://192.168.31.111/icon', {
+    allowedNetworks: '192.168.31.0/24'
+  });
+  assert.equal(literal.hostname, '192.168.31.111');
+
+  const named = await assertPublicHttpUrl('http://router.home/icon', {
+    allowedNetworks: '192.168.31.111',
+    lookup: async () => [{ address: '192.168.31.111', family: 4 }]
+  });
+  assert.equal(named.validatedAddresses[0].address, '192.168.31.111');
+
+  await assert.rejects(() => assertPublicHttpUrl('http://router.home/icon', {
+    allowedNetworks: '192.168.31.0/24',
+    lookup: async () => [{ address: '10.1.1.1', family: 4 }]
+  }));
+
+  const response = await safeFetch('http://192.168.31.111/icon.svg', {
+    allowedNetworks: '192.168.31.111',
+    fetch: async () => new Response('ok', { status: 200 }),
+    timeoutMs: 1000
+  });
+  assert.equal(response.status, 200);
+});
+
 test('safeFetch allows private network only when explicitly requested', async () => {
   const fetch = async () => new Response('ok', { status: 200 });
 

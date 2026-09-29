@@ -160,6 +160,7 @@ function loadConfig(env = process.env, options = {}) {
     iconSseHeartbeatMs: parseIntegerEnv(env.ICON_SSE_HEARTBEAT_MS, 15000, 1000),
     iconSseMaxConnections: parseIntegerEnv(env.ICON_SSE_MAX_CONNECTIONS, 32, 1),
     iconSseMaxConnectionsPerSession: parseIntegerEnv(env.ICON_SSE_MAX_CONNECTIONS_PER_SESSION, 4, 1),
+    iconFetchAllowNetworks: String(env.ICON_FETCH_ALLOW_NETWORKS || '').trim(),
     iconFetchProxy: {
       httpProxy: iconFetchHttpProxy,
       httpsProxy: iconFetchHttpsProxy,
