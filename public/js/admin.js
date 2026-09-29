@@ -1,5 +1,5 @@
 import { LINK_SIZE_OPTIONS } from './state.js';
-import { page } from './main.js';
+import { page, showNotice } from './main.js';
 
 let draggedCard = null;
 let draggedLinkType = 'website';
@@ -141,7 +141,7 @@ async function persistLinkOrder(linkType, links, previousLinks, options = {}) {
     } catch (error) {
         page.setLinkCollection(linkType, previousLinks);
         page.renderLinkCollection(linkType);
-        alert(error.message);
+        showNotice(error.message);
         return false;
     }
 }
@@ -519,6 +519,8 @@ function closeActiveModal() {
 
     if (activeModal.id === 'link-modal') {
         closeLinkModal();
+    } else if (activeModal.id === 'notice-modal') {
+        page.dismissNotice?.();
     } else if (activeModal.id === 'confirm-modal') {
         const overlay = activeModal;
         const cancelBtn = document.getElementById('confirm-cancel');
@@ -692,7 +694,7 @@ async function moveSearchEngine(engineId, direction) {
         page.rebuildSearchEngines();
         page.renderSearchEngineButtons();
         renderSearchEngineList();
-        alert(error.message);
+        showNotice(error.message);
     }
 }
 
@@ -708,7 +710,7 @@ async function toggleEditMode() {
         page.editMode = previous;
         page.appState.settings.editMode = previous;
         page.updateEditModeUI();
-        alert(error.message);
+        showNotice(error.message);
     }
 }
 
@@ -724,7 +726,7 @@ async function deleteLink(index, linkType = 'website') {
         const data = await page.apiRequest(`/api/links/${links[index].id}`, { method: 'DELETE' });
         page.applyLinksResponse(data);
     } catch (error) {
-        alert(error.message);
+        showNotice(error.message);
     }
 }
 
@@ -864,7 +866,7 @@ async function refreshIconCache() {
             console.warn(`Icon refresh completed with ${status.failed} failed task(s)`);
         }
     } catch (error) {
-        alert(error.message);
+        showNotice(error.message);
     } finally {
         iconCacheRefreshRunning = false;
         if (refreshBtn) {
@@ -982,7 +984,7 @@ function bindMenuManagement() {
 
         if (!title) return;
         if (!url) {
-            alert(linkType === 'email'
+            showNotice(linkType === 'email'
                 ? '请填写邮箱登录地址'
                 : linkType === 'project' ? '请填写项目地址' : '请填写链接地址');
             return;
@@ -1000,7 +1002,7 @@ function bindMenuManagement() {
             page.applyLinksResponse(data);
             closeLinkModal();
         } catch (error) {
-            alert(error.message);
+            showNotice(error.message);
         } finally {
             submitBtn.disabled = false;
         }
@@ -1054,7 +1056,7 @@ function bindMenuManagement() {
             page.applySearchEnginesResponse(data.engines || []);
             resetSearchEngineForm();
         } catch (error) {
-            alert(error.message);
+            showNotice(error.message);
         } finally {
             submitBtn.disabled = false;
         }
@@ -1099,7 +1101,7 @@ function bindMenuManagement() {
             page.applySearchEnginesResponse(nextEngines);
             resetSearchEngineForm();
         } catch (error) {
-            alert(error.message);
+            showNotice(error.message);
         } finally {
             deleteBtn.disabled = false;
         }
@@ -1178,13 +1180,13 @@ function bindBackgroundModal() {
 
         const maxFileSize = 10 * 1024 * 1024;
         if (file.size > maxFileSize) {
-            alert('图片文件不能超过 10MB');
+            showNotice('图片文件不能超过 10MB');
             fileInput.value = '';
             return;
         }
 
         if (!allowedTypes.includes(file.type)) {
-            alert('请选择 JPG、PNG、WebP 或 GIF 图片');
+            showNotice('请选择 JPG、PNG、WebP 或 GIF 图片');
             fileInput.value = '';
             return;
         }
@@ -1221,7 +1223,7 @@ function bindBackgroundModal() {
                 page.applySettings(data.settings);
             } else if (urlValue) {
                 if (!page.isValidBackgroundUrl(urlValue)) {
-                    alert('请输入有效的图片 URL 或服务器图片路径');
+                    showNotice('请输入有效的图片 URL 或服务器图片路径');
                     return;
                 }
                 await page.saveSettingsPatch({ backgroundUrl: urlValue });
@@ -1233,7 +1235,7 @@ function bindBackgroundModal() {
             revokePreviewObjectUrl();
             closeModal('background-modal');
         } catch (error) {
-            alert(error.message);
+            showNotice(error.message);
         } finally {
             setBackgroundBusy(false);
         }
@@ -1251,7 +1253,7 @@ function bindBackgroundModal() {
             fileInput.value = '';
             closeModal('background-modal');
         } catch (error) {
-            alert(error.message);
+            showNotice(error.message);
         } finally {
             setBackgroundBusy(false);
         }

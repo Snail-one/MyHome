@@ -32,8 +32,71 @@ let iconEventSource = null;
 
 export const page = {
     handleEscape: null,
+    dismissNotice: null,
     renderSearchEngineList: null
 };
+
+function setModalOpen(modal, open) {
+    if (!modal) return;
+    modal.setAttribute('aria-hidden', open ? 'false' : 'true');
+    modal.classList.toggle('modal-open', open);
+    document.body.classList.toggle(
+        'has-modal-open',
+        Boolean(document.querySelector('.modal-overlay.modal-open'))
+    );
+}
+
+let noticeChain = Promise.resolve();
+
+function presentNotice(message, title) {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('notice-modal');
+        const titleEl = document.getElementById('notice-title');
+        const messageEl = document.getElementById('notice-message');
+        const okBtn = document.getElementById('notice-ok');
+        if (!overlay || !titleEl || !messageEl || !okBtn) {
+            resolve();
+            return;
+        }
+
+        titleEl.textContent = title;
+        messageEl.textContent = message || '';
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            page.dismissNotice = null;
+            okBtn.removeEventListener('click', finish);
+            overlay.removeEventListener('click', onBackdrop);
+            document.removeEventListener('keydown', onKeydown);
+            setModalOpen(overlay, false);
+            resolve();
+        };
+        const onBackdrop = (event) => {
+            if (event.target === overlay) finish();
+        };
+        const onKeydown = (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                finish();
+            }
+        };
+
+        page.dismissNotice = finish;
+        okBtn.addEventListener('click', finish);
+        overlay.addEventListener('click', onBackdrop);
+        document.addEventListener('keydown', onKeydown);
+        setModalOpen(overlay, true);
+        setTimeout(() => okBtn.focus(), 0);
+    });
+}
+
+export function showNotice(message, title = '提示') {
+    const task = noticeChain.then(() => presentNotice(message, title));
+    noticeChain = task.then(() => {}, () => {});
+    return task;
+}
 
 // ==================== DOM 元素 ====================
 const searchInput = document.querySelector('.search-input');
@@ -1134,7 +1197,7 @@ async function setBookmarkGlass(enabled) {
         appState.settings.bookmarkGlass = previous;
         applyBookmarkGlass();
         updateGlassToggleState();
-        alert(error.message);
+        showNotice(error.message);
     }
 }
 
@@ -1186,7 +1249,7 @@ async function setDisplayMode(linkType, mode) {
             : { bookmarkLinkDisplayMode: mode });
     } catch (error) {
         applyDisplayModeState(linkType, previous);
-        alert(error.message);
+        showNotice(error.message);
     }
 }
 
@@ -1200,7 +1263,7 @@ async function setLinkSize(linkType, size) {
             : { bookmarkLinkSize: size });
     } catch (error) {
         applyLinkSizeState(linkType, previous);
-        alert(error.message);
+        showNotice(error.message);
     }
 }
 
@@ -1218,7 +1281,7 @@ async function setLinkLayoutColumns(linkType, columns) {
             : { layoutColumns: columns });
     } catch (error) {
         applyLayoutColumns(previous, linkType);
-        alert(error.message);
+        showNotice(error.message);
     }
 }
 
@@ -1341,7 +1404,7 @@ function bindLazyAdmin() {
             event.stopImmediatePropagation();
             ensureAdmin()
                 .then(() => element.click())
-                .catch((error) => alert(error.message));
+                .catch((error) => showNotice(error.message));
         }, true);
     });
 }

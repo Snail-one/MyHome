@@ -310,6 +310,27 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="notice-modal" aria-hidden="true">
+        <div class="modal modal-sm confirm-modal notice-modal" role="alertdialog" aria-modal="true" aria-labelledby="notice-title" aria-describedby="notice-message">
+            <div class="modal-body">
+                <div class="confirm-content">
+                    <div class="confirm-icon notice-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="13"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                    </div>
+                    <h3 class="confirm-title" id="notice-title">提示</h3>
+                    <p class="confirm-message notice-message" id="notice-message"></p>
+                </div>
+                <div class="form-actions confirm-actions">
+                    <button type="button" class="btn btn-primary" id="notice-ok">知道了</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script type="application/json" id="app-bootstrap">__BOOTSTRAP_JSON__</script>
     <script type="module" src="__ASSET_MAIN__" data-admin="__ASSET_ADMIN__"></script>
 </body>

@@ -83,13 +83,22 @@ function getRequestOrigin(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
-function isSameOriginHeader(req, headerValue) {
-  if (!headerValue) return true;
+function shortenHeaderValue(value) {
+  const text = String(value || '').trim();
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+function describeOriginMismatch(req, headerName, headerValue) {
+  if (!headerValue) return '';
+  const expected = getRequestOrigin(req);
+  let actual = '';
   try {
-    return new URL(headerValue).origin === getRequestOrigin(req);
+    actual = new URL(headerValue).origin;
   } catch {
-    return false;
+    return `请求来源无效：${headerName} 不是合法网址（${shortenHeaderValue(headerValue)}），当前站点是 ${expected}`;
   }
+  if (actual === expected) return '';
+  return `请求来源无效：${headerName} 是 ${actual}，当前站点是 ${expected}`;
 }
 
 function createCsrfToken() {
@@ -101,12 +110,10 @@ function csrfProtection(req, res, next) {
     return next();
   }
 
-  if (
-    !isSameOriginHeader(req, req.get('origin')) ||
-    !isSameOriginHeader(req, req.get('referer'))
-  ) {
-    return res.status(403).json({ error: '请求来源无效' });
-  }
+  const originError = describeOriginMismatch(req, 'Origin', req.get('origin'));
+  if (originError) return res.status(403).json({ error: originError });
+  const refererError = describeOriginMismatch(req, 'Referer', req.get('referer'));
+  if (refererError) return res.status(403).json({ error: refererError });
 
   const sessionToken = req.session?.csrfToken;
   const requestToken = req.get('x-csrf-token');

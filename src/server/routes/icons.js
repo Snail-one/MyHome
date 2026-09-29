@@ -51,16 +51,28 @@ function yieldToEventLoop() {
 }
 
 function isSameOriginEventRequest(req) {
+  return describeEventOriginError(req) === '';
+}
+
+function describeEventOriginError(req) {
   const fetchSite = String(req.get('sec-fetch-site') || '').toLowerCase();
-  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') return false;
+  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+    return `请求来源无效：Sec-Fetch-Site 是 ${fetchSite}，需要 same-origin`;
+  }
 
   const origin = req.get('origin');
-  if (!origin) return true;
+  if (!origin) return '';
+  const expected = `${req.protocol}://${req.get('host')}`;
+  let actual = '';
   try {
-    return new URL(origin).origin === new URL(`${req.protocol}://${req.get('host')}`).origin;
+    actual = new URL(origin).origin;
   } catch {
-    return false;
+    const text = String(origin).trim();
+    const shown = text.length > 120 ? `${text.slice(0, 117)}...` : text;
+    return `请求来源无效：Origin 不是合法网址（${shown}），当前站点是 ${expected}`;
   }
+  if (actual === new URL(expected).origin) return '';
+  return `请求来源无效：Origin 是 ${actual}，当前站点是 ${expected}`;
 }
 
 function createIconsRouter(deps) {
@@ -419,8 +431,9 @@ function createIconsRouter(deps) {
       return;
     }
 
-    if (!isSameOriginEventRequest(req)) {
-      res.status(403).json({ error: '请求来源无效' });
+    const originError = describeEventOriginError(req);
+    if (originError) {
+      res.status(403).json({ error: originError });
       return;
     }
 

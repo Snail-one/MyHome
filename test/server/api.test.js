@@ -415,6 +415,22 @@ test('csrf protection requires tokens and rejects cross-origin unsafe requests',
     headers: { Origin: 'https://evil.example.com' }
   });
   assert.equal(result.response.status, 403);
+  assert.match(result.data.error, /Origin 是 https:\/\/evil\.example\.com/);
+  assert.match(result.data.error, new RegExp(`当前站点是 ${app.baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
+  result = await app.requestJson('/api/icons/refresh', {
+    method: 'POST',
+    headers: { Referer: 'https://other.example/page' }
+  });
+  assert.equal(result.response.status, 403);
+  assert.match(result.data.error, /Referer 是 https:\/\/other\.example/);
+
+  result = await app.requestJson('/api/icons/refresh', {
+    method: 'POST',
+    headers: { Origin: 'not a url' }
+  });
+  assert.equal(result.response.status, 403);
+  assert.match(result.data.error, /Origin 不是合法网址/);
 });
 
 test('SSE requires authentication, enforces origin and connection limits, and closes on logout', async (t) => {
@@ -435,6 +451,7 @@ test('SSE requires authentication, enforces origin and connection limits, and cl
     }
   });
   assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /Sec-Fetch-Site 是 cross-site/);
 
   const stream = await app.request('/api/icons/events', {
     headers: {

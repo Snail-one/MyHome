@@ -1042,12 +1042,30 @@ body::before {
 }
 
 /* 确认弹窗位置：靠上一点（不要完全居中） */
-#confirm-modal {
+#confirm-modal,
+#notice-modal {
     align-items: flex-start;
     padding-top: 15vh;
 }
 
-#confirm-modal .modal {
+#notice-modal {
+    z-index: 1100;
+}
+
+.notice-icon {
+    background: rgba(139, 92, 246, 0.16);
+    color: #c4b5fd;
+}
+
+.notice-message {
+    overflow-wrap: anywhere;
+    text-align: left;
+    max-height: min(40vh, 240px);
+    overflow: auto;
+}
+
+#confirm-modal .modal,
+#notice-modal .modal {
     margin-top: 0;
 }
 
