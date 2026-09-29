@@ -171,7 +171,9 @@ function createApp(deps) {
   if (typeof iconService.hydrateFromDisk === 'function') {
     iconService.hydrateFromDisk();
   }
-  const assetManifest = deps.assetManifest || createAssetManifest(config.publicDir);
+  const assetManifest = deps.assetManifest || createAssetManifest(config.publicDir, {
+    production: config.nodeEnv === 'production'
+  });
   const htmlRenderer = deps.htmlRenderer || createHtmlRenderer(config, {
     settings: stores.settings,
     links: stores.links,

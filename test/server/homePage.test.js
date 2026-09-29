@@ -88,6 +88,7 @@ async function startApp() {
       assert.equal(response.status, 200);
       return response;
     },
+    stores: database.stores,
     request,
     async close() {
       app.locals.iconEventHub?.close?.();
@@ -118,9 +119,10 @@ test('homepage is rendered with stored data before client fetches', async (t) =>
   t.after(app.close);
   await app.login();
 
+  const trickyTitle = "Cost $& late $' end $$";
   const created = await app.request('/api/links', {
     method: 'POST',
-    body: { title: 'Example Docs', url: 'https://example.com/docs' }
+    body: { title: trickyTitle, url: 'https://example.com/docs' }
   });
   assert.equal(created.status, 201);
 
@@ -133,7 +135,7 @@ test('homepage is rendered with stored data before client fetches', async (t) =>
   assert.doesNotMatch(html, /<body[^>]*app-loading/);
   assert.match(html, /https:\/\/mail\.google\.com\//);
   assert.match(html, /data-engine="google"/);
-  assert.match(html, /Example Docs/);
+  assert.ok(html.includes(trickyTitle));
   assert.match(html, /https:\/\/example\.com\/docs/);
   assert.match(html, /loading="eager"/);
   assert.match(html, /id="app-bootstrap"/);
@@ -144,7 +146,7 @@ test('homepage is rendered with stored data before client fetches', async (t) =>
 
   const bootstrap = JSON.parse(html.match(/<script type="application\/json" id="app-bootstrap">([\s\S]*?)<\/script>/)[1]);
   assert.equal(bootstrap.user.username, 'admin');
-  assert.equal(bootstrap.links[0].title, 'Example Docs');
+  assert.equal(bootstrap.links[0].title, trickyTitle);
   assert.equal(bootstrap.emailLinks[0].iconStatus, 'none');
   assert.ok(bootstrap.engines.some((engine) => engine.engineKey === 'google'));
 
@@ -154,6 +156,42 @@ test('homepage is rendered with stored data before client fetches', async (t) =>
   assert.match(pending.headers.get('cache-control') || '', /private, no-store/);
   assert.ok(pendingData.icons.some((icon) => icon.entityType === 'links' && icon.status !== 'none'));
   assert.equal(pendingData.icons.some((icon) => icon.entityType === 'links' && icon.id === bootstrap.emailLinks[0].id), false);
+});
+
+test('pending icon lookup returns the latest status for browser ids', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  await app.login();
+
+  const created = await app.request('/api/links', {
+    method: 'POST',
+    body: { title: 'Ready Later', url: 'https://example.com/ready' }
+  });
+  const createdData = await created.json();
+  const link = createdData.links.find((item) => item.title === 'Ready Later');
+  const engine = app.stores.searchEngines.get()[0];
+  app.stores.links.updateIconState(link.id, {
+    iconStatus: 'ready',
+    iconFileName: `links-${link.id}.svg`
+  });
+  app.stores.searchEngines.updateIconState(engine.id, {
+    iconStatus: 'ready',
+    iconFileName: `search-engines-${engine.id}.svg`
+  });
+
+  const unscoped = await app.request('/api/icons/pending');
+  const unscopedData = await unscoped.json();
+  assert.equal(unscopedData.icons.some((icon) => icon.entityType === 'links' && icon.id === link.id), false);
+  assert.equal(unscopedData.icons.some((icon) => icon.entityType === 'search-engines' && icon.id === engine.id), false);
+
+  const targeted = await app.request(`/api/icons/pending?links=${link.id}&searchEngines=${engine.id}`);
+  const targetedData = await targeted.json();
+  const linkIcon = targetedData.icons.find((icon) => icon.entityType === 'links' && icon.id === link.id);
+  const engineIcon = targetedData.icons.find((icon) => icon.entityType === 'search-engines' && icon.id === engine.id);
+  assert.equal(linkIcon.status, 'ready');
+  assert.match(linkIcon.fileUrl, new RegExp(`/icon-cache/links-${link.id}\\.svg`));
+  assert.equal(engineIcon.status, 'ready');
+  assert.match(engineIcon.fileUrl, new RegExp(`/icon-cache/search-engines-${engine.id}\\.svg`));
 });
 
 test('public assets skip the session store and use content hashes', async (t) => {

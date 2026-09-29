@@ -13,6 +13,7 @@ let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let iconCacheRefreshRunning = false;
 let layoutResizeTimer = null;
+let currentConfirmResolver = null;
 
 function bindDragDelegation() {
     document.addEventListener('dragstart', (event) => {

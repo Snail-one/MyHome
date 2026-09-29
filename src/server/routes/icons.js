@@ -332,15 +332,64 @@ function createIconsRouter(deps) {
     };
   }
 
+  function requestedIds(value) {
+    const parts = Array.isArray(value) ? value : [value];
+    const ids = [];
+    const seen = new Set();
+    for (const part of parts) {
+      for (const piece of String(part ?? '').split(',')) {
+        const id = parseEntityId(piece.trim());
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+    return ids;
+  }
+
+  function collectPendingEntities(query) {
+    const hasLinkQuery = Object.prototype.hasOwnProperty.call(query, 'links');
+    const hasEngineQuery = Object.prototype.hasOwnProperty.call(query, 'searchEngines');
+    if (!hasLinkQuery && !hasEngineQuery) {
+      return {
+        websiteLinks: (stores.links.get('website') || []).filter(isUnresolvedIcon),
+        projectLinks: (stores.links.get('project') || []).filter(isUnresolvedIcon),
+        engines: (stores.searchEngines.get() || []).filter(isUnresolvedIcon)
+      };
+    }
+
+    const websiteLinks = [];
+    const projectLinks = [];
+    if (hasLinkQuery) {
+      for (const id of requestedIds(query.links)) {
+        const link = stores.links.findById(id);
+        if (!link) continue;
+        if (link.linkType === 'project') projectLinks.push(link);
+        else websiteLinks.push(link);
+      }
+    }
+
+    const engines = [];
+    if (hasEngineQuery) {
+      for (const id of requestedIds(query.searchEngines)) {
+        const engine = stores.searchEngines.findById(id);
+        if (engine) engines.push(engine);
+      }
+    }
+
+    return { websiteLinks, projectLinks, engines };
+  }
+
   router.get('/icons/pending', auth.requireAuth, async (req, res) => {
     try {
-      const websiteLinks = (stores.links.get('website') || []).filter(isUnresolvedIcon);
-      const projectLinks = (stores.links.get('project') || []).filter(isUnresolvedIcon);
-      const engines = (stores.searchEngines.get() || []).filter(isUnresolvedIcon);
+      const { websiteLinks, projectLinks, engines } = collectPendingEntities(req.query || {});
+      const prefetchLinks = websiteLinks.filter(isUnresolvedIcon);
+      const prefetchProjects = projectLinks.filter(isUnresolvedIcon);
+      const prefetchEngines = engines.filter(isUnresolvedIcon);
 
       if (config?.iconPrefetchOnRead !== false) {
-        iconService.prefetchLinksResponse?.({ links: websiteLinks, projectLinks });
-        iconService.prefetchSearchEngines?.(engines);
+        iconService.prefetchLinksResponse?.({ links: prefetchLinks, projectLinks: prefetchProjects });
+        iconService.prefetchSearchEngines?.(prefetchEngines);
       }
 
       const icons = [];

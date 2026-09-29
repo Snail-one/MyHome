@@ -35,6 +35,14 @@ function safeJson(value) {
     .replace(/\u2029/g, '\\u2029');
 }
 
+function fillTemplate(template, tokens) {
+  let html = template;
+  for (const [token, value] of Object.entries(tokens)) {
+    html = html.replaceAll(token, () => value);
+  }
+  return html;
+}
+
 function getEffectiveUrl(link) {
   const url = link?.url && String(link.url).trim();
   try {
@@ -213,10 +221,11 @@ function createHtmlRenderer(config, deps) {
 
   async function renderLogin() {
     const html = await fs.promises.readFile(loginPath, 'utf8');
-    return html
-      .replaceAll('__ASSET_FAVICON__', escapeHtmlAttribute(assetUrl('favicon.svg')))
-      .replaceAll('__ASSET_STYLE__', escapeHtmlAttribute(assetUrl('style.css')))
-      .replaceAll('__ASSET_LOGIN_JS__', escapeHtmlAttribute(assetUrl('login.js')));
+    return fillTemplate(html, {
+      __ASSET_FAVICON__: escapeHtmlAttribute(assetUrl('favicon.svg')),
+      __ASSET_STYLE__: escapeHtmlAttribute(assetUrl('style.css')),
+      __ASSET_LOGIN_JS__: escapeHtmlAttribute(assetUrl('login.js'))
+    });
   }
 
   async function renderIndex() {
@@ -261,33 +270,32 @@ function createHtmlRenderer(config, deps) {
       currentEngine
     };
 
-    const html = template
-      .replaceAll('__ASSET_FAVICON__', escapeHtmlAttribute(assetUrl('favicon.svg')))
-      .replaceAll('__ASSET_STYLE__', escapeHtmlAttribute(assetUrl('style.css')))
-      .replaceAll('__ASSET_MAIN__', escapeHtmlAttribute(assetUrl('js/main.js')))
-      .replaceAll('__ASSET_ADMIN__', escapeHtmlAttribute(assetUrl('js/admin.js')))
-      .replaceAll('__BODY_CLASS__', bodyClass)
-      .replaceAll('__BODY_EXTRA__', backgroundStyle ? ` style="${backgroundStyle}"` : '')
-      .replaceAll('__EMAIL_HIDDEN__', emailLinks.length || editMode ? '' : ' hidden')
-      .replaceAll('__EMAIL_LINKS__', `${emailLinks.map((link, index) => renderEmailLink(link, index, requiredLinkKeys, editMode)).join('')}${editMode ? renderAddEmailLink() : ''}`)
-      .replaceAll('__EDIT_TITLE__', editMode ? '完成编辑' : '进入编辑模式')
-      .replaceAll('__EDIT_PRESSED__', editMode ? 'true' : 'false')
-      .replaceAll('__EDIT_ACTIVE__', editMode ? ' active' : '')
-      .replaceAll('__EDIT_LABEL__', editMode ? '完成' : '编辑')
-      .replaceAll('__USERNAME__', escapeHtml(user?.username || '-'))
-      .replaceAll('__SEARCH_ENGINES__', engines.map((engine) => renderSearchEngineButton(engine, currentEngine)).join(''))
-      .replaceAll('__SEARCH_PLACEHOLDER__', escapeHtmlAttribute(`搜索 ${currentName}...`))
-      .replaceAll('__CURRENT_ENGINE__', escapeHtml(currentName))
-      .replaceAll('__PROJECT_SECTION_HIDDEN__', projectLinks.length || editMode ? '' : ' hidden')
-      .replaceAll('__PROJECT_CONTAINER_ATTRS__', `class="${projectPresentation.className}" style="${escapeHtmlAttribute(projectPresentation.style)}"`)
-      .replaceAll('__PROJECT_LINKS__', `${projectLinks.map((link, index) => renderNavCard(link, index, 'project', editMode, projectEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('project') : ''}`)
-      .replaceAll('__PROJECT_EMPTY_STYLE__', projectLinks.length || editMode ? ' style="display:none"' : '')
-      .replaceAll('__WEBSITE_CONTAINER_ATTRS__', `class="${websitePresentation.className}" style="${escapeHtmlAttribute(websitePresentation.style)}"`)
-      .replaceAll('__WEBSITE_LINKS__', `${links.map((link, index) => renderNavCard(link, index, 'website', editMode, websiteEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('website') : ''}`)
-      .replaceAll('__WEBSITE_EMPTY_STYLE__', links.length || editMode ? ' style="display:none"' : '')
-      .replaceAll('__BOOTSTRAP_JSON__', safeJson(bootstrap));
-
-    return html;
+    return fillTemplate(template, {
+      __ASSET_FAVICON__: escapeHtmlAttribute(assetUrl('favicon.svg')),
+      __ASSET_STYLE__: escapeHtmlAttribute(assetUrl('style.css')),
+      __ASSET_MAIN__: escapeHtmlAttribute(assetUrl('js/main.js')),
+      __ASSET_ADMIN__: escapeHtmlAttribute(assetUrl('js/admin.js')),
+      __BODY_CLASS__: bodyClass,
+      __BODY_EXTRA__: backgroundStyle ? ` style="${backgroundStyle}"` : '',
+      __EMAIL_HIDDEN__: emailLinks.length || editMode ? '' : ' hidden',
+      __EMAIL_LINKS__: `${emailLinks.map((link, index) => renderEmailLink(link, index, requiredLinkKeys, editMode)).join('')}${editMode ? renderAddEmailLink() : ''}`,
+      __EDIT_TITLE__: editMode ? '完成编辑' : '进入编辑模式',
+      __EDIT_PRESSED__: editMode ? 'true' : 'false',
+      __EDIT_ACTIVE__: editMode ? ' active' : '',
+      __EDIT_LABEL__: editMode ? '完成' : '编辑',
+      __USERNAME__: escapeHtml(user?.username || '-'),
+      __SEARCH_ENGINES__: engines.map((engine) => renderSearchEngineButton(engine, currentEngine)).join(''),
+      __SEARCH_PLACEHOLDER__: escapeHtmlAttribute(`搜索 ${currentName}...`),
+      __CURRENT_ENGINE__: escapeHtml(currentName),
+      __PROJECT_SECTION_HIDDEN__: projectLinks.length || editMode ? '' : ' hidden',
+      __PROJECT_CONTAINER_ATTRS__: `class="${projectPresentation.className}" style="${escapeHtmlAttribute(projectPresentation.style)}"`,
+      __PROJECT_LINKS__: `${projectLinks.map((link, index) => renderNavCard(link, index, 'project', editMode, projectEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('project') : ''}`,
+      __PROJECT_EMPTY_STYLE__: projectLinks.length || editMode ? ' style="display:none"' : '',
+      __WEBSITE_CONTAINER_ATTRS__: `class="${websitePresentation.className}" style="${escapeHtmlAttribute(websitePresentation.style)}"`,
+      __WEBSITE_LINKS__: `${links.map((link, index) => renderNavCard(link, index, 'website', editMode, websiteEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('website') : ''}`,
+      __WEBSITE_EMPTY_STYLE__: links.length || editMode ? ' style="display:none"' : '',
+      __BOOTSTRAP_JSON__: safeJson(bootstrap)
+    });
   }
 
   return {

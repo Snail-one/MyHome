@@ -107,13 +107,78 @@ function buildAssetManifest(publicDir) {
   };
 }
 
-function createAssetManifest(publicDir) {
+function createAssetManifest(publicDir, options = {}) {
+  const production = options.production === true;
   let cached = null;
   let stamp = '';
+  const watchers = [];
+  const watchedDirs = new Set();
+  let rebuildTimer = null;
+
+  function currentStamp() {
+    const jsFiles = listJsFiles(path.join(publicDir, 'js')).map((relativePath) => `js/${relativePath}`);
+    return stampFiles(publicDir, [...STATIC_FILES, ...jsFiles]);
+  }
+
+  function rebuild() {
+    cached = buildAssetManifest(publicDir);
+    if (!production) stamp = currentStamp();
+  }
+
+  function scheduleRebuild() {
+    if (rebuildTimer) clearTimeout(rebuildTimer);
+    rebuildTimer = setTimeout(() => {
+      rebuildTimer = null;
+      try {
+        rebuild();
+        attachWatchers();
+      } catch (error) {
+        console.warn('Failed to rebuild asset manifest:', error.message);
+      }
+    }, 50);
+  }
+
+  function attachWatchers() {
+    const pending = [publicDir];
+    while (pending.length) {
+      const dir = pending.pop();
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      if (!watchedDirs.has(dir)) {
+        try {
+          const watcher = fs.watch(dir, () => scheduleRebuild());
+          watcher.on('error', () => {
+            watcher.close();
+            const index = watchers.indexOf(watcher);
+            if (index >= 0) watchers.splice(index, 1);
+            watchedDirs.delete(dir);
+          });
+          watchers.push(watcher);
+          watchedDirs.add(dir);
+        } catch {
+          // Fall back to per-request stamps when the directory cannot be watched.
+        }
+      }
+
+      for (const entry of entries) {
+        if (entry.isDirectory()) pending.push(path.join(dir, entry.name));
+      }
+    }
+  }
+
+  if (production) {
+    rebuild();
+    attachWatchers();
+  }
 
   function current() {
-    const jsFiles = listJsFiles(path.join(publicDir, 'js')).map((relativePath) => `js/${relativePath}`);
-    const nextStamp = stampFiles(publicDir, [...STATIC_FILES, ...jsFiles]);
+    if (production && cached && watchers.length) return cached;
+    const nextStamp = currentStamp();
     if (!cached || nextStamp !== stamp) {
       cached = buildAssetManifest(publicDir);
       stamp = nextStamp;
@@ -133,6 +198,12 @@ function createAssetManifest(publicDir) {
     },
     has(relativePath) {
       return current().has(relativePath);
+    },
+    close() {
+      if (rebuildTimer) clearTimeout(rebuildTimer);
+      rebuildTimer = null;
+      while (watchers.length) watchers.pop().close();
+      watchedDirs.clear();
     }
   };
 }

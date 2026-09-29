@@ -550,12 +550,22 @@ function disconnectIconEvents() {
     iconEventSource = null;
 }
 
-function hasUnresolvedIcons() {
-    return [...appState.links, ...appState.projectLinks, ...appState.searchEngineRecords].some((entity) => {
-        if (!entity || entity.iconMode === 'none' || entity.linkType === 'email') return false;
-        const status = entity.iconStatus || 'empty';
-        return status !== 'ready' && status !== 'miss' && status !== 'none';
-    });
+function isUnresolvedIconEntity(entity) {
+    if (!entity || entity.iconMode === 'none' || entity.linkType === 'email') return false;
+    const status = entity.iconStatus || 'empty';
+    return status !== 'ready' && status !== 'miss' && status !== 'none';
+}
+
+function listUnresolvedIconTargets() {
+    const links = [];
+    const searchEngines = [];
+    for (const link of [...appState.links, ...appState.projectLinks]) {
+        if (isUnresolvedIconEntity(link)) links.push(link.id);
+    }
+    for (const engine of appState.searchEngineRecords) {
+        if (isUnresolvedIconEntity(engine)) searchEngines.push(engine.id);
+    }
+    return { links, searchEngines };
 }
 
 function connectIconEvents() {
@@ -591,10 +601,15 @@ function scheduleIconEvents() {
 }
 
 async function syncPendingIcons() {
-    if (!hasUnresolvedIcons()) return;
+    const targets = listUnresolvedIconTargets();
+    if (!targets.links.length && !targets.searchEngines.length) return;
+
+    const params = new URLSearchParams();
+    if (targets.links.length) params.set('links', targets.links.join(','));
+    if (targets.searchEngines.length) params.set('searchEngines', targets.searchEngines.join(','));
 
     try {
-        const data = await apiRequest('/api/icons/pending');
+        const data = await apiRequest(`/api/icons/pending?${params}`);
         (data.icons || []).forEach((icon) => applyIconEvent(icon));
     } catch (error) {
         console.warn('Failed to sync pending icons:', error.message);
@@ -942,19 +957,11 @@ function escapeAttribute(text) {
     return escapeHtml(text).replace(/"/g, '&quot;');
 }
 
-// ==================== 菜单管理 ====================
-
-
 function getLinkCollection(linkType) {
     if (linkType === 'email') return getEmailLinks();
     if (linkType === 'project') return getProjectLinks();
     return getLinks();
 }
-
-
-// 自定义确认弹窗（替代浏览器原生 confirm）
-let currentConfirmResolver = null;
-
 
 function updateEditModeUI() {
     const editModeBtn = document.getElementById('edit-mode-btn');
