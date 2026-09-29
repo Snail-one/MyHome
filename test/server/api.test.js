@@ -596,6 +596,74 @@ test('a request that already loaded a session cannot restore it after a password
   assert.equal(await readSettings(app.baseUrl, other.cookie()), 200);
 });
 
+test('a login that already checked the password is rejected when the password changes', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const admin = createApiClient(app.baseUrl);
+  assert.equal((await admin.login()).response.status, 200);
+
+  const csrfResponse = await fetch(`${app.baseUrl}/api/csrf`);
+  const anonymousCookie = (typeof csrfResponse.headers.getSetCookie === 'function'
+    ? csrfResponse.headers.getSetCookie()
+    : []
+  ).find((value) => value.startsWith('my_home_sid='))?.split(';')[0] || '';
+  const csrfToken = (await csrfResponse.json()).csrfToken;
+
+  const store = app.sessionStore;
+  const originalDestroy = store.destroy.bind(store);
+  let releaseDestroy = null;
+  let holding = false;
+  store.destroy = function pauseLoginRegenerate(sessionId, callback) {
+    if (!holding) {
+      holding = true;
+      originalDestroy(sessionId, (error) => {
+        releaseDestroy = () => callback(error);
+      });
+      return;
+    }
+    originalDestroy(sessionId, callback);
+  };
+  t.after(() => {
+    store.destroy = originalDestroy;
+  });
+
+  const loginResponsePromise = fetch(`${app.baseUrl}/api/login`, {
+    method: 'POST',
+    headers: {
+      cookie: anonymousCookie,
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken
+    },
+    body: JSON.stringify({ username: 'admin', password: 'correct-password' })
+  });
+  const startedAt = Date.now();
+  while (!releaseDestroy) {
+    if (Date.now() - startedAt > 1000) throw new Error('login session regeneration was not observed');
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const updated = await admin.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'admin',
+      currentPassword: 'correct-password',
+      newPassword: 'rotated-password'
+    }
+  });
+  assert.equal(updated.response.status, 200);
+
+  releaseDestroy();
+  store.destroy = originalDestroy;
+  const loginResponse = await loginResponsePromise;
+  assert.equal(loginResponse.status, 401);
+  const issuedCookie = (typeof loginResponse.headers.getSetCookie === 'function'
+    ? loginResponse.headers.getSetCookie()
+    : []
+  ).find((value) => value.startsWith('my_home_sid='))?.split(';')[0] || '';
+  assert.equal(await readSettings(app.baseUrl, issuedCookie || anonymousCookie), 401);
+  assert.equal(await readSettings(app.baseUrl, admin.cookie()), 200);
+});
+
 test('username change keeps the current session', async (t) => {
   const app = await startApp();
   t.after(app.close);

@@ -292,6 +292,63 @@ test('safeFetch sends a proxy the checked address', async (t) => {
   assert.deepEqual(hits, [{ url: '/via-proxy', host: `rebind.example:${port}` }]);
 });
 
+test('safeFetch sends a proxy the checked IPv6 address', async (t) => {
+  const hits = [];
+  const origin = http.createServer((req, res) => {
+    hits.push({ url: req.url, host: req.headers.host });
+    res.end('secret');
+  });
+  const seen = [];
+  const proxy = http.createServer((req, res) => {
+    seen.push(req.url);
+    let target;
+    try {
+      target = new URL(req.url);
+    } catch {
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    const upstream = http.request({
+      host: target.hostname.replace(/^\[|\]$/g, ''),
+      port: target.port,
+      family: 6,
+      path: `${target.pathname}${target.search}`,
+      method: req.method,
+      headers: req.headers
+    }, (upstreamResponse) => {
+      res.writeHead(upstreamResponse.statusCode || 502);
+      upstreamResponse.pipe(res);
+    });
+    upstream.on('error', () => {
+      if (!res.headersSent) res.writeHead(502);
+      res.end();
+    });
+    req.pipe(upstream);
+  });
+
+  origin.listen(0, '::1');
+  proxy.listen(0, '127.0.0.1');
+  await Promise.all([once(origin, 'listening'), once(proxy, 'listening')]);
+  t.after(() => Promise.all([closeServer(origin), closeServer(proxy)]));
+  const port = origin.address().port;
+
+  const response = await safeFetch(`http://rebind.example:${port}/via-proxy`, {
+    allowPrivateNetwork: true,
+    lookup: async () => [{ address: '::1', family: 6 }],
+    proxy: {
+      httpProxy: `http://127.0.0.1:${proxy.address().port}`,
+      noProxy: ''
+    },
+    timeoutMs: 1000
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'secret');
+  assert.equal(seen[0], `http://[::1]:${port}/via-proxy`);
+  assert.deepEqual(hits, [{ url: '/via-proxy', host: `rebind.example:${port}` }]);
+});
+
 test('safeFetch reports request timeouts explicitly', async () => {
   const fetch = async (_url, options) => new Promise((_, reject) => {
     options.signal.addEventListener('abort', () => {

@@ -313,15 +313,37 @@ function withPinnedHostHeader(headers, host) {
   return { host };
 }
 
+function bareIp(value) {
+  return String(value || '').replace(/^\[|\]$/g, '');
+}
+
+function canonicalIpLiteral(address) {
+  const bare = bareIp(address);
+  const family = net.isIP(bare);
+  if (!family) return '';
+  const literal = family === 6 ? `[${bare}]` : bare;
+  return bareIp(new URL(`http://${literal}/`).hostname);
+}
+
+function originPinnedToAddress(parsedUrl, address) {
+  const bareAddress = bareIp(address);
+  const family = net.isIP(bareAddress);
+  const target = new URL(parsedUrl.href);
+  // An unbracketed IPv6 hostname is invalid and Node leaves the previous host in place.
+  target.hostname = family === 6 ? `[${bareAddress}]` : bareAddress;
+  if (!family || canonicalIpLiteral(target.hostname) !== canonicalIpLiteral(bareAddress)) {
+    throw new Error('URL address could not be pinned');
+  }
+  return target.origin;
+}
+
 function createPinnedProxyDispatcher(proxyUrl, parsedUrl, addresses) {
   const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
   const proxyAgent = new ProxyAgent({
     uri: parseProxyUrl(proxyUrl),
     requestTls: { servername: hostname }
   });
-  const target = new URL(parsedUrl.href);
-  target.hostname = addresses[0].address;
-  const origin = target.origin;
+  const origin = originPinnedToAddress(parsedUrl, addresses[0].address);
   const host = parsedUrl.host;
 
   return {

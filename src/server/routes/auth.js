@@ -37,9 +37,9 @@ function accountAttemptKey(req) {
   return `account:${req.session?.userId || req.sessionID || 'unknown'}`;
 }
 
-function stampAuthenticatedSession(req, deps) {
+function stampAuthenticatedSession(req, deps, sessionVersion = deps.stores.users.getSessionVersion()) {
   req.session.userId = deps.config.userId;
-  req.session.sessionVersion = deps.stores.users.getSessionVersion();
+  req.session.sessionVersion = sessionVersion;
 }
 
 function revokeOtherSessions(req, res, deps, username) {
@@ -74,14 +74,23 @@ function revokeOtherSessions(req, res, deps, username) {
   });
 }
 
-function establishSession(req, res, deps, user, statusCode = 200) {
+function establishSession(req, res, deps, user, statusCode = 200, sessionVersion) {
+  const verifiedVersion = Number.isInteger(sessionVersion)
+    ? sessionVersion
+    : deps.stores.users.getSessionVersion();
+
   req.session.regenerate((error) => {
     if (error) {
       res.status(500).json({ error: '登录失败，请重试' });
       return;
     }
 
-    stampAuthenticatedSession(req, deps);
+    if (deps.stores.users.getSessionVersion() !== verifiedVersion) {
+      res.status(401).json({ error: '账号或密码不正确' });
+      return;
+    }
+
+    stampAuthenticatedSession(req, deps, verifiedVersion);
     res.status(statusCode).json({ user: { username: user.username } });
   });
 }
@@ -161,8 +170,9 @@ function createAuthRouter(deps) {
       return;
     }
 
+    const verifiedVersion = stores.users.getSessionVersion();
     limiter.clear(attemptKey);
-    establishSession(req, res, deps, user);
+    establishSession(req, res, deps, user, 200, verifiedVersion);
   });
 
   router.put('/account', auth.requireAuth, (req, res) => {
