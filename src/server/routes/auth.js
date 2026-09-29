@@ -37,8 +37,13 @@ function accountAttemptKey(req) {
   return `account:${req.session?.userId || req.sessionID || 'unknown'}`;
 }
 
+function stampAuthenticatedSession(req, deps) {
+  req.session.userId = deps.config.userId;
+  req.session.sessionVersion = deps.stores.users.getSessionVersion();
+}
+
 function revokeOtherSessions(req, res, deps, username) {
-  const { config, iconEventHub, sessionStore } = deps;
+  const { iconEventHub, sessionStore } = deps;
   const finishRotation = () => {
     const previousSessionId = req.sessionID;
     req.session.regenerate((error) => {
@@ -47,7 +52,7 @@ function revokeOtherSessions(req, res, deps, username) {
         return;
       }
 
-      req.session.userId = config.userId;
+      stampAuthenticatedSession(req, deps);
       iconEventHub?.disconnectSession?.(previousSessionId);
       res.json({ user: { username } });
     });
@@ -58,7 +63,7 @@ function revokeOtherSessions(req, res, deps, username) {
     return;
   }
 
-  sessionStore.destroyUserSessions(config.userId, req.sessionID, (error, removedIds = []) => {
+  sessionStore.destroyUserSessions(deps.config.userId, req.sessionID, (error, removedIds = []) => {
     if (error) {
       res.status(500).json({ error: '会话更新失败，请重新登录' });
       return;
@@ -69,14 +74,14 @@ function revokeOtherSessions(req, res, deps, username) {
   });
 }
 
-function establishSession(req, res, config, user, statusCode = 200) {
+function establishSession(req, res, deps, user, statusCode = 200) {
   req.session.regenerate((error) => {
     if (error) {
       res.status(500).json({ error: '登录失败，请重试' });
       return;
     }
 
-    req.session.userId = config.userId;
+    stampAuthenticatedSession(req, deps);
     res.status(statusCode).json({ user: { username: user.username } });
   });
 }
@@ -119,7 +124,7 @@ function createAuthRouter(deps) {
       throw error;
     }
 
-    establishSession(req, res, config, { username: usernameResult.value }, 201);
+    establishSession(req, res, deps, { username: usernameResult.value }, 201);
   });
 
   router.post('/login', (req, res) => {
@@ -157,7 +162,7 @@ function createAuthRouter(deps) {
     }
 
     limiter.clear(attemptKey);
-    establishSession(req, res, config, user);
+    establishSession(req, res, deps, user);
   });
 
   router.put('/account', auth.requireAuth, (req, res) => {
@@ -211,7 +216,8 @@ function createAuthRouter(deps) {
         usernameResult.value,
         bcrypt.hashSync(nextPasswordResult.value, config.bcryptRounds)
       );
-      revokeOtherSessions(req, res, { config, iconEventHub, sessionStore }, usernameResult.value);
+      stores.users.bumpSessionVersion();
+      revokeOtherSessions(req, res, deps, usernameResult.value);
       return;
     }
 

@@ -1,10 +1,23 @@
-function isAuthenticated(req, userId) {
-  return req.session && req.session.userId === userId;
+function sessionVersionOf(session) {
+  return Number.isInteger(session?.sessionVersion) ? session.sessionVersion : 0;
 }
 
-function createAuthMiddleware(config) {
+function isAuthenticated(req, userId, sessionVersion) {
+  return Boolean(
+    req.session &&
+    req.session.userId === userId &&
+    sessionVersion != null &&
+    sessionVersionOf(req.session) === sessionVersion
+  );
+}
+
+function createAuthMiddleware(config, stores) {
+  function currentSessionVersion() {
+    return stores.users.getSessionVersion();
+  }
+
   function requireAuth(req, res, next) {
-    if (isAuthenticated(req, config.userId)) {
+    if (isAuthenticated(req, config.userId, currentSessionVersion())) {
       next();
       return;
     }
@@ -12,7 +25,7 @@ function createAuthMiddleware(config) {
   }
 
   return {
-    isAuthenticated: (req) => isAuthenticated(req, config.userId),
+    isAuthenticated: (req) => isAuthenticated(req, config.userId, currentSessionVersion()),
     requireAuth
   };
 }

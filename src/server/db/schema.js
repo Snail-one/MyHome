@@ -42,6 +42,7 @@ function createSchema(db, schemaVersion) {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      session_version INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -174,6 +175,13 @@ function migrateBookmarkGlass(db) {
   }
 }
 
+function migrateSessionVersion(db) {
+  if (!tableExists(db, 'users')) return;
+  if (!columnExists(db, 'users', 'session_version')) {
+    db.exec('ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0');
+  }
+}
+
 function initializeSchema(db, schemaVersion) {
   db.exec('PRAGMA foreign_keys = ON');
   const existingVersion = getSchemaVersion(db);
@@ -184,6 +192,7 @@ function initializeSchema(db, schemaVersion) {
   ensureIconColumns(db);
   migrateBookmarkDisplayDefault(db);
   migrateBookmarkGlass(db);
+  migrateSessionVersion(db);
 }
 
 module.exports = {
@@ -195,5 +204,6 @@ module.exports = {
   initializeSchema,
   migrateBookmarkDisplayDefault,
   migrateBookmarkGlass,
+  migrateSessionVersion,
   tableExists
 };

@@ -438,6 +438,35 @@ test('a private bookmark can fetch its own icon but not another private host', a
   assert.equal(fetched.some((url) => new URL(url).hostname === '192.168.1.1'), false);
 });
 
+test('a bookmark domain is not allowed to follow a private DNS answer', async (t) => {
+  let hits = 0;
+  const server = http.createServer((req, res) => {
+    hits += 1;
+    res.setHeader('content-type', 'image/svg+xml');
+    res.end(ICON_SVG);
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise((resolve, reject) => {
+    server.closeAllConnections?.();
+    server.close((error) => (error ? reject(error) : resolve()));
+  }));
+  const port = server.address().port;
+  const lookup = async () => [{ address: '127.0.0.1', family: 4 }];
+
+  const resolved = await resolveIconForUrl(makeIconConfig(), `http://rebind.example:${port}/`, {
+    dnsLookup: lookup,
+    safeFetch: (url, options) => safeFetch(url, {
+      ...options,
+      lookup,
+      timeoutMs: 1000
+    })
+  });
+
+  assert.equal(resolved.icon, null);
+  assert.equal(hits, 0);
+});
+
 test('an external icon page cannot redirect the fetcher onto a private address', async () => {
   const fetched = [];
   const lookup = publicLookup();

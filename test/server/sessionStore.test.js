@@ -69,3 +69,40 @@ test('destroyUserSessions removes other sessions for that user only', async () =
   store.close();
   database.close();
 });
+
+test('session writes are rejected when the stamped version is no longer current', async () => {
+  const { database } = createTestDatabase();
+  database.db.prepare('INSERT INTO users (id, username, password_hash) VALUES (1, ?, ?)').run('admin', 'hash');
+  const store = new SQLiteSessionStore(database.db, {
+    maxAgeMs: 60_000,
+    cleanupIntervalMs: 60 * 60 * 1000
+  });
+  const get = promisify(store.get.bind(store));
+  const set = promisify(store.set.bind(store));
+  const touch = promisify(store.touch.bind(store));
+  const session = { cookie: { maxAge: 60_000 }, userId: 1, sessionVersion: 0 };
+
+  await set('sid', session);
+  assert.equal((await get('sid')).sessionVersion, 0);
+
+  database.db.prepare('UPDATE users SET session_version = 1 WHERE id = 1').run();
+  assert.equal(await get('sid'), undefined);
+  await set('sid', session);
+  assert.equal(await get('sid'), undefined);
+
+  await set('sid-new', { ...session, sessionVersion: 1 });
+  assert.equal((await get('sid-new')).sessionVersion, 1);
+
+  await set('touched', { ...session, sessionVersion: 1 });
+  database.db.prepare('UPDATE users SET session_version = 2 WHERE id = 1').run();
+  await touch('touched', { ...session, sessionVersion: 1 });
+  assert.equal(await get('touched'), undefined);
+
+  await set('guest', { cookie: { maxAge: 60_000 }, note: 'guest' });
+  assert.equal((await get('guest')).note, 'guest');
+  await set('stranger', { cookie: { maxAge: 60_000 }, userId: 2, sessionVersion: 0 });
+  assert.equal((await get('stranger')).userId, 2);
+
+  store.close();
+  database.close();
+});

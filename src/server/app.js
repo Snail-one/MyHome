@@ -183,7 +183,7 @@ function createApp(deps) {
     maxAgeMs: config.sessionMaxAgeMs,
     cleanupIntervalMs: config.sessionCleanupIntervalMs
   });
-  const auth = createAuthMiddleware(config);
+  const auth = createAuthMiddleware(config, stores);
   const limiter = deps.loginLimiter || createLoginLimiter({
     maxFailedAttempts: config.loginMaxFailedAttempts,
     windowMs: config.loginWindowMs,

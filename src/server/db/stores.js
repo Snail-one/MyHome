@@ -19,7 +19,13 @@ function createUserStore(db, config) {
       SET username = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `),
-    getMe: db.prepare('SELECT username FROM users WHERE id = ?')
+    getMe: db.prepare('SELECT username FROM users WHERE id = ?'),
+    getSessionVersion: db.prepare('SELECT session_version FROM users WHERE id = ?'),
+    bumpSessionVersion: db.prepare(`
+      UPDATE users
+      SET session_version = session_version + 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `)
   };
 
   return {
@@ -40,6 +46,14 @@ function createUserStore(db, config) {
     },
     updateAdminUsername(username) {
       return statements.updateAdminUsername.run(username, config.userId);
+    },
+    getSessionVersion() {
+      const row = statements.getSessionVersion.get(config.userId);
+      return row ? Number(row.session_version) || 0 : null;
+    },
+    bumpSessionVersion() {
+      statements.bumpSessionVersion.run(config.userId);
+      return this.getSessionVersion();
     }
   };
 }

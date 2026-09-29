@@ -43,7 +43,8 @@ class SQLiteSessionStore extends session.Store {
       count: database.prepare('SELECT COUNT(*) AS count FROM sessions WHERE expires > ?'),
       destroy: database.prepare('DELETE FROM sessions WHERE sid = ?'),
       clear: database.prepare('DELETE FROM sessions'),
-      deleteExpired: database.prepare('DELETE FROM sessions WHERE expires <= ?')
+      deleteExpired: database.prepare('DELETE FROM sessions WHERE expires <= ?'),
+      sessionVersion: database.prepare('SELECT session_version FROM users WHERE id = ?')
     };
 
     this.cleanupExpiredSessions();
@@ -51,6 +52,18 @@ class SQLiteSessionStore extends session.Store {
     if (typeof this.cleanupTimer.unref === 'function') {
       this.cleanupTimer.unref();
     }
+  }
+
+  acceptsSessionWrite(sessionData) {
+    const userId = sessionData?.userId;
+    if (userId == null) return true;
+
+    const row = this.statements.sessionVersion.get(userId);
+    if (!row) return true;
+
+    const currentVersion = Number(row.session_version) || 0;
+    const stampedVersion = Number.isInteger(sessionData.sessionVersion) ? sessionData.sessionVersion : 0;
+    return stampedVersion === currentVersion;
   }
 
   get(sessionId, callback) {
@@ -67,7 +80,14 @@ class SQLiteSessionStore extends session.Store {
         return;
       }
 
-      deferSessionCallback(callback, null, JSON.parse(row.sess));
+      const sessionData = JSON.parse(row.sess);
+      if (!this.acceptsSessionWrite(sessionData)) {
+        this.statements.destroy.run(sessionId);
+        deferSessionCallback(callback, null);
+        return;
+      }
+
+      deferSessionCallback(callback, null, sessionData);
     } catch (error) {
       deferSessionCallback(callback, error);
     }
@@ -75,6 +95,12 @@ class SQLiteSessionStore extends session.Store {
 
   set(sessionId, sessionData, callback) {
     try {
+      if (!this.acceptsSessionWrite(sessionData)) {
+        this.statements.destroy.run(sessionId);
+        deferSessionCallback(callback);
+        return;
+      }
+
       this.statements.set.run(
         sessionId,
         JSON.stringify(sessionData),
@@ -91,6 +117,11 @@ class SQLiteSessionStore extends session.Store {
       const row = this.statements.get.get(sessionId);
       if (row) {
         const currentSession = JSON.parse(row.sess);
+        if (!this.acceptsSessionWrite(currentSession) || !this.acceptsSessionWrite(sessionData)) {
+          this.statements.destroy.run(sessionId);
+          deferSessionCallback(callback);
+          return;
+        }
         currentSession.cookie = sessionData.cookie;
         this.statements.set.run(
           sessionId,

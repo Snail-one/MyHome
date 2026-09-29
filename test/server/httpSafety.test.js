@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const test = require('node:test');
+const { once } = require('node:events');
 
 const {
   assertPublicHttpUrl,
@@ -184,6 +186,110 @@ test('safeFetch timeout stays active until the response body is read', async () 
     return true;
   });
   assert.ok(Date.now() - startedAt < 300, `body download exceeded the timeout window (${Date.now() - startedAt}ms)`);
+});
+
+function closeServer(server) {
+  server.closeAllConnections?.();
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+test('safeFetch keeps the checked address for the connection', async (t) => {
+  const hits = [];
+  const origin = http.createServer((req, res) => {
+    hits.push({ url: req.url, host: req.headers.host });
+    res.end('secret');
+  });
+  origin.listen(0, '127.0.0.1');
+  await once(origin, 'listening');
+  t.after(() => closeServer(origin));
+  const port = origin.address().port;
+
+  let lookups = 0;
+  const lookup = async () => {
+    lookups += 1;
+    return [{ address: '127.0.0.1', family: 4 }];
+  };
+
+  await assert.rejects(() => safeFetch(`http://rebind.example:${port}/secret`, {
+    lookup,
+    timeoutMs: 1000
+  }));
+  assert.equal(lookups, 1);
+  assert.deepEqual(hits, []);
+
+  lookups = 0;
+  const response = await safeFetch(`http://rebind.example:${port}/pinned`, {
+    allowPrivateNetwork: true,
+    lookup,
+    timeoutMs: 1000
+  });
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'secret');
+  assert.equal(lookups, 1);
+  assert.deepEqual(hits, [{ url: '/pinned', host: `rebind.example:${port}` }]);
+});
+
+test('safeFetch sends a proxy the checked address', async (t) => {
+  const hits = [];
+  const origin = http.createServer((req, res) => {
+    hits.push({ url: req.url, host: req.headers.host });
+    res.end('secret');
+  });
+  const seen = [];
+  const proxy = http.createServer((req, res) => {
+    seen.push(req.url);
+    let target;
+    try {
+      target = new URL(req.url);
+    } catch {
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    const upstream = http.request({
+      host: target.hostname,
+      port: target.port,
+      path: `${target.pathname}${target.search}`,
+      method: req.method,
+      headers: req.headers
+    }, (upstreamResponse) => {
+      res.writeHead(upstreamResponse.statusCode || 502);
+      upstreamResponse.pipe(res);
+    });
+    upstream.on('error', () => {
+      if (!res.headersSent) res.writeHead(502);
+      res.end();
+    });
+    req.pipe(upstream);
+  });
+
+  origin.listen(0, '127.0.0.1');
+  proxy.listen(0, '127.0.0.1');
+  await Promise.all([once(origin, 'listening'), once(proxy, 'listening')]);
+  t.after(() => Promise.all([closeServer(origin), closeServer(proxy)]));
+  const port = origin.address().port;
+
+  let lookups = 0;
+  const response = await safeFetch(`http://rebind.example:${port}/via-proxy`, {
+    allowPrivateNetwork: true,
+    lookup: async () => {
+      lookups += 1;
+      return [{ address: '127.0.0.1', family: 4 }];
+    },
+    proxy: {
+      httpProxy: `http://127.0.0.1:${proxy.address().port}`,
+      noProxy: ''
+    },
+    timeoutMs: 1000
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'secret');
+  assert.equal(lookups, 1);
+  assert.equal(seen[0], `http://127.0.0.1:${port}/via-proxy`);
+  assert.deepEqual(hits, [{ url: '/via-proxy', host: `rebind.example:${port}` }]);
 });
 
 test('safeFetch reports request timeouts explicitly', async () => {

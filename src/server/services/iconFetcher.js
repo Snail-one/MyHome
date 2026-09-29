@@ -333,14 +333,16 @@ async function logDnsLookupForResource(config, resourceUrl, details = {}, deps =
 function privateNetworkHostsForUrl(value) {
   try {
     const hostname = new URL(value).hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
-    return hostname ? [hostname] : [];
+    // Only an address written by the admin is an intranet grant. A name can resolve elsewhere later.
+    if (!hostname || net.isIP(hostname) === 0) return [];
+    return [hostname];
   } catch {
     return [];
   }
 }
 
 function withPrivateNetworkHosts(deps, targetUrl) {
-  if (deps?.privateNetworkHosts?.length) return deps;
+  if (Array.isArray(deps?.privateNetworkHosts)) return deps;
   return {
     ...(deps || {}),
     privateNetworkHosts: privateNetworkHostsForUrl(targetUrl)

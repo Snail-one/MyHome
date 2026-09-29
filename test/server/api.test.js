@@ -139,7 +139,8 @@ async function startApp(overrides, options = {}) {
     iconEventHub: app.locals.iconEventHub,
     login,
     request,
-    requestJson
+    requestJson,
+    sessionStore: app.locals.sessionStore
   };
 }
 
@@ -529,6 +530,70 @@ test('password change revokes other sessions and rotates the current session', a
   assert.equal(await changeSettings(app.baseUrl, other.cookie()), 401);
   assert.equal(await readSettings(app.baseUrl, current.cookie()), 200);
   assert.equal(await changeSettings(app.baseUrl, current.cookie()), 200);
+});
+
+test('a request that already loaded a session cannot restore it after a password change', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const current = createApiClient(app.baseUrl);
+  const other = createApiClient(app.baseUrl);
+  assert.equal((await current.login()).response.status, 200);
+  assert.equal((await other.login()).response.status, 200);
+  const previousCookie = current.cookie();
+
+  const store = app.sessionStore;
+  const originalGet = store.get.bind(store);
+  let releaseGet = null;
+  let captured = null;
+  store.get = function pauseFirstAuthenticatedGet(sessionId, callback) {
+    originalGet(sessionId, (error, session) => {
+      if (!releaseGet && session?.userId) {
+        captured = { sessionId, session: { ...session } };
+        releaseGet = () => callback(error, session);
+        return;
+      }
+      callback(error, session);
+    });
+  };
+  t.after(() => {
+    store.get = originalGet;
+  });
+
+  const inflight = fetch(`${app.baseUrl}/api/csrf`, {
+    headers: { cookie: previousCookie }
+  });
+  const startedAt = Date.now();
+  while (!releaseGet) {
+    if (Date.now() - startedAt > 1000) throw new Error('session load was not observed');
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const updated = await other.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'admin',
+      currentPassword: 'correct-password',
+      newPassword: 'rotated-password'
+    }
+  });
+  assert.equal(updated.response.status, 200);
+
+  releaseGet();
+  store.get = originalGet;
+  const inflightResponse = await inflight;
+  await inflightResponse.json();
+
+  await new Promise((resolve, reject) => {
+    store.set(captured.sessionId, captured.session, (error) => (error ? reject(error) : resolve()));
+  });
+  await new Promise((resolve, reject) => {
+    store.get(captured.sessionId, (error, session) => (error ? reject(error) : resolve(session)));
+  }).then((session) => {
+    assert.equal(session, undefined);
+  });
+
+  assert.equal(await readSettings(app.baseUrl, previousCookie), 401);
+  assert.equal(await readSettings(app.baseUrl, other.cookie()), 200);
 });
 
 test('username change keeps the current session', async (t) => {

@@ -1,7 +1,7 @@
 const dns = require('node:dns').promises;
 const net = require('node:net');
 
-const { fetch: undiciFetch, ProxyAgent } = require('undici');
+const { Agent, fetch: undiciFetch, ProxyAgent } = require('undici');
 
 const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_PORTS = {
@@ -240,28 +240,111 @@ function permitsPrivateNetwork(hostname, options = {}) {
   return hosts.some((host) => normalizeHostname(host) === normalized);
 }
 
-async function assertPublicHttpUrl(value, options = {}) {
-  const parsedUrl = parsePublicHttpUrl(value, options.baseUrl, options);
-  const lookup = options.lookup || dns.lookup;
+function normalizeResolvedAddresses(addresses) {
+  if (!Array.isArray(addresses)) return [];
 
-  const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
-  if (!permitsPrivateNetwork(hostname, options) && !net.isIP(hostname)) {
-    let addresses;
-    try {
-      addresses = await lookup(hostname, { all: true, verbatim: true });
-    } catch {
-      throw new Error('URL host could not be resolved');
-    }
+  return addresses.flatMap((entry) => {
+    const address = entry?.address;
+    if (!address || !net.isIP(address)) return [];
+    const family = entry.family === 6 || net.isIP(address) === 6 ? 6 : 4;
+    return [{ address, family }];
+  });
+}
 
-    if (!Array.isArray(addresses) || !addresses.length) {
-      throw new Error('URL host could not be resolved');
-    }
-
-    if (addresses.some((entry) => isBlockedAddress(entry.address))) {
-      throw new Error('URL resolved to a blocked address');
-    }
+async function resolvePinnedAddresses(hostname, options = {}) {
+  if (net.isIP(hostname)) {
+    const family = net.isIP(hostname) === 6 ? 6 : 4;
+    return [{ address: hostname, family }];
   }
 
+  const lookup = options.lookup || dns.lookup;
+  let addresses;
+  try {
+    addresses = await lookup(hostname, { all: true, verbatim: true });
+  } catch {
+    throw new Error('URL host could not be resolved');
+  }
+
+  const pinnedAddresses = normalizeResolvedAddresses(addresses);
+  if (!pinnedAddresses.length) {
+    throw new Error('URL host could not be resolved');
+  }
+  if (!permitsPrivateNetwork(hostname, options) && pinnedAddresses.some((entry) => isBlockedAddress(entry.address))) {
+    throw new Error('URL resolved to a blocked address');
+  }
+  return pinnedAddresses;
+}
+
+function createPinnedAgent(addresses) {
+  return new Agent({
+    connect: {
+      lookup(_hostname, lookupOptions, callback) {
+        if (lookupOptions.all) {
+          callback(null, addresses);
+          return;
+        }
+        callback(null, addresses[0].address, addresses[0].family);
+      }
+    }
+  });
+}
+
+function proxyUrlForRequest(parsedUrl, proxy) {
+  if (!proxy || shouldBypassProxy(parsedUrl, proxy.noProxy)) return '';
+  const proxyUrl = parsedUrl.protocol === 'https:'
+    ? (proxy.httpsProxy || proxy.httpProxy)
+    : proxy.httpProxy;
+  return proxyUrl || '';
+}
+
+function withPinnedHostHeader(headers, host) {
+  if (Array.isArray(headers)) {
+    for (let index = 0; index < headers.length; index += 2) {
+      if (String(headers[index]).toLowerCase() === 'host') return headers;
+    }
+    return [...headers, 'host', host];
+  }
+
+  if (headers && typeof headers === 'object') {
+    if (Object.keys(headers).some((key) => key.toLowerCase() === 'host')) return headers;
+    return { ...headers, host };
+  }
+
+  return { host };
+}
+
+function createPinnedProxyDispatcher(proxyUrl, parsedUrl, addresses) {
+  const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
+  const proxyAgent = new ProxyAgent({
+    uri: parseProxyUrl(proxyUrl),
+    requestTls: { servername: hostname }
+  });
+  const target = new URL(parsedUrl.href);
+  target.hostname = addresses[0].address;
+  const origin = target.origin;
+  const host = parsedUrl.host;
+
+  return {
+    dispatch(opts, handler) {
+      return proxyAgent.dispatch({
+        ...opts,
+        origin,
+        headers: withPinnedHostHeader(opts.headers, host)
+      }, handler);
+    },
+    close() {
+      return proxyAgent.close();
+    },
+    destroy(error) {
+      return proxyAgent.destroy(error);
+    }
+  };
+}
+
+async function assertPublicHttpUrl(value, options = {}) {
+  const parsedUrl = parsePublicHttpUrl(value, options.baseUrl, options);
+  const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
+  parsedUrl.validatedAddresses = await resolvePinnedAddresses(hostname, options);
   return parsedUrl;
 }
 
@@ -296,13 +379,17 @@ function fetchWithTimeout(url, options = {}) {
     : null;
   if (typeof timeout?.unref === 'function') timeout.unref();
 
+  const fetchImpl = options.fetch || undiciFetch;
+  const pinnedAddresses = normalizeResolvedAddresses(options.addresses);
+  let pinnedAgent = null;
+
   function finish() {
     if (finished) return;
     finished = true;
     if (timeout) clearTimeout(timeout);
+    pinnedAgent?.close().catch(() => {});
   }
 
-  const fetchImpl = options.fetch || undiciFetch;
   let fetchPromise;
 
   try {
@@ -311,14 +398,24 @@ function fetchWithTimeout(url, options = {}) {
       ...options,
       signal: controller.signal
     };
-    const dispatcher = fetchOptions.dispatcher || getProxyDispatcherForUrl(parsedUrl, fetchOptions.proxy);
-    if (dispatcher) fetchOptions.dispatcher = dispatcher;
+    const explicitDispatcher = fetchOptions.dispatcher;
+    const proxyUrl = explicitDispatcher ? '' : proxyUrlForRequest(parsedUrl, fetchOptions.proxy);
+    if (fetchImpl === undiciFetch && pinnedAddresses.length && !explicitDispatcher) {
+      // Connect to the addresses already checked. A later DNS answer is ignored.
+      pinnedAgent = proxyUrl
+        ? createPinnedProxyDispatcher(proxyUrl, parsedUrl, pinnedAddresses)
+        : createPinnedAgent(pinnedAddresses);
+      fetchOptions.dispatcher = pinnedAgent;
+    } else if (explicitDispatcher || proxyUrl) {
+      fetchOptions.dispatcher = explicitDispatcher || getProxyDispatcherForUrl(parsedUrl, fetchOptions.proxy);
+    }
 
     delete fetchOptions.timeoutMs;
     delete fetchOptions.maxRedirects;
     delete fetchOptions.lookup;
     delete fetchOptions.allowPrivateNetwork;
     delete fetchOptions.privateNetworkHosts;
+    delete fetchOptions.addresses;
     delete fetchOptions.proxy;
     delete fetchOptions.fetch;
     fetchPromise = fetchImpl(url, fetchOptions);
@@ -397,15 +494,16 @@ async function safeFetch(url, options = {}) {
   const lookup = options.lookup;
   const allowPrivateNetwork = Boolean(options.allowPrivateNetwork);
   const privateNetworkHosts = options.privateNetworkHosts;
-  let currentUrl = (await assertPublicHttpUrl(url, {
+  let currentTarget = await assertPublicHttpUrl(url, {
     lookup,
     allowPrivateNetwork,
     privateNetworkHosts
-  })).href;
+  });
 
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
-    const response = await fetchWithTimeout(currentUrl, {
+    const response = await fetchWithTimeout(currentTarget.href, {
       ...options,
+      addresses: currentTarget.validatedAddresses,
       redirect: 'manual'
     });
 
@@ -420,12 +518,12 @@ async function safeFetch(url, options = {}) {
       throw new Error('Too many redirects');
     }
 
-    currentUrl = (await assertPublicHttpUrl(location, {
-      baseUrl: currentUrl,
+    currentTarget = await assertPublicHttpUrl(location, {
+      baseUrl: currentTarget.href,
       lookup,
       allowPrivateNetwork,
       privateNetworkHosts
-    })).href;
+    });
   }
 
   throw new Error('Too many redirects');
