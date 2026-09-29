@@ -371,11 +371,13 @@ async function safeFetchIconResource(config, resourceUrl, requestOptions, usePro
   const proxy = formatProxyLogValue(getIconFetchProxyUrl(config, resourceUrl, useProxy));
   const startedAt = Date.now();
 
-  await logDnsLookupForResource(config, resourceUrl, {
-    phase,
-    mode,
-    proxy
-  }, deps);
+  if (!useProxy) {
+    await logDnsLookupForResource(config, resourceUrl, {
+      phase,
+      mode,
+      proxy
+    }, deps);
+  }
 
   logIconFetch(config, 'request:start', {
     phase,

@@ -231,7 +231,7 @@ test('safeFetch keeps the checked address for the connection', async (t) => {
   assert.deepEqual(hits, [{ url: '/pinned', host: `rebind.example:${port}` }]);
 });
 
-test('safeFetch sends a proxy the checked address', async (t) => {
+test('safeFetch lets the proxy resolve a domain name', async (t) => {
   const hits = [];
   const origin = http.createServer((req, res) => {
     hits.push({ url: req.url, host: req.headers.host });
@@ -248,8 +248,9 @@ test('safeFetch sends a proxy the checked address', async (t) => {
       res.end();
       return;
     }
+    const upstreamHost = target.hostname === 'rebind.example' ? '127.0.0.1' : target.hostname;
     const upstream = http.request({
-      host: target.hostname,
+      host: upstreamHost.replace(/^\[|\]$/g, ''),
       port: target.port,
       path: `${target.pathname}${target.search}`,
       method: req.method,
@@ -270,25 +271,35 @@ test('safeFetch sends a proxy the checked address', async (t) => {
   await Promise.all([once(origin, 'listening'), once(proxy, 'listening')]);
   t.after(() => Promise.all([closeServer(origin), closeServer(proxy)]));
   const port = origin.address().port;
+  const proxyOptions = {
+    httpProxy: `http://127.0.0.1:${proxy.address().port}`,
+    noProxy: ''
+  };
 
   let lookups = 0;
+  const lookup = async () => {
+    lookups += 1;
+    return [{ address: '127.0.0.1', family: 4 }];
+  };
+
+  await assert.rejects(() => safeFetch(`http://127.0.0.1:${port}/secret`, {
+    lookup,
+    proxy: proxyOptions,
+    timeoutMs: 1000
+  }));
+  assert.equal(lookups, 0);
+  assert.deepEqual(seen, []);
+
   const response = await safeFetch(`http://rebind.example:${port}/via-proxy`, {
-    allowPrivateNetwork: true,
-    lookup: async () => {
-      lookups += 1;
-      return [{ address: '127.0.0.1', family: 4 }];
-    },
-    proxy: {
-      httpProxy: `http://127.0.0.1:${proxy.address().port}`,
-      noProxy: ''
-    },
+    lookup,
+    proxy: proxyOptions,
     timeoutMs: 1000
   });
 
   assert.equal(response.status, 200);
   assert.equal(await response.text(), 'secret');
-  assert.equal(lookups, 1);
-  assert.equal(seen[0], `http://127.0.0.1:${port}/via-proxy`);
+  assert.equal(lookups, 0);
+  assert.equal(seen[0], `http://rebind.example:${port}/via-proxy`);
   assert.deepEqual(hits, [{ url: '/via-proxy', host: `rebind.example:${port}` }]);
 });
 
@@ -333,20 +344,25 @@ test('safeFetch sends a proxy the checked IPv6 address', async (t) => {
   t.after(() => Promise.all([closeServer(origin), closeServer(proxy)]));
   const port = origin.address().port;
 
-  const response = await safeFetch(`http://rebind.example:${port}/via-proxy`, {
+  let lookups = 0;
+  const response = await safeFetch(`http://[::1]:${port}/via-proxy`, {
     allowPrivateNetwork: true,
-    lookup: async () => [{ address: '::1', family: 6 }],
+    lookup: async () => {
+      lookups += 1;
+      throw new Error('proxy address literals are not resolved locally');
+    },
     proxy: {
       httpProxy: `http://127.0.0.1:${proxy.address().port}`,
       noProxy: ''
     },
     timeoutMs: 1000
   });
+  assert.equal(lookups, 0);
 
   assert.equal(response.status, 200);
   assert.equal(await response.text(), 'secret');
   assert.equal(seen[0], `http://[::1]:${port}/via-proxy`);
-  assert.deepEqual(hits, [{ url: '/via-proxy', host: `rebind.example:${port}` }]);
+  assert.deepEqual(hits, [{ url: '/via-proxy', host: `[::1]:${port}` }]);
 });
 
 test('safeFetch reports request timeouts explicitly', async () => {

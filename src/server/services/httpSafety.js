@@ -363,9 +363,19 @@ function createPinnedProxyDispatcher(proxyUrl, parsedUrl, addresses) {
   };
 }
 
+function proxyResolvesHost(parsedUrl, options = {}) {
+  const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
+  return net.isIP(hostname) === 0 && Boolean(proxyUrlForRequest(parsedUrl, options.proxy));
+}
+
 async function assertPublicHttpUrl(value, options = {}) {
   const parsedUrl = parsePublicHttpUrl(value, options.baseUrl, options);
   const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
+  if (proxyResolvesHost(parsedUrl, options)) {
+    // The proxy looks up this name. Resolving it here would pin the request to this machine's DNS.
+    parsedUrl.validatedAddresses = [];
+    return parsedUrl;
+  }
   parsedUrl.validatedAddresses = await resolvePinnedAddresses(hostname, options);
   return parsedUrl;
 }
@@ -519,7 +529,8 @@ async function safeFetch(url, options = {}) {
   let currentTarget = await assertPublicHttpUrl(url, {
     lookup,
     allowPrivateNetwork,
-    privateNetworkHosts
+    privateNetworkHosts,
+    proxy: options.proxy
   });
 
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
@@ -544,7 +555,8 @@ async function safeFetch(url, options = {}) {
       baseUrl: currentTarget.href,
       lookup,
       allowPrivateNetwork,
-      privateNetworkHosts
+      privateNetworkHosts,
+      proxy: options.proxy
     });
   }
 
