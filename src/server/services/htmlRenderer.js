@@ -32,13 +32,9 @@ function getInitialBackgroundStyle(backgroundUrl) {
 
 function createHtmlRenderer(config, settingsStore) {
   const indexPath = path.join(config.publicDir, 'index.html');
-  let templatePromise = null;
 
   function readTemplate() {
-    if (!templatePromise || config.nodeEnv !== 'production') {
-      templatePromise = fs.promises.readFile(indexPath, 'utf8');
-    }
-    return templatePromise;
+    return fs.promises.readFile(indexPath, 'utf8');
   }
 
   return {
