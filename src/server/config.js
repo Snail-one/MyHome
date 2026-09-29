@@ -62,6 +62,19 @@ function parseBooleanEnv(value, fallback) {
   return fallback;
 }
 
+// Boolean true would trust every X-Forwarded-For entry. A hop count trusts
+// only the addresses appended by the proxy, so a client-supplied prefix is ignored.
+function parseTrustProxy(value) {
+  if (value === undefined || value === '') return false;
+
+  const text = String(value).trim();
+  const normalized = text.toLowerCase();
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  if (['true', 'yes', 'on'].includes(normalized)) return 1;
+  if (/^[1-9]\d*$/.test(text)) return Number.parseInt(text, 10);
+  return text;
+}
+
 function firstNonEmptyEnv(...values) {
   for (const value of values) {
     if (value === undefined || value === null) continue;
@@ -130,7 +143,7 @@ function loadConfig(env = process.env, options = {}) {
     sessionCookieSecure: parseBooleanEnv(env.SESSION_COOKIE_SECURE, nodeEnv === 'production'),
     sessionMaxAgeMs: 1000 * 60 * 60 * 24 * 30,
     sessionCleanupIntervalMs: 60 * 60 * 1000,
-    trustProxy: parseBooleanEnv(env.TRUST_PROXY, false),
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
     loginMaxFailedAttempts: parseIntegerEnv(env.LOGIN_MAX_FAILED_ATTEMPTS, 5, 1),
     loginWindowMs: parseIntegerEnv(env.LOGIN_WINDOW_MS, 15 * 60 * 1000, 1000),
     loginLockoutMs: parseIntegerEnv(env.LOGIN_LOCKOUT_MS, 15 * 60 * 1000, 1000),

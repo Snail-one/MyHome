@@ -106,6 +106,86 @@ test('safeFetch honors no_proxy entries before applying proxy dispatcher', async
   assert.equal(fetchOptions.dispatcher, undefined);
 });
 
+test('safeFetch allowlist permits only the named private host', async () => {
+  const fetched = [];
+  const fetch = async (url) => {
+    fetched.push(String(url));
+    return new Response('ok', { status: 200 });
+  };
+
+  const allowed = await safeFetch('http://192.168.1.10/icon.svg', {
+    fetch,
+    privateNetworkHosts: ['192.168.1.10'],
+    timeoutMs: 1000
+  });
+  assert.equal(allowed.status, 200);
+
+  await assert.rejects(() => safeFetch('http://192.168.1.1/secret', {
+    fetch,
+    privateNetworkHosts: ['192.168.1.10'],
+    timeoutMs: 1000
+  }));
+  assert.deepEqual(fetched, ['http://192.168.1.10/icon.svg']);
+});
+
+test('safeFetch allowlist does not follow a redirect to a different private host', async () => {
+  const fetched = [];
+  const fetch = async (url) => {
+    fetched.push(String(url));
+    return new Response(null, {
+      status: 302,
+      headers: { location: 'http://192.168.1.1/secret' }
+    });
+  };
+
+  await assert.rejects(() => safeFetch('http://192.168.1.10/', {
+    fetch,
+    privateNetworkHosts: ['192.168.1.10'],
+    timeoutMs: 1000
+  }));
+  assert.deepEqual(fetched, ['http://192.168.1.10/']);
+});
+
+test('safeFetch timeout stays active until the response body is read', async () => {
+  let timer;
+  let finishPull;
+  const fetch = async () => new Response(new ReadableStream({
+    pull(controller) {
+      return new Promise((resolve) => {
+        finishPull = resolve;
+        timer = setTimeout(() => {
+          try {
+            controller.enqueue(new TextEncoder().encode('slow'));
+            controller.close();
+          } catch {
+            // The timeout already cancelled this body.
+          }
+          resolve();
+        }, 400);
+      });
+    },
+    cancel() {
+      clearTimeout(timer);
+      finishPull?.();
+    }
+  }), { status: 200 });
+
+  const startedAt = Date.now();
+  await assert.rejects(async () => {
+    const response = await safeFetch('https://service.test/icon.svg', {
+      fetch,
+      lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+      timeoutMs: 100
+    });
+    await response.arrayBuffer();
+  }, (error) => {
+    assert.equal(error.code, 'FETCH_TIMEOUT');
+    assert.equal(error.timeoutMs, 100);
+    return true;
+  });
+  assert.ok(Date.now() - startedAt < 300, `body download exceeded the timeout window (${Date.now() - startedAt}ms)`);
+});
+
 test('safeFetch reports request timeouts explicitly', async () => {
   const fetch = async (_url, options) => new Promise((_, reject) => {
     options.signal.addEventListener('abort', () => {

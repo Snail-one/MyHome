@@ -7,6 +7,7 @@ const test = require('node:test');
 const { once } = require('node:events');
 
 const { loadConfig } = require('../../src/server/config');
+const { safeFetch } = require('../../src/server/services/httpSafety');
 const {
   createIconFetcher,
   discoverIconCandidates,
@@ -14,6 +15,7 @@ const {
   fetchIconCandidate,
   firstTruthyResult,
   normalizeIconTargetUrl,
+  resolveIconForUrl,
   toHttpUrl
 } = require('../../src/server/services/iconFetcher');
 
@@ -346,6 +348,112 @@ test('discoverIconCandidates logs proxy address and access failures', async () =
            log.status === 403 &&
            log.reason === 'access-failed';
   }));
+});
+
+const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>';
+
+function publicLookup() {
+  return async (hostname) => {
+    if (hostname === 'example.com' || hostname === 'cdn.example.com') {
+      return [{ address: '93.184.216.34', family: 4 }];
+    }
+    throw new Error(`unexpected lookup for ${hostname}`);
+  };
+}
+
+function guardedFetch(fetchImpl, lookup) {
+  return (url, options) => {
+    assert.notEqual(options.allowPrivateNetwork, true);
+    return safeFetch(url, {
+      ...options,
+      fetch: fetchImpl,
+      lookup
+    });
+  };
+}
+
+test('external pages cannot name a private icon target', async () => {
+  const fetched = [];
+  const html = [
+    '<link rel="icon" href="http://192.168.1.1/secret.ico">',
+    '<link rel="icon" href="http://169.254.169.254/latest/meta-data/">',
+    '<link rel="icon" href="https://cdn.example.com/favicon.svg" type="image/svg+xml">'
+  ].join('');
+  const lookup = publicLookup();
+  const resolved = await resolveIconForUrl(makeIconConfig(), 'https://example.com/', {
+    dnsLookup: lookup,
+    safeFetch: guardedFetch(async (url) => {
+      const requestUrl = String(url);
+      fetched.push(requestUrl);
+      if (requestUrl === 'https://example.com/') {
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+      if (requestUrl === 'https://cdn.example.com/favicon.svg') {
+        return new Response(ICON_SVG, {
+          status: 200,
+          headers: { 'content-type': 'image/svg+xml' }
+        });
+      }
+      throw new Error(`unexpected fetch ${requestUrl}`);
+    }, lookup)
+  });
+
+  assert.equal(resolved.icon.contentType, 'image/svg+xml');
+  assert.equal(fetched.some((url) => url.includes('192.168.1.1') || url.includes('169.254.169.254')), false);
+  assert.ok(fetched.includes('https://cdn.example.com/favicon.svg'));
+});
+
+test('a private bookmark can fetch its own icon but not another private host', async () => {
+  const fetched = [];
+  const html = [
+    '<link rel="icon" href="/favicon.svg" type="image/svg+xml">',
+    '<link rel="icon" href="http://192.168.1.1/secret.ico">'
+  ].join('');
+  const resolved = await resolveIconForUrl(makeIconConfig(), 'http://192.168.1.10/', {
+    safeFetch: guardedFetch(async (url) => {
+      const requestUrl = String(url);
+      fetched.push(requestUrl);
+      if (requestUrl === 'http://192.168.1.10/') {
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+      }
+      if (requestUrl === 'http://192.168.1.10/favicon.svg') {
+        return new Response(ICON_SVG, {
+          status: 200,
+          headers: { 'content-type': 'image/svg+xml' }
+        });
+      }
+      throw new Error(`unexpected fetch ${requestUrl}`);
+    })
+  });
+
+  assert.equal(resolved.icon.contentType, 'image/svg+xml');
+  assert.ok(fetched.includes('http://192.168.1.10/'));
+  assert.ok(fetched.includes('http://192.168.1.10/favicon.svg'));
+  assert.equal(fetched.some((url) => new URL(url).hostname === '192.168.1.1'), false);
+});
+
+test('an external icon page cannot redirect the fetcher onto a private address', async () => {
+  const fetched = [];
+  const lookup = publicLookup();
+  const resolved = await resolveIconForUrl(makeIconConfig(), 'https://example.com/', {
+    dnsLookup: lookup,
+    safeFetch: guardedFetch(async (url) => {
+      fetched.push(String(url));
+      return new Response(null, {
+        status: 302,
+        headers: { location: 'http://169.254.169.254/latest/meta-data/' }
+      });
+    }, lookup)
+  });
+
+  assert.equal(resolved.icon, null);
+  assert.deepEqual(fetched, ['https://example.com/']);
 });
 
 test('fetchIconCandidate accepts valid image magic and rejects forged image data', async (t) => {

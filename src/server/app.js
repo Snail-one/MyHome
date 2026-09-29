@@ -20,6 +20,37 @@ const { createIconService } = require('./services/iconService');
 const { createLoginLimiter } = require('./services/loginLimiter');
 const { SQLiteSessionStore } = require('./services/sessionStore');
 
+const FORWARDED_HEADERS = [
+  'forwarded',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-port',
+  'x-forwarded-proto'
+];
+
+function createForwardedHeaderSanitizer(trustProxy) {
+  return function sanitizeForwardedHeaders(req, res, next) {
+    if (!trustProxy) {
+      FORWARDED_HEADERS.forEach((header) => {
+        delete req.headers[header];
+      });
+      next();
+      return;
+    }
+
+    if (typeof trustProxy === 'number') {
+      const forwardedFor = req.headers['x-forwarded-for'];
+      if (typeof forwardedFor === 'string') {
+        const hops = forwardedFor.split(',').map((part) => part.trim()).filter(Boolean).slice(-trustProxy);
+        if (hops.length) req.headers['x-forwarded-for'] = hops.join(', ');
+        else delete req.headers['x-forwarded-for'];
+      }
+    }
+
+    next();
+  };
+}
+
 function createSecurityHeadersMiddleware() {
   const contentSecurityPolicy = [
     "default-src 'self'",
@@ -158,6 +189,11 @@ function createApp(deps) {
     windowMs: config.loginWindowMs,
     lockoutMs: config.loginLockoutMs
   });
+  const accountLimiter = deps.accountLimiter || createLoginLimiter({
+    maxFailedAttempts: config.loginMaxFailedAttempts,
+    windowMs: config.loginWindowMs,
+    lockoutMs: config.loginLockoutMs
+  });
   const iconEventHub = deps.iconEventHub || createIconEventHub({
     sessionStore,
     heartbeatMs: config.iconSseHeartbeatMs,
@@ -190,6 +226,7 @@ function createApp(deps) {
   app.locals.assetManifest = assetManifest;
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
+  app.use(createForwardedHeaderSanitizer(config.trustProxy));
 
   app.use(createSecurityHeadersMiddleware());
   app.use(createCompressionMiddleware());
@@ -238,11 +275,13 @@ function createApp(deps) {
   });
 
   const apiDeps = {
+    accountLimiter,
     auth,
     config,
     iconService,
     iconEventHub,
     limiter,
+    sessionStore,
     stores
   };
 
@@ -280,6 +319,7 @@ module.exports = {
   createSecurityHeadersMiddleware,
   csrfProtection,
   isUnsafeMethod,
+  createForwardedHeaderSanitizer,
   mountPublicAssets,
   sendHashedAsset
 };

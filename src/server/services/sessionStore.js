@@ -113,6 +113,23 @@ class SQLiteSessionStore extends session.Store {
     }
   }
 
+  destroyUserSessions(userId, exceptSessionId, callback) {
+    try {
+      const removed = [];
+      const rows = this.statements.all.all(Date.now());
+      for (const row of rows) {
+        if (row.sid === exceptSessionId) continue;
+        const data = JSON.parse(row.sess);
+        if (data?.userId !== userId) continue;
+        this.statements.destroy.run(row.sid);
+        removed.push(row.sid);
+      }
+      deferSessionCallback(callback, null, removed);
+    } catch (error) {
+      deferSessionCallback(callback, error);
+    }
+  }
+
   all(callback) {
     try {
       this.cleanupExpiredSessions();

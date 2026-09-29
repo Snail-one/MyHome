@@ -221,13 +221,23 @@ function parsePublicHttpUrl(value, baseUrl, options = {}) {
   if (!hostname) {
     throw new Error('URL host is not allowed');
   }
-  if (!options.allowPrivateNetwork && isBlockedHostname(hostname)) {
+  const permitPrivateNetwork = permitsPrivateNetwork(hostname, options);
+  if (!permitPrivateNetwork && isBlockedHostname(hostname)) {
     throw new Error('URL host is not allowed');
   }
-  if (!options.allowPrivateNetwork && net.isIP(hostname) && isBlockedAddress(hostname)) {
+  if (!permitPrivateNetwork && net.isIP(hostname) && isBlockedAddress(hostname)) {
     throw new Error('URL address is not allowed');
   }
   return parsedUrl;
+}
+
+function permitsPrivateNetwork(hostname, options = {}) {
+  if (options.allowPrivateNetwork) return true;
+  const normalized = normalizeHostname(hostname);
+  const allowlist = options.privateNetworkHosts;
+  if (!normalized || !allowlist) return false;
+  const hosts = Array.isArray(allowlist) ? allowlist : [allowlist];
+  return hosts.some((host) => normalizeHostname(host) === normalized);
 }
 
 async function assertPublicHttpUrl(value, options = {}) {
@@ -235,7 +245,7 @@ async function assertPublicHttpUrl(value, options = {}) {
   const lookup = options.lookup || dns.lookup;
 
   const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
-  if (!options.allowPrivateNetwork && !net.isIP(hostname)) {
+  if (!permitsPrivateNetwork(hostname, options) && !net.isIP(hostname)) {
     let addresses;
     try {
       addresses = await lookup(hostname, { all: true, verbatim: true });
@@ -255,16 +265,43 @@ async function assertPublicHttpUrl(value, options = {}) {
   return parsedUrl;
 }
 
+function createTimeoutError(timeoutMs) {
+  const timeoutError = new Error('Request timed out');
+  timeoutError.code = 'FETCH_TIMEOUT';
+  timeoutError.timeoutMs = timeoutMs;
+  return timeoutError;
+}
+
 function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const timeoutMs = Number.parseInt(options.timeoutMs, 10) || 0;
   let didTimeout = false;
+  let finished = false;
+  let reader = null;
+  let streamController = null;
   const timeout = timeoutMs > 0
     ? setTimeout(() => {
       didTimeout = true;
       controller.abort();
+      reader?.cancel().catch(() => {});
+      if (streamController) {
+        try {
+          streamController.error(createTimeoutError(timeoutMs));
+        } catch {
+          // The stream already settled.
+        }
+      }
+      finish();
     }, timeoutMs)
     : null;
+  if (typeof timeout?.unref === 'function') timeout.unref();
+
+  function finish() {
+    if (finished) return;
+    finished = true;
+    if (timeout) clearTimeout(timeout);
+  }
+
   const fetchImpl = options.fetch || undiciFetch;
   let fetchPromise;
 
@@ -281,27 +318,77 @@ function fetchWithTimeout(url, options = {}) {
     delete fetchOptions.maxRedirects;
     delete fetchOptions.lookup;
     delete fetchOptions.allowPrivateNetwork;
+    delete fetchOptions.privateNetworkHosts;
     delete fetchOptions.proxy;
     delete fetchOptions.fetch;
     fetchPromise = fetchImpl(url, fetchOptions);
   } catch (error) {
-    if (timeout) clearTimeout(timeout);
+    finish();
     throw error;
   }
 
   return fetchPromise
+    .then((response) => {
+      if (didTimeout) throw createTimeoutError(timeoutMs);
+      if (!response.body) {
+        finish();
+        return response;
+      }
+
+      reader = response.body.getReader();
+      const stream = new ReadableStream({
+        async pull(controller) {
+          streamController = controller;
+          if (didTimeout) {
+            controller.error(createTimeoutError(timeoutMs));
+            return;
+          }
+
+          try {
+            const { done, value } = await reader.read();
+            if (didTimeout) {
+              controller.error(createTimeoutError(timeoutMs));
+              return;
+            }
+            if (done) {
+              finish();
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+          } catch (error) {
+            if (didTimeout) {
+              try {
+                controller.error(createTimeoutError(timeoutMs));
+              } catch {
+                // The stream already settled.
+              }
+              return;
+            }
+            finish();
+            controller.error(error);
+          }
+        },
+        cancel(reason) {
+          finish();
+          return reader.cancel(reason);
+        }
+      });
+
+      return new Response(stream, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers
+      });
+    })
     .catch((error) => {
-      if (didTimeout) {
-        const timeoutError = new Error('Request timed out');
-        timeoutError.code = 'FETCH_TIMEOUT';
-        timeoutError.timeoutMs = timeoutMs;
-        timeoutError.cause = error;
+      finish();
+      if (didTimeout || error?.code === 'FETCH_TIMEOUT') {
+        const timeoutError = error?.code === 'FETCH_TIMEOUT' ? error : createTimeoutError(timeoutMs);
+        if (error && error.code !== 'FETCH_TIMEOUT') timeoutError.cause = error;
         throw timeoutError;
       }
       throw error;
-    })
-    .finally(() => {
-      if (timeout) clearTimeout(timeout);
     });
 }
 
@@ -309,7 +396,12 @@ async function safeFetch(url, options = {}) {
   const maxRedirects = Number.isInteger(options.maxRedirects) ? options.maxRedirects : 3;
   const lookup = options.lookup;
   const allowPrivateNetwork = Boolean(options.allowPrivateNetwork);
-  let currentUrl = (await assertPublicHttpUrl(url, { lookup, allowPrivateNetwork })).href;
+  const privateNetworkHosts = options.privateNetworkHosts;
+  let currentUrl = (await assertPublicHttpUrl(url, {
+    lookup,
+    allowPrivateNetwork,
+    privateNetworkHosts
+  })).href;
 
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
     const response = await fetchWithTimeout(currentUrl, {
@@ -321,6 +413,7 @@ async function safeFetch(url, options = {}) {
       return response;
     }
 
+    await response.body?.cancel?.().catch(() => {});
     const location = response.headers.get('location');
     if (!location) return response;
     if (redirectCount === maxRedirects) {
@@ -330,7 +423,8 @@ async function safeFetch(url, options = {}) {
     currentUrl = (await assertPublicHttpUrl(location, {
       baseUrl: currentUrl,
       lookup,
-      allowPrivateNetwork
+      allowPrivateNetwork,
+      privateNetworkHosts
     })).href;
   }
 

@@ -43,7 +43,7 @@ test('loadConfig builds expected runtime paths', () => {
   assert.equal(config.legacyUploadsDir, '/repo/uploads');
   assert.equal(config.uploadsDirOverridden, false);
   assert.equal(config.port, 8080);
-  assert.equal(config.trustProxy, true);
+  assert.equal(config.trustProxy, 1);
   assert.equal(config.sessionCookieName, 'my_home_sid');
   assert.equal(config.iconFetchLogEnabled, false);
   assert.equal(config.iconFetchConcurrency, 8);
@@ -51,6 +51,15 @@ test('loadConfig builds expected runtime paths', () => {
   assert.equal(config.iconSseHeartbeatMs, 15000);
   assert.equal(config.iconSseMaxConnections, 32);
   assert.equal(config.iconSseMaxConnectionsPerSession, 4);
+});
+
+test('loadConfig treats TRUST_PROXY true as one trusted hop', () => {
+  const options = { rootDir: '/repo' };
+  assert.equal(loadConfig({ SESSION_SECRET: 'session-secret' }, options).trustProxy, false);
+  assert.equal(loadConfig({ SESSION_SECRET: 'session-secret', TRUST_PROXY: 'false' }, options).trustProxy, false);
+  assert.equal(loadConfig({ SESSION_SECRET: 'session-secret', TRUST_PROXY: 'true' }, options).trustProxy, 1);
+  assert.equal(loadConfig({ SESSION_SECRET: 'session-secret', TRUST_PROXY: '2' }, options).trustProxy, 2);
+  assert.equal(loadConfig({ SESSION_SECRET: 'session-secret', TRUST_PROXY: '10.0.0.1' }, options).trustProxy, '10.0.0.1');
 });
 
 test('loadConfig builds icon fetch proxy settings', () => {

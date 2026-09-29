@@ -45,3 +45,27 @@ test('SQLiteSessionStore stores, expires, counts, and destroys sessions', async 
   store.close();
   database.close();
 });
+
+test('destroyUserSessions removes other sessions for that user only', async () => {
+  const { database } = createTestDatabase();
+  const store = new SQLiteSessionStore(database.db, {
+    maxAgeMs: 60_000,
+    cleanupIntervalMs: 60 * 60 * 1000
+  });
+  const get = promisify(store.get.bind(store));
+  const set = promisify(store.set.bind(store));
+  const destroyUserSessions = promisify(store.destroyUserSessions.bind(store));
+
+  await set('keep', { cookie: { maxAge: 60_000 }, userId: 1 });
+  await set('other', { cookie: { maxAge: 60_000 }, userId: 1 });
+  await set('stranger', { cookie: { maxAge: 60_000 }, userId: 2 });
+
+  const removed = await destroyUserSessions(1, 'keep');
+  assert.deepEqual(removed.sort(), ['other']);
+  assert.equal((await get('keep')).userId, 1);
+  assert.equal(await get('other'), undefined);
+  assert.equal((await get('stranger')).userId, 2);
+
+  store.close();
+  database.close();
+});

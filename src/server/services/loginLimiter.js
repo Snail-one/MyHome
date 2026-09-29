@@ -77,14 +77,15 @@ function createLoginLimiter(options) {
   };
 }
 
-function sendLoginLockedResponse(res, limiter, state) {
+function sendLoginLockedResponse(res, limiter, state, options = {}) {
   const retryAfterSeconds = limiter.getRetryAfterSeconds(state);
   const retryAfterText = retryAfterSeconds < 60
     ? `${retryAfterSeconds} 秒`
     : `${Math.ceil(retryAfterSeconds / 60)} 分钟`;
+  const reason = options.reason || '登录失败次数过多';
   res.set('Retry-After', String(retryAfterSeconds));
   res.status(429).json({
-    error: `登录失败次数过多，请 ${retryAfterText}后再试`
+    error: `${reason}，请 ${retryAfterText}后再试`
   });
 }
 

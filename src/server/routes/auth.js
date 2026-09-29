@@ -9,7 +9,7 @@ const { sendLoginLockedResponse } = require('../services/loginLimiter');
 const DUMMY_HASH = '$2a$12$0A3hvgiidTsNjYRnlBrXMutNAw5tzOXVcpPOlu.FiY3Ee1kwthq/G';
 const USERNAME_MAX_LENGTH = 40;
 const PASSWORD_MIN_LENGTH = 8;
-const PASSWORD_MAX_LENGTH = 200;
+const PASSWORD_MAX_BYTES = 72;
 
 function normalizeUsername(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -27,8 +27,46 @@ function validatePassword(value, options = {}) {
   const label = options.label || '密码';
   if (!password) return { error: `请填写${label}` };
   if (password.length < PASSWORD_MIN_LENGTH) return { error: `${label}至少需要 ${PASSWORD_MIN_LENGTH} 位` };
-  if (password.length > PASSWORD_MAX_LENGTH) return { error: `${label}不能超过 ${PASSWORD_MAX_LENGTH} 位` };
+  if (Buffer.byteLength(password) > PASSWORD_MAX_BYTES) {
+    return { error: `${label}不能超过 ${PASSWORD_MAX_BYTES} 字节` };
+  }
   return { value: password };
+}
+
+function accountAttemptKey(req) {
+  return `account:${req.session?.userId || req.sessionID || 'unknown'}`;
+}
+
+function revokeOtherSessions(req, res, deps, username) {
+  const { config, iconEventHub, sessionStore } = deps;
+  const finishRotation = () => {
+    const previousSessionId = req.sessionID;
+    req.session.regenerate((error) => {
+      if (error) {
+        res.status(500).json({ error: '会话更新失败，请重新登录' });
+        return;
+      }
+
+      req.session.userId = config.userId;
+      iconEventHub?.disconnectSession?.(previousSessionId);
+      res.json({ user: { username } });
+    });
+  };
+
+  if (typeof sessionStore?.destroyUserSessions !== 'function') {
+    finishRotation();
+    return;
+  }
+
+  sessionStore.destroyUserSessions(config.userId, req.sessionID, (error, removedIds = []) => {
+    if (error) {
+      res.status(500).json({ error: '会话更新失败，请重新登录' });
+      return;
+    }
+
+    removedIds.forEach((sessionId) => iconEventHub?.disconnectSession?.(sessionId));
+    finishRotation();
+  });
 }
 
 function establishSession(req, res, config, user, statusCode = 200) {
@@ -44,7 +82,7 @@ function establishSession(req, res, config, user, statusCode = 200) {
 }
 
 function createAuthRouter(deps) {
-  const { auth, config, iconEventHub, limiter, stores } = deps;
+  const { accountLimiter, auth, config, iconEventHub, limiter, sessionStore, stores } = deps;
   const router = express.Router();
 
   router.get('/setup', (req, res) => {
@@ -136,10 +174,30 @@ function createAuthRouter(deps) {
     }
 
     const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+    const attemptKey = accountLimiter ? accountAttemptKey(req) : '';
+    const activeAttemptState = attemptKey ? accountLimiter.getActiveState(attemptKey) : null;
+    if (activeAttemptState?.lockedUntil > Date.now()) {
+      sendLoginLockedResponse(res, accountLimiter, activeAttemptState, {
+        reason: '当前密码尝试次数过多'
+      });
+      return;
+    }
+
     if (!bcrypt.compareSync(currentPassword, existing.password_hash || DUMMY_HASH)) {
+      if (accountLimiter && attemptKey) {
+        const failedState = accountLimiter.recordFailure(attemptKey);
+        if (failedState.lockedUntil > Date.now()) {
+          sendLoginLockedResponse(res, accountLimiter, failedState, {
+            reason: '当前密码尝试次数过多'
+          });
+          return;
+        }
+      }
       res.status(401).json({ error: '当前密码不正确' });
       return;
     }
+
+    if (accountLimiter && attemptKey) accountLimiter.clear(attemptKey);
 
     const nextPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
     if (nextPassword) {
@@ -153,10 +211,11 @@ function createAuthRouter(deps) {
         usernameResult.value,
         bcrypt.hashSync(nextPasswordResult.value, config.bcryptRounds)
       );
-    } else {
-      stores.users.updateAdminUsername(usernameResult.value);
+      revokeOtherSessions(req, res, { config, iconEventHub, sessionStore }, usernameResult.value);
+      return;
     }
 
+    stores.users.updateAdminUsername(usernameResult.value);
     res.json({ user: { username: usernameResult.value } });
   });
 

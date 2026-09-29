@@ -330,13 +330,30 @@ async function logDnsLookupForResource(config, resourceUrl, details = {}, deps =
   }
 }
 
+function privateNetworkHostsForUrl(value) {
+  try {
+    const hostname = new URL(value).hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+    return hostname ? [hostname] : [];
+  } catch {
+    return [];
+  }
+}
+
+function withPrivateNetworkHosts(deps, targetUrl) {
+  if (deps?.privateNetworkHosts?.length) return deps;
+  return {
+    ...(deps || {}),
+    privateNetworkHosts: privateNetworkHostsForUrl(targetUrl)
+  };
+}
+
 function getIconFetchOptions(config, requestOptions = {}, useProxy = false) {
-  const { proxy, phase, ...fetchOptions } = requestOptions;
+  const { proxy, phase, privateNetworkHosts, ...fetchOptions } = requestOptions;
   return {
     ...fetchOptions,
     timeoutMs: getIconFetchTimeoutMs(config, useProxy),
     maxRedirects: config.iconMaxRedirects,
-    allowPrivateNetwork: true,
+    privateNetworkHosts: privateNetworkHosts || [],
     ...(useProxy && hasIconFetchProxy(config) ? { proxy: config.iconFetchProxy } : {})
   };
 }
@@ -345,7 +362,10 @@ async function safeFetchIconResource(config, resourceUrl, requestOptions, usePro
   const fetchImpl = deps.safeFetch || safeFetch;
   const mode = getIconFetchMode(useProxy);
   const phase = requestOptions.phase || 'request';
-  const fetchOptions = getIconFetchOptions(config, requestOptions, useProxy);
+  const fetchOptions = getIconFetchOptions(config, {
+    ...requestOptions,
+    privateNetworkHosts: requestOptions.privateNetworkHosts || deps.privateNetworkHosts || []
+  }, useProxy);
   const proxy = formatProxyLogValue(getIconFetchProxyUrl(config, resourceUrl, useProxy));
   const startedAt = Date.now();
 
@@ -635,11 +655,12 @@ function getCandidateUrl(candidate) {
 async function fetchIconCandidate(config, candidate, deps = {}) {
   const candidateUrl = getCandidateUrl(candidate);
   if (!candidateUrl) return null;
+  const scopedDeps = withPrivateNetworkHosts(deps, candidateUrl);
 
-  const tasks = [() => readIconCandidate(config, candidateUrl, false, deps)];
+  const tasks = [() => readIconCandidate(config, candidateUrl, false, scopedDeps)];
   if (hasIconFetchProxy(config)) {
-    logIconFetch(config, 'icon:proxy-parallel', { url: candidateUrl }, deps);
-    tasks.push(() => readIconCandidate(config, candidateUrl, true, deps));
+    logIconFetch(config, 'icon:proxy-parallel', { url: candidateUrl }, scopedDeps);
+    tasks.push(() => readIconCandidate(config, candidateUrl, true, scopedDeps));
   }
 
   return firstTruthyResult(tasks);
@@ -735,7 +756,8 @@ function uniqueIconCandidates(candidates, maxCandidates = 40) {
 }
 
 async function discoverIconCandidateDetails(config, parsedUrl, deps = {}) {
-  const documentHints = await discoverDocumentIconHints(config, parsedUrl, deps);
+  const scopedDeps = withPrivateNetworkHosts(deps, parsedUrl.href);
+  const documentHints = await discoverDocumentIconHints(config, parsedUrl, scopedDeps);
   const candidates = uniqueIconCandidateDetails(documentHints?.iconCandidates || [], config.iconMaxCandidates);
   logIconFetch(config, 'candidates:ready', {
     host: parsedUrl.hostname,
@@ -758,13 +780,14 @@ async function resolveIconForUrl(config, targetUrl, deps = {}) {
   }
 
   const parsedUrl = new URL(normalizedTargetUrl);
-  logIconFetch(config, 'resolve:start', { url: normalizedTargetUrl }, deps);
-  const candidates = await discoverIconCandidateDetails(config, parsedUrl, deps);
+  const scopedDeps = withPrivateNetworkHosts(deps, normalizedTargetUrl);
+  logIconFetch(config, 'resolve:start', { url: normalizedTargetUrl }, scopedDeps);
+  const candidates = await discoverIconCandidateDetails(config, parsedUrl, scopedDeps);
   const resolved = await firstTruthyResult(
     candidates.map((candidate) => async () => {
       const candidateUrl = candidate.url;
       try {
-        const icon = await fetchIconCandidate(config, candidate, deps);
+        const icon = await fetchIconCandidate(config, candidate, scopedDeps);
         if (!icon) return null;
         return { icon, sourceUrl: candidateUrl, targetUrl: normalizedTargetUrl };
       } catch (error) {

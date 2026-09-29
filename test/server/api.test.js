@@ -7,7 +7,7 @@ const { once } = require('node:events');
 
 const bcrypt = require('bcryptjs');
 
-const { createApp } = require('../../src/server/app');
+const { createApp, createForwardedHeaderSanitizer } = require('../../src/server/app');
 const { loadConfig } = require('../../src/server/config');
 const { createDatabase } = require('../../src/server/db');
 const { seedDatabase } = require('../../src/server/db/seed');
@@ -124,6 +124,7 @@ async function startApp(overrides, options = {}) {
 
   async function close() {
     app.locals.iconEventHub?.close?.();
+    server.closeAllConnections?.();
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
@@ -140,6 +141,107 @@ async function startApp(overrides, options = {}) {
     request,
     requestJson
   };
+}
+
+function createApiClient(baseUrl) {
+  let cookie = '';
+  let csrfToken = '';
+
+  function updateCookie(response) {
+    const cookies = typeof response.headers.getSetCookie === 'function'
+      ? response.headers.getSetCookie()
+      : [];
+    const sessionCookie = cookies.find((value) => value.startsWith('my_home_sid='));
+    if (!sessionCookie) return;
+    cookie = sessionCookie.split(';')[0];
+    csrfToken = '';
+  }
+
+  async function getCsrfToken() {
+    if (csrfToken) return csrfToken;
+    const headers = {};
+    if (cookie) headers.cookie = cookie;
+    const response = await fetch(`${baseUrl}/api/csrf`, { headers });
+    updateCookie(response);
+    csrfToken = (await response.json()).csrfToken;
+    return csrfToken;
+  }
+
+  async function request(route, options = {}) {
+    const { csrf = true, ...requestOptions } = options;
+    const headers = { ...(requestOptions.headers || {}) };
+    let body = requestOptions.body;
+    if (
+      body &&
+      typeof body !== 'string' &&
+      !(body instanceof FormData) &&
+      !Buffer.isBuffer(body)
+    ) {
+      headers['content-type'] = 'application/json';
+      body = JSON.stringify(body);
+    }
+
+    const method = String(requestOptions.method || 'GET').toUpperCase();
+    if (csrf && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      headers['x-csrf-token'] = await getCsrfToken();
+    }
+    if (cookie) headers.cookie = cookie;
+
+    const response = await fetch(`${baseUrl}${route}`, {
+      ...requestOptions,
+      headers,
+      body
+    });
+    updateCookie(response);
+    return response;
+  }
+
+  async function requestJson(route, options = {}) {
+    const response = await request(route, options);
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await response.json() : null;
+    return { response, data };
+  }
+
+  return {
+    cookie: () => cookie,
+    login(password = 'correct-password', username = 'admin') {
+      return requestJson('/api/login', {
+        method: 'POST',
+        body: { username, password }
+      });
+    },
+    requestJson
+  };
+}
+
+async function readSettings(baseUrl, cookie) {
+  const response = await fetch(`${baseUrl}/api/settings`, {
+    headers: { cookie }
+  });
+  return response.status;
+}
+
+async function changeSettings(baseUrl, cookie) {
+  const csrfResponse = await fetch(`${baseUrl}/api/csrf`, {
+    headers: { cookie }
+  });
+  const token = (await csrfResponse.json()).csrfToken;
+  const cookies = typeof csrfResponse.headers.getSetCookie === 'function'
+    ? csrfResponse.headers.getSetCookie()
+    : [];
+  const sessionCookie = cookies.find((value) => value.startsWith('my_home_sid='));
+  const nextCookie = sessionCookie ? sessionCookie.split(';')[0] : cookie;
+  const response = await fetch(`${baseUrl}/api/settings`, {
+    method: 'PUT',
+    headers: {
+      cookie: nextCookie,
+      'content-type': 'application/json',
+      'x-csrf-token': token
+    },
+    body: JSON.stringify({ editMode: true })
+  });
+  return response.status;
 }
 
 test('first deployment registration creates hashed admin and authenticated defaults', async (t) => {
@@ -400,6 +502,149 @@ test('authenticated user can update username and password hash', async (t) => {
   assert.equal(result.response.status, 200);
 });
 
+test('password change revokes other sessions and rotates the current session', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const current = createApiClient(app.baseUrl);
+  const other = createApiClient(app.baseUrl);
+
+  assert.equal((await current.login()).response.status, 200);
+  assert.equal((await other.login()).response.status, 200);
+  const previousCookie = current.cookie();
+
+  const updated = await current.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'admin',
+      currentPassword: 'correct-password',
+      newPassword: 'rotated-password'
+    }
+  });
+  assert.equal(updated.response.status, 200);
+  assert.notEqual(current.cookie(), previousCookie);
+
+  assert.equal(await readSettings(app.baseUrl, previousCookie), 401);
+  assert.equal(await changeSettings(app.baseUrl, previousCookie), 401);
+  assert.equal(await readSettings(app.baseUrl, other.cookie()), 401);
+  assert.equal(await changeSettings(app.baseUrl, other.cookie()), 401);
+  assert.equal(await readSettings(app.baseUrl, current.cookie()), 200);
+  assert.equal(await changeSettings(app.baseUrl, current.cookie()), 200);
+});
+
+test('username change keeps the current session', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const current = createApiClient(app.baseUrl);
+  assert.equal((await current.login()).response.status, 200);
+  const cookie = current.cookie();
+
+  const updated = await current.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'owner',
+      currentPassword: 'correct-password'
+    }
+  });
+  assert.equal(updated.response.status, 200);
+  assert.equal(updated.data.user.username, 'owner');
+  assert.equal(await readSettings(app.baseUrl, cookie), 200);
+  assert.equal(await changeSettings(app.baseUrl, cookie), 200);
+});
+
+test('account password attempts lock independently of login attempts', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  await app.login();
+
+  let result = await app.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'admin',
+      currentPassword: 'wrong-password'
+    }
+  });
+  assert.equal(result.response.status, 401);
+
+  result = await app.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'admin',
+      currentPassword: 'wrong-password'
+    }
+  });
+  assert.equal(result.response.status, 429);
+  assert.ok(result.response.headers.get('retry-after'));
+  assert.match(result.data.error, /当前密码尝试次数过多/);
+
+  result = await app.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'admin',
+      currentPassword: 'correct-password',
+      newPassword: 'another-password'
+    }
+  });
+  assert.equal(result.response.status, 429);
+
+  result = await app.login();
+  assert.equal(result.response.status, 200);
+});
+
+test('account and registration reject passwords beyond the bcrypt byte limit', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  await app.login();
+
+  const overlong = `${'a'.repeat(70)}密码`;
+  assert.ok(Buffer.byteLength(overlong) > 72);
+  let result = await app.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'admin',
+      currentPassword: 'correct-password',
+      newPassword: overlong
+    }
+  });
+  assert.equal(result.response.status, 400);
+  assert.match(result.data.error, /72/);
+  assert.equal(bcrypt.compareSync('correct-password', app.database.stores.users.findAdmin().password_hash), true);
+
+  const limit = 'b'.repeat(72);
+  result = await app.requestJson('/api/account', {
+    method: 'PUT',
+    body: {
+      username: 'admin',
+      currentPassword: 'correct-password',
+      newPassword: limit
+    }
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(bcrypt.compareSync(limit, app.database.stores.users.findAdmin().password_hash), true);
+});
+
+test('login still matches a legacy hash that bcrypt truncated', async (t) => {
+  const app = await startApp(undefined, { seedAdmin: false });
+  t.after(app.close);
+  const prefix = 'c'.repeat(72);
+  app.database.stores.users.insertAdmin('admin', bcrypt.hashSync(`${prefix}legacy`, 4));
+
+  const result = await app.login(`${prefix}other`);
+  assert.equal(result.response.status, 200);
+});
+
+test('registration rejects a password beyond the bcrypt byte limit', async (t) => {
+  const app = await startApp(undefined, { seedAdmin: false });
+  t.after(app.close);
+
+  const result = await app.requestJson('/api/setup/register', {
+    method: 'POST',
+    body: { username: 'owner', password: 'a'.repeat(73) }
+  });
+  assert.equal(result.response.status, 400);
+  assert.match(result.data.error, /72/);
+  assert.equal(app.database.stores.users.findAdmin(), undefined);
+});
+
 test('failed login lockout returns 429 and Retry-After', async (t) => {
   const app = await startApp();
   t.after(app.close);
@@ -410,6 +655,66 @@ test('failed login lockout returns 429 and Retry-After', async (t) => {
   result = await app.login('wrong');
   assert.equal(result.response.status, 429);
   assert.ok(result.response.headers.get('retry-after'));
+});
+
+test('login limiter ignores a client-supplied X-Forwarded-For prefix', async (t) => {
+  const direct = await startApp();
+  t.after(direct.close);
+  let result = await direct.requestJson('/api/login', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '1.1.1.1' },
+    body: { username: 'admin', password: 'wrong' }
+  });
+  assert.equal(result.response.status, 401);
+  result = await direct.requestJson('/api/login', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '8.8.8.8' },
+    body: { username: 'admin', password: 'wrong' }
+  });
+  assert.equal(result.response.status, 429);
+
+  const proxied = await startApp({ TRUST_PROXY: 'true' });
+  t.after(proxied.close);
+  result = await proxied.requestJson('/api/login', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '1.1.1.1, 203.0.113.10' },
+    body: { username: 'admin', password: 'wrong' }
+  });
+  assert.equal(result.response.status, 401);
+  result = await proxied.requestJson('/api/login', {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '8.8.8.8, 203.0.113.10' },
+    body: { username: 'admin', password: 'wrong' }
+  });
+  assert.equal(result.response.status, 429);
+  assert.ok(result.response.headers.get('retry-after'));
+});
+
+test('forwarded header sanitizer keeps only the trusted proxy hops', () => {
+  const blocked = {
+    headers: {
+      forwarded: 'for=1.1.1.1',
+      'x-forwarded-for': '1.1.1.1',
+      'x-forwarded-host': 'evil.example',
+      'x-forwarded-port': '443',
+      'x-forwarded-proto': 'https'
+    }
+  };
+  createForwardedHeaderSanitizer(false)(blocked, {}, () => {});
+  assert.equal(blocked.headers.forwarded, undefined);
+  assert.equal(blocked.headers['x-forwarded-for'], undefined);
+  assert.equal(blocked.headers['x-forwarded-host'], undefined);
+  assert.equal(blocked.headers['x-forwarded-proto'], undefined);
+
+  const trusted = {
+    headers: {
+      'x-forwarded-for': '8.8.8.8, 203.0.113.10',
+      'x-forwarded-proto': 'https'
+    }
+  };
+  createForwardedHeaderSanitizer(1)(trusted, {}, () => {});
+  assert.equal(trusted.headers['x-forwarded-for'], '203.0.113.10');
+  assert.equal(trusted.headers['x-forwarded-proto'], 'https');
 });
 
 test('background upload rejects forged image data', async (t) => {
