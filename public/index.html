@@ -4,11 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>个人导航首页</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="style.css?v=18">
+    <link rel="icon" type="image/svg+xml" href="__ASSET_FAVICON__">
+    <link rel="stylesheet" href="__ASSET_STYLE__">
 </head>
-<body class="app-loading">
-    <div class="corner-controls corner-email email-links-panel" id="email-links-container" aria-label="邮箱链接">
+<body class="__BODY_CLASS__"__BODY_EXTRA__>
+    <div class="corner-controls corner-email email-links-panel" id="email-links-container" aria-label="邮箱链接"__EMAIL_HIDDEN__>
+        __EMAIL_LINKS__
     </div>
 
     <div class="corner-controls corner-account" aria-label="账户">
@@ -19,9 +20,9 @@
     </div>
 
     <div class="corner-controls corner-right" aria-label="页面设置">
-        <button type="button" class="corner-btn edit-mode-btn" id="edit-mode-btn" title="进入编辑模式" aria-pressed="false">
+        <button type="button" class="corner-btn edit-mode-btn__EDIT_ACTIVE__" id="edit-mode-btn" title="__EDIT_TITLE__" aria-pressed="__EDIT_PRESSED__">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            <span class="corner-btn-label">编辑</span>
+            <span class="corner-btn-label">__EDIT_LABEL__</span>
         </button>
         <button type="button" class="corner-btn manage-menu-btn" title="打开页面设置">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
@@ -37,6 +38,7 @@
     <div class="container">
         <!-- 搜索引擎切换区 -->
         <div class="search-engine-switcher">
+            __SEARCH_ENGINES__
         </div>
 
         <!-- 搜索框区域 -->
@@ -49,11 +51,11 @@
                 <input 
                     type="text" 
                     class="search-input" 
-                    placeholder="搜索互联网..." 
+                    placeholder="__SEARCH_PLACEHOLDER__" 
                     autocomplete="off"
                 >
                 <button class="search-engine-indicator" title="点击搜索">
-                    <span class="current-engine">Google</span>
+                    <span class="current-engine">__CURRENT_ENGINE__</span>
                     <svg class="search-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                         <circle cx="11" cy="11" r="8"></circle>
                         <path d="m21 21-4.35-4.35"></path>
@@ -62,18 +64,19 @@
             </div>
         </div>
 
-        <section class="project-links-section" id="project-links-section" hidden>
-            <div class="navigation-links project-links" id="project-links-container">
-                <div class="nav-empty-state" id="project-empty-state">
+        <section class="project-links-section" id="project-links-section"__PROJECT_SECTION_HIDDEN__>
+            <div __PROJECT_CONTAINER_ATTRS__ id="project-links-container">
+                __PROJECT_LINKS__
+                <div class="nav-empty-state" id="project-empty-state"__PROJECT_EMPTY_STYLE__>
                     <p>暂无项目，开启编辑模式后点击 + 添加</p>
                 </div>
             </div>
         </section>
 
         <!-- 导航链接区（由 JS 根据存储的菜单数据动态渲染，图标来自服务器缓存） -->
-        <div class="navigation-links" id="nav-links-container">
-            <!-- 空状态提示，无链接时显示 -->
-            <div class="nav-empty-state" id="nav-empty-state">
+        <div __WEBSITE_CONTAINER_ATTRS__ id="nav-links-container">
+            __WEBSITE_LINKS__
+            <div class="nav-empty-state" id="nav-empty-state"__WEBSITE_EMPTY_STYLE__>
                 <p>暂无链接，开启编辑模式后点击 + 添加</p>
             </div>
         </div>
@@ -159,7 +162,7 @@
             <div class="modal-body">
                 <div class="account-settings-section">
                     <h3>管理员账号</h3>
-                    <p class="account-current">当前账号：<span id="account-current-username">-</span></p>
+                    <p class="account-current">当前账号：<span id="account-current-username">__USERNAME__</span></p>
                     <form class="account-form" id="account-form">
                         <div class="form-group">
                             <label for="account-username">账号</label>
@@ -307,6 +310,7 @@
         </div>
     </div>
 
-    <script type="module" src="/js/main.js?v=15"></script>
+    <script type="application/json" id="app-bootstrap">__BOOTSTRAP_JSON__</script>
+    <script type="module" src="__ASSET_MAIN__" data-admin="__ASSET_ADMIN__"></script>
 </body>
 </html>

@@ -12,6 +12,8 @@ const { createIconsRouter } = require('./routes/icons');
 const { createLinksRouter } = require('./routes/links');
 const { createSearchEnginesRouter } = require('./routes/searchEngines');
 const { createSettingsRouter } = require('./routes/settings');
+const { createAssetManifest } = require('./services/assetManifest');
+const { createCompressionMiddleware } = require('./services/compression');
 const { createHtmlRenderer } = require('./services/htmlRenderer');
 const { createIconEventHub } = require('./services/iconEventHub');
 const { createIconService } = require('./services/iconService');
@@ -84,9 +86,63 @@ function csrfProtection(req, res, next) {
   next();
 }
 
-function sendPublicFile(res, config, fileName, options = {}) {
-  if (options.noStore) res.set('Cache-Control', 'no-store');
-  res.sendFile(path.join(config.publicDir, fileName));
+function sendHashedAsset(req, res, assetManifest, relativePath) {
+  if (!assetManifest.has(relativePath)) {
+    res.status(404).end();
+    return;
+  }
+
+  const hash = assetManifest.hashOf(relativePath);
+  const immutable = req.query.v === hash;
+  res.set('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : 'no-cache');
+  res.set('ETag', `"${hash}"`);
+  if (relativePath.endsWith('.css')) res.type('text/css');
+  else if (relativePath.endsWith('.js')) res.type('text/javascript');
+  else if (relativePath.endsWith('.svg')) res.type('image/svg+xml');
+  res.send(assetManifest.bodyOf(relativePath));
+}
+
+function mountPublicAssets(app, config, assetManifest) {
+  app.get('/js/:file', (req, res, next) => {
+    if (!/^[\w.-]+\.js$/.test(req.params.file)) {
+      next();
+      return;
+    }
+    sendHashedAsset(req, res, assetManifest, `js/${req.params.file}`);
+  });
+
+  app.get('/style.css', (req, res) => {
+    sendHashedAsset(req, res, assetManifest, 'style.css');
+  });
+
+  app.get('/login.js', (req, res) => {
+    sendHashedAsset(req, res, assetManifest, 'login.js');
+  });
+
+  app.get('/favicon.svg', (req, res) => {
+    sendHashedAsset(req, res, assetManifest, 'favicon.svg');
+  });
+
+  app.use('/uploads', express.static(config.uploadsDir, {
+    dotfiles: 'deny',
+    fallthrough: false,
+    maxAge: '7d'
+  }));
+
+  const publicIconFilePattern = /^(links|search-engines)-\d+\.(ico|png|svg|jpg|jpeg|webp|gif)$/i;
+  app.use('/icon-cache', (req, res, next) => {
+    const fileName = path.basename(req.path);
+    if (!publicIconFilePattern.test(fileName)) {
+      res.status(404).end();
+      return;
+    }
+    next();
+  }, express.static(config.iconCacheDir, {
+    dotfiles: 'deny',
+    fallthrough: false,
+    index: false,
+    maxAge: '7d'
+  }));
 }
 
 function createApp(deps) {
@@ -115,14 +171,28 @@ function createApp(deps) {
   if (typeof iconService.hydrateFromDisk === 'function') {
     iconService.hydrateFromDisk();
   }
-  const htmlRenderer = deps.htmlRenderer || createHtmlRenderer(config, stores.settings);
+  const assetManifest = deps.assetManifest || createAssetManifest(config.publicDir);
+  const htmlRenderer = deps.htmlRenderer || createHtmlRenderer(config, {
+    settings: stores.settings,
+    links: stores.links,
+    searchEngines: stores.searchEngines,
+    users: stores.users,
+    assetManifest,
+    iconService,
+    prefetchIcons: config.iconPrefetchOnRead !== false,
+    requiredLinkKeys: config.requiredLinkKeys
+  });
 
   app.locals.sessionStore = sessionStore;
   app.locals.iconEventHub = iconEventHub;
+  app.locals.assetManifest = assetManifest;
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
 
   app.use(createSecurityHeadersMiddleware());
+  app.use(createCompressionMiddleware());
+  mountPublicAssets(app, config, assetManifest);
+
   app.use(session({
     store: sessionStore,
     name: config.sessionCookieName,
@@ -137,33 +207,6 @@ function createApp(deps) {
     }
   }));
 
-  app.use('/uploads', express.static(config.uploadsDir, {
-    dotfiles: 'deny',
-    fallthrough: false,
-    maxAge: '7d'
-  }));
-
-  const publicIconFilePattern = /^(links|search-engines)-\d+\.(ico|png|svg|jpg|jpeg|webp|gif)$/i;
-  app.use('/icon-cache', (req, res, next) => {
-    const fileName = path.basename(req.path);
-    if (!publicIconFilePattern.test(fileName)) {
-      res.status(404).end();
-      return;
-    }
-    next();
-  }, express.static(config.iconCacheDir, {
-    dotfiles: 'deny',
-    fallthrough: false,
-    index: false,
-    maxAge: '7d'
-  }));
-
-  app.use('/js', express.static(path.join(config.publicDir, 'js'), {
-    dotfiles: 'deny',
-    fallthrough: false,
-    maxAge: config.nodeEnv === 'production' ? '1h' : 0
-  }));
-
   app.get('/', async (req, res, next) => {
     if (!auth.isAuthenticated(req)) {
       res.redirect(302, '/login');
@@ -171,36 +214,25 @@ function createApp(deps) {
     }
 
     try {
-      res.set('Cache-Control', 'no-store');
+      res.set('Cache-Control', 'private, no-store');
       res.type('html').send(await htmlRenderer.renderIndex());
     } catch (error) {
       next(error);
     }
   });
 
-  app.get('/login', (req, res) => {
+  app.get('/login', async (req, res, next) => {
     if (auth.isAuthenticated(req)) {
       res.redirect(302, '/');
       return;
     }
 
-    sendPublicFile(res, config, 'login.html', { noStore: true });
-  });
-
-  app.get('/style.css', (req, res) => {
-    res.set('Cache-Control', config.nodeEnv === 'production' ? 'public, max-age=3600' : 'no-cache');
-    sendPublicFile(res, config, 'style.css');
-  });
-
-  app.get('/login.js', (req, res) => {
-    res.set('Cache-Control', config.nodeEnv === 'production' ? 'public, max-age=3600' : 'no-cache');
-    sendPublicFile(res, config, 'login.js');
-  });
-
-  app.get('/favicon.svg', (req, res) => {
-    res.type('image/svg+xml');
-    res.set('Cache-Control', 'public, max-age=86400');
-    sendPublicFile(res, config, 'favicon.svg');
+    try {
+      res.set('Cache-Control', 'private, no-store');
+      res.type('html').send(await htmlRenderer.renderLogin());
+    } catch (error) {
+      next(error);
+    }
   });
 
   const apiDeps = {
@@ -211,6 +243,11 @@ function createApp(deps) {
     limiter,
     stores
   };
+
+  app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'private, no-store');
+    next();
+  });
 
   app.get('/api/csrf', (req, res) => {
     if (!req.session.csrfToken) {
@@ -240,5 +277,7 @@ module.exports = {
   createCsrfToken,
   createSecurityHeadersMiddleware,
   csrfProtection,
-  isUnsafeMethod
+  isUnsafeMethod,
+  mountPublicAssets,
+  sendHashedAsset
 };

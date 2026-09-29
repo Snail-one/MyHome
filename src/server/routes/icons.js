@@ -64,7 +64,7 @@ function isSameOriginEventRequest(req) {
 }
 
 function createIconsRouter(deps) {
-  const { auth, iconService, stores, iconEventHub } = deps;
+  const { auth, config, iconService, stores, iconEventHub } = deps;
   const router = express.Router();
   let refreshTask = null;
 
@@ -313,6 +313,50 @@ function createIconsRouter(deps) {
     } catch (error) {
       console.warn('Failed to refresh icon cache:', error.message);
       res.status(500).json({ error: '刷新图标缓存失败' });
+    }
+  });
+
+  function isUnresolvedIcon(entity) {
+    if (!entity || entity.iconMode === 'none' || entity.linkType === 'email') return false;
+    const status = entity.iconStatus || 'empty';
+    return status !== 'ready' && status !== 'miss' && status !== 'none';
+  }
+
+  function serializePendingIcon(entityType, entity, status) {
+    return {
+      entityType,
+      id: entity.id,
+      status: status.status,
+      fileUrl: status.fileUrl || '',
+      iconVersion: status.iconVersion || getEntityVersion(entity)
+    };
+  }
+
+  router.get('/icons/pending', auth.requireAuth, async (req, res) => {
+    try {
+      const websiteLinks = (stores.links.get('website') || []).filter(isUnresolvedIcon);
+      const projectLinks = (stores.links.get('project') || []).filter(isUnresolvedIcon);
+      const engines = (stores.searchEngines.get() || []).filter(isUnresolvedIcon);
+
+      if (config?.iconPrefetchOnRead !== false) {
+        iconService.prefetchLinksResponse?.({ links: websiteLinks, projectLinks });
+        iconService.prefetchSearchEngines?.(engines);
+      }
+
+      const icons = [];
+      for (const link of [...websiteLinks, ...projectLinks]) {
+        const status = await iconService.getEntityIconStatus('links', link);
+        icons.push(serializePendingIcon('links', link, status));
+      }
+      for (const engine of engines) {
+        const status = await iconService.getEntityIconStatus('search-engines', engine);
+        icons.push(serializePendingIcon('search-engines', engine, status));
+      }
+
+      res.json({ icons });
+    } catch (error) {
+      console.warn('Failed to read pending icons:', error.message);
+      res.status(500).json({ error: '读取待完成图标失败' });
     }
   });
 
