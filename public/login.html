@@ -8,28 +8,36 @@
     <link rel="stylesheet" href="__ASSET_STYLE__">
 </head>
 <body class="logged-out">
-    <div class="auth-screen" id="auth-screen" aria-hidden="false">
+    <main class="auth-screen" id="auth-screen" aria-hidden="false">
         <form class="auth-card" id="login-form">
             <div class="auth-card-header">
-                <h1 id="auth-title">个人导航登录</h1>
+                <div class="auth-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                        <circle cx="12" cy="8" r="3.15"></circle>
+                        <path d="M5.6 19.2c1.15-3.55 3.5-5.35 6.4-5.35s5.25 1.8 6.4 5.35"></path>
+                    </svg>
+                </div>
+                <h1 id="auth-title">登录</h1>
                 <p id="auth-subtitle">请登录后使用</p>
             </div>
-            <div class="auth-form-group">
-                <label for="login-username">账号</label>
-                <input type="text" id="login-username" name="username" autocomplete="username" required autofocus>
-            </div>
-            <div class="auth-form-group">
-                <label for="login-password">密码</label>
-                <input type="password" id="login-password" name="password" autocomplete="current-password" required>
-            </div>
-            <div class="auth-form-group" id="register-confirm-group" hidden>
-                <label for="register-password-confirm">确认密码</label>
-                <input type="password" id="register-password-confirm" name="passwordConfirm" autocomplete="new-password">
+            <div class="auth-fields">
+                <div class="auth-form-group">
+                    <label for="login-username">账号</label>
+                    <input type="text" id="login-username" name="username" placeholder="账号" autocomplete="username" required autofocus>
+                </div>
+                <div class="auth-form-group">
+                    <label for="login-password">密码</label>
+                    <input type="password" id="login-password" name="password" placeholder="密码" autocomplete="current-password" required>
+                </div>
+                <div class="auth-form-group" id="register-confirm-group" hidden>
+                    <label for="register-password-confirm">确认密码</label>
+                    <input type="password" id="register-password-confirm" name="passwordConfirm" placeholder="确认密码" autocomplete="new-password">
+                </div>
             </div>
             <p class="auth-error" id="login-error" role="alert" aria-live="polite"></p>
             <button type="submit" class="btn btn-primary auth-submit" id="auth-submit">登录</button>
         </form>
-    </div>
+    </main>
 
     <script src="__ASSET_LOGIN_JS__"></script>
 </body>
