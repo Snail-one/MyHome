@@ -36,59 +36,39 @@ export const page = {
     renderSearchEngineList: null
 };
 
-function setModalOpen(modal, open) {
-    if (!modal) return;
-    modal.setAttribute('aria-hidden', open ? 'false' : 'true');
-    modal.classList.toggle('modal-open', open);
-    document.body.classList.toggle(
-        'has-modal-open',
-        Boolean(document.querySelector('.modal-overlay.modal-open'))
-    );
-}
-
 let noticeChain = Promise.resolve();
 
 function presentNotice(message, title) {
     return new Promise((resolve) => {
-        const overlay = document.getElementById('notice-modal');
+        const dialog = document.getElementById('notice-modal');
         const titleEl = document.getElementById('notice-title');
         const messageEl = document.getElementById('notice-message');
-        const okBtn = document.getElementById('notice-ok');
-        if (!overlay || !titleEl || !messageEl || !okBtn) {
+        if (!dialog || typeof dialog.showModal !== 'function' || !titleEl || !messageEl) {
             resolve();
             return;
         }
 
         titleEl.textContent = title;
         messageEl.textContent = message || '';
+        dialog.returnValue = '';
 
-        let finished = false;
         const finish = () => {
-            if (finished) return;
-            finished = true;
             page.dismissNotice = null;
-            okBtn.removeEventListener('click', finish);
-            overlay.removeEventListener('click', onBackdrop);
-            document.removeEventListener('keydown', onKeydown);
-            setModalOpen(overlay, false);
+            dialog.returnValue = '';
             resolve();
         };
-        const onBackdrop = (event) => {
-            if (event.target === overlay) finish();
-        };
-        const onKeydown = (event) => {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                finish();
-            }
+
+        dialog.addEventListener('close', finish, { once: true });
+        page.dismissNotice = () => {
+            if (dialog.open) dialog.close();
         };
 
-        page.dismissNotice = finish;
-        okBtn.addEventListener('click', finish);
-        overlay.addEventListener('click', onBackdrop);
-        document.addEventListener('keydown', onKeydown);
-        setModalOpen(overlay, true);
-        setTimeout(() => okBtn.focus(), 0);
+        if (dialog.open) {
+            finish();
+            return;
+        }
+
+        dialog.showModal();
     });
 }
 
@@ -103,7 +83,6 @@ const searchInput = document.querySelector('.search-input');
 const searchBox = document.querySelector('.search-box');
 const searchEngineSwitcher = document.querySelector('.search-engine-switcher');
 const engineIndicator = document.querySelector('.current-engine');
-const searchEngineIndicator = document.querySelector('.search-engine-indicator');
 const accountLogoutBtn = document.getElementById('account-logout-btn');
 
 // ==================== API ====================
@@ -193,8 +172,6 @@ async function loadAppData() {
 
     applySearchEnginesResponse(searchEnginesData.engines);
     applySettings(settingsData.settings || DEFAULT_SETTINGS);
-    // Rendering is already handled inside applySettings → updateEditModeUI()
-    // (which calls render* + syncAddLinkCard for add buttons).
 }
 
 async function saveSettingsPatch(patch) {
@@ -202,7 +179,7 @@ async function saveSettingsPatch(patch) {
         method: 'PUT',
         body: patch
     });
-    applySettings(data.settings || DEFAULT_SETTINGS);
+    applySettings(data.settings || DEFAULT_SETTINGS, { rebuildLinks: false });
 }
 
 function applyLinksResponse(data) {
@@ -353,16 +330,17 @@ async function restoreSession() {
 
 // ==================== 搜索 ====================
 function bindSearchEvents() {
+    const searchForm = document.getElementById('search-form');
+
     searchEngineSwitcher.addEventListener('click', (event) => {
         const btn = event.target.closest('.engine-btn');
         if (!btn) return;
         switchSearchEngine(btn.dataset.engine);
     });
 
-    searchEngineIndicator.addEventListener('click', performSearch);
-
-    searchInput.addEventListener('keypress', (event) => {
-        if (event.key === 'Enter') performSearch();
+    searchForm?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        performSearch();
     });
 
     searchInput.addEventListener('focus', () => {
@@ -490,6 +468,13 @@ function performSearch() {
 }
 
 // ==================== 快捷键支持 ====================
+let escapeClosedDialog = false;
+
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    escapeClosedDialog = Boolean(document.querySelector('dialog[open]'));
+}, true);
+
 document.addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
         event.preventDefault();
@@ -497,9 +482,11 @@ document.addEventListener('keydown', (event) => {
         searchInput.select();
     }
 
-    if (event.key === 'Escape' && page.handleEscape?.()) {
-        event.preventDefault();
-        return;
+    if (event.key === 'Escape') {
+        const skipEditMode = escapeClosedDialog || Boolean(document.querySelector('dialog[open]'));
+        escapeClosedDialog = false;
+        if (skipEditMode) return;
+        if (page.handleEscape?.()) event.preventDefault();
     }
 
     if ((event.ctrlKey || event.metaKey) && event.key === '1') {
@@ -807,19 +794,36 @@ function getMailIconSvg(className = 'email-link-icon') {
     `;
 }
 
+function moveButtonsHtml(label, index, total, linkType) {
+    const safeLabel = escapeAttribute(label);
+    const type = escapeAttribute(linkType);
+    const upDisabled = index <= 0 ? ' disabled' : '';
+    const downDisabled = index >= total - 1 ? ' disabled' : '';
+    return `
+        <button type="button" class="link-move" data-direction="up" data-index="${index}" data-link-type="${type}" title="上移" aria-label="上移 ${safeLabel}"${upDisabled}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
+        </button>
+        <button type="button" class="link-move" data-direction="down" data-index="${index}" data-link-type="${type}" title="下移" aria-label="下移 ${safeLabel}"${downDisabled}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+    `;
+}
+
 function createEmailLinkElement(link, index, total) {
     const wrapper = document.createElement('div');
     const isRequired = REQUIRED_EMAIL_LINK_KEYS.has(link.linkKey);
+    const title = link.title || '邮箱登录';
     wrapper.className = 'email-link-wrapper';
     wrapper.dataset.index = index;
     wrapper.dataset.linkType = 'email';
     wrapper.dataset.id = link.id;
     wrapper.innerHTML = `
-        <a href="${escapeAttribute(getEffectiveEmailUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" data-link-type="email" draggable="${editMode ? 'true' : 'false'}" title="${escapeAttribute(link.title || '邮箱登录')}">
+        <a href="${escapeAttribute(getEffectiveEmailUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" data-link-type="email" draggable="${editMode ? 'true' : 'false'}" title="${escapeAttribute(title)}">
             ${getMailIconSvg()}
-            <span class="email-link-label">${escapeHtml(link.title || '邮箱登录')}</span>
+            <span class="email-link-label">${escapeHtml(title)}</span>
         </a>
         <div class="email-link-actions">
+            ${moveButtonsHtml(title, index, total, 'email')}
             ${isRequired ? '' : `
                 <button type="button" class="email-link-delete" data-index="${index}" title="删除邮箱链接">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
@@ -867,7 +871,7 @@ function renderEmailLinks() {
 }
 
 function createNavCardElement(link, index, options = {}) {
-    const { noAnimation = false, linkType = 'website' } = options;
+    const { noAnimation = false, linkType = 'website', total = index + 1 } = options;
     const href = getEffectiveUrl(link);
     const iconDescriptor = getLinkIconDescriptor(link, linkType);
     const fallbackFavicon = '<svg class="nav-favicon-fallback" style="display:none" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
@@ -891,6 +895,7 @@ function createNavCardElement(link, index, options = {}) {
             </div>
         </a>
         <div class="nav-card-actions">
+            ${moveButtonsHtml(link.title || '未命名', index, total, linkType)}
             <button type="button" class="nav-card-delete" data-index="${index}" title="删除">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>
             </button>
@@ -975,6 +980,7 @@ function renderLinkCards(linkType = 'website', options = {}) {
     links.forEach((link, index) => {
         const card = createNavCardElement(link, index, {
             linkType,
+            total: links.length,
             refreshIcon,
             eager: index < eagerCount,
             priority: index === 0
@@ -1162,24 +1168,23 @@ function applyBookmarkGlass() {
 }
 
 function updateDisplayModeButtonState() {
-    document.querySelectorAll('.display-mode-btn').forEach(btn => {
-        const linkType = btn.dataset.linkType || 'website';
-        btn.classList.toggle('active', btn.dataset.mode === getDisplayModeForLinkType(linkType));
+    document.querySelectorAll('.display-mode-btn').forEach(input => {
+        const linkType = input.dataset.linkType || 'website';
+        input.checked = input.value === getDisplayModeForLinkType(linkType);
     });
 }
 
 function updateLinkSizeButtonState() {
-    document.querySelectorAll('.link-size-btn').forEach(btn => {
-        const linkType = btn.dataset.linkType || 'website';
-        btn.classList.toggle('active', btn.dataset.size === getLinkSizeForLinkType(linkType));
+    document.querySelectorAll('.link-size-btn').forEach(input => {
+        const linkType = input.dataset.linkType || 'website';
+        input.checked = input.value === getLinkSizeForLinkType(linkType);
     });
 }
 
 
 function updateGlassToggleState() {
-    document.querySelectorAll('.glass-btn').forEach(btn => {
-        const enabled = btn.dataset.enabled === 'true';
-        btn.classList.toggle('active', enabled === bookmarkGlass);
+    document.querySelectorAll('.glass-btn').forEach(input => {
+        input.checked = (input.value === 'true') === bookmarkGlass;
     });
 }
 
@@ -1329,7 +1334,7 @@ function applyCustomBackground(url) {
     document.body.style.backgroundAttachment = 'fixed';
 }
 
-function applySettings(settings) {
+function applySettings(settings, { rebuildLinks = true } = {}) {
     appState.settings = {
         ...DEFAULT_SETTINGS,
         ...(settings || {})
@@ -1350,7 +1355,7 @@ function applySettings(settings) {
     updateLinkSizeButtonState();
     applyBookmarkGlass();
     updateGlassToggleState();
-    updateEditModeUI();
+    if (rebuildLinks) updateEditModeUI();
     applyCustomBackground(appState.settings.backgroundUrl || '');
 }
 

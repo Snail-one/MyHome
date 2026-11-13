@@ -7,6 +7,8 @@ const { isBackgroundUrl } = require('./validation');
 
 const MAIL_ICON = `<svg class="email-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 7 9 6 9-6"></path></svg>`;
 const DELETE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/></svg>`;
+const MOVE_UP_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>`;
+const MOVE_DOWN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
 const FALLBACK_FAVICON = `<svg class="nav-favicon-fallback" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>`;
 const ADD_ICON = `<span class="nav-add-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></span>`;
 
@@ -137,17 +139,25 @@ function renderSearchEngineButton(engine, currentKey) {
   return `<button type="button" class="engine-btn${active}" data-engine="${escapeHtmlAttribute(key)}">${icon || '<span class="engine-favicon" aria-hidden="true"></span>'}<span>${escapeHtml(engine.name)}</span></button>`;
 }
 
-function renderEmailLink(link, index, requiredKeys, editMode) {
+function renderMoveButtons(label, index, total, linkType) {
+  const name = escapeHtmlAttribute(label);
+  const type = escapeHtmlAttribute(linkType);
+  const upDisabled = index <= 0 ? ' disabled' : '';
+  const downDisabled = index >= total - 1 ? ' disabled' : '';
+  return `<button type="button" class="link-move" data-direction="up" data-index="${index}" data-link-type="${type}" title="上移" aria-label="上移 ${name}"${upDisabled}>${MOVE_UP_ICON}</button><button type="button" class="link-move" data-direction="down" data-index="${index}" data-link-type="${type}" title="下移" aria-label="下移 ${name}"${downDisabled}>${MOVE_DOWN_ICON}</button>`;
+}
+
+function renderEmailLink(link, index, total, requiredKeys, editMode) {
   const required = requiredKeys.has(link.linkKey);
   const title = link.title || '邮箱登录';
-  return `<div class="email-link-wrapper" data-index="${index}" data-link-type="email" data-id="${escapeHtmlAttribute(link.id)}"><a href="${escapeHtmlAttribute(getEffectiveUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" data-link-type="email" draggable="${editMode ? 'true' : 'false'}" title="${escapeHtmlAttribute(title)}">${MAIL_ICON}<span class="email-link-label">${escapeHtml(title)}</span></a><div class="email-link-actions">${required ? '' : `<button type="button" class="email-link-delete" data-index="${index}" title="删除邮箱链接">${DELETE_ICON}</button>`}</div></div>`;
+  return `<div class="email-link-wrapper" data-index="${index}" data-link-type="email" data-id="${escapeHtmlAttribute(link.id)}"><a href="${escapeHtmlAttribute(getEffectiveUrl(link))}" target="_blank" rel="noopener noreferrer" class="email-link" data-index="${index}" data-link-type="email" draggable="${editMode ? 'true' : 'false'}" title="${escapeHtmlAttribute(title)}">${MAIL_ICON}<span class="email-link-label">${escapeHtml(title)}</span></a><div class="email-link-actions">${renderMoveButtons(title, index, total, 'email')}${required ? '' : `<button type="button" class="email-link-delete" data-index="${index}" title="删除邮箱链接">${DELETE_ICON}</button>`}</div></div>`;
 }
 
 function renderAddEmailLink() {
   return `<button type="button" class="email-link email-add-link" title="添加邮箱登录" aria-label="添加邮箱登录">${ADD_ICON}<span class="email-add-label">添加邮箱</span></button>`;
 }
 
-function renderNavCard(link, index, linkType, editMode, eagerCount, prioritySlot) {
+function renderNavCard(link, index, total, linkType, editMode, eagerCount, prioritySlot) {
   const href = getEffectiveUrl(link);
   const iconMode = link.iconMode || 'server';
   const eager = index < eagerCount;
@@ -159,7 +169,7 @@ function renderNavCard(link, index, linkType, editMode, eagerCount, prioritySlot
         ? (prioritySlot.used = true)
         : false
     })}${FALLBACK_FAVICON.replace('class="nav-favicon-fallback"', `class="nav-favicon-fallback" style="display:${link.iconStatus === 'ready' && link.iconFileUrl ? 'none' : 'block'}"`)}`;
-  return `<div class="nav-card-wrapper" data-index="${index}" data-link-type="${escapeHtmlAttribute(linkType)}" data-id="${escapeHtmlAttribute(link.id)}"><a href="${escapeHtmlAttribute(href)}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" data-link-type="${escapeHtmlAttribute(linkType)}" draggable="${editMode ? 'true' : 'false'}"><div class="nav-icon${iconMode === 'none' ? ' nav-icon-empty' : ''}">${icon}</div><div class="nav-info"><div class="nav-title">${escapeHtml(link.title || '未命名')}</div></div></a><div class="nav-card-actions"><button type="button" class="nav-card-delete" data-index="${index}" title="删除">${DELETE_ICON}</button></div></div>`;
+  return `<div class="nav-card-wrapper" data-index="${index}" data-link-type="${escapeHtmlAttribute(linkType)}" data-id="${escapeHtmlAttribute(link.id)}"><a href="${escapeHtmlAttribute(href)}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" data-link-type="${escapeHtmlAttribute(linkType)}" draggable="${editMode ? 'true' : 'false'}"><div class="nav-icon${iconMode === 'none' ? ' nav-icon-empty' : ''}">${icon}</div><div class="nav-info"><div class="nav-title">${escapeHtml(link.title || '未命名')}</div></div></a><div class="nav-card-actions">${renderMoveButtons(link.title || '未命名', index, total, linkType)}<button type="button" class="nav-card-delete" data-index="${index}" title="删除">${DELETE_ICON}</button></div></div>`;
 }
 
 function renderAddLinkCard(linkType) {
@@ -278,7 +288,7 @@ function createHtmlRenderer(config, deps) {
       __BODY_CLASS__: bodyClass,
       __BODY_EXTRA__: backgroundStyle ? ` style="${backgroundStyle}"` : '',
       __EMAIL_HIDDEN__: emailLinks.length || editMode ? '' : ' hidden',
-      __EMAIL_LINKS__: `${emailLinks.map((link, index) => renderEmailLink(link, index, requiredLinkKeys, editMode)).join('')}${editMode ? renderAddEmailLink() : ''}`,
+      __EMAIL_LINKS__: `${emailLinks.map((link, index) => renderEmailLink(link, index, emailLinks.length, requiredLinkKeys, editMode)).join('')}${editMode ? renderAddEmailLink() : ''}`,
       __EDIT_TITLE__: editMode ? '完成编辑' : '进入编辑模式',
       __EDIT_PRESSED__: editMode ? 'true' : 'false',
       __EDIT_ACTIVE__: editMode ? ' active' : '',
@@ -289,10 +299,10 @@ function createHtmlRenderer(config, deps) {
       __CURRENT_ENGINE__: escapeHtml(currentName),
       __PROJECT_SECTION_HIDDEN__: projectLinks.length || editMode ? '' : ' hidden',
       __PROJECT_CONTAINER_ATTRS__: `class="${projectPresentation.className}" style="${escapeHtmlAttribute(projectPresentation.style)}"`,
-      __PROJECT_LINKS__: `${projectLinks.map((link, index) => renderNavCard(link, index, 'project', editMode, projectEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('project') : ''}`,
+      __PROJECT_LINKS__: `${projectLinks.map((link, index) => renderNavCard(link, index, projectLinks.length, 'project', editMode, projectEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('project') : ''}`,
       __PROJECT_EMPTY_STYLE__: projectLinks.length || editMode ? ' style="display:none"' : '',
       __WEBSITE_CONTAINER_ATTRS__: `class="${websitePresentation.className}" style="${escapeHtmlAttribute(websitePresentation.style)}"`,
-      __WEBSITE_LINKS__: `${links.map((link, index) => renderNavCard(link, index, 'website', editMode, websiteEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('website') : ''}`,
+      __WEBSITE_LINKS__: `${links.map((link, index) => renderNavCard(link, index, links.length, 'website', editMode, websiteEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('website') : ''}`,
       __WEBSITE_EMPTY_STYLE__: links.length || editMode ? ' style="display:none"' : '',
       __BOOTSTRAP_JSON__: safeJson(bootstrap)
     });

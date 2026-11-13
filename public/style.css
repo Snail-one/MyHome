@@ -66,10 +66,6 @@ body.logged-out::before {
     display: none;
 }
 
-body.has-modal-open {
-    overflow: hidden;
-}
-
 body.app-loading .container,
 body.app-loading .corner-controls,
 body.logged-out .container,
@@ -545,7 +541,8 @@ body::before {
     transform: translateY(0) scale(1);
 }
 
-.email-link-delete {
+.email-link-delete,
+.email-link-actions .link-move {
     width: 26px;
     height: 26px;
     display: flex;
@@ -561,7 +558,8 @@ body::before {
     transition: all var(--transition-fast);
 }
 
-.email-link-delete svg {
+.email-link-delete svg,
+.email-link-actions .link-move svg {
     width: 15px;
     height: 15px;
 }
@@ -639,50 +637,50 @@ body::before {
 }
 
 /* ==================== 管理菜单弹窗 ==================== */
-.modal-overlay {
+dialog.modal {
     position: fixed;
     inset: 0;
-    background: rgba(10, 5, 20, 0.6);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 20px;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity var(--transition-normal), visibility var(--transition-normal);
-}
-
-.modal-overlay.modal-open {
-    opacity: 1;
-    visibility: visible;
-}
-
-.modal {
+    width: min(480px, calc(100vw - 40px));
+    height: fit-content;
+    max-height: min(90vh, 90dvh);
+    margin: auto;
+    padding: 0;
+    color: var(--text-primary);
     background: linear-gradient(165deg, rgba(30, 20, 50, 0.92) 0%, rgba(20, 12, 35, 0.95) 100%);
     backdrop-filter: blur(32px);
     -webkit-backdrop-filter: blur(32px);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: var(--radius-xl);
-    max-width: 480px;
-    width: 100%;
-    max-height: 90vh;
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
     box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.modal.modal-sm {
-    max-width: 380px;
+dialog.modal[open] {
+    display: flex;
+    flex-direction: column;
 }
 
-#manage-modal .modal {
-    max-width: min(760px, calc(100vw - 40px));
+dialog.modal:modal {
+    overscroll-behavior: contain;
+}
+
+dialog.modal::backdrop {
+    background: rgba(10, 5, 20, 0.6);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    overflow: hidden;
+    overscroll-behavior: contain;
+}
+
+dialog.modal.modal-sm {
+    width: min(380px, calc(100vw - 40px));
+}
+
+#manage-modal {
+    width: min(760px, calc(100vw - 40px));
     height: min(720px, 90vh);
     height: min(720px, 90dvh);
+    max-height: min(720px, 90dvh);
 }
 
 .background-section label {
@@ -740,10 +738,16 @@ body::before {
     margin-bottom: 0;
 }
 
-.background-section .file-upload-label:hover {
+.background-section .file-upload-label:hover,
+.file-upload-wrapper:focus-within .file-upload-label {
     background: rgba(255, 255, 255, 0.1);
     border-color: rgba(255, 255, 255, 0.3);
     color: var(--text-primary);
+}
+
+.file-upload-wrapper:focus-within .file-upload-label {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
 }
 
 .background-section .file-upload-label svg {
@@ -839,6 +843,7 @@ body::before {
 .modal-body {
     padding: 24px;
     overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .modal-body > .account-settings-section:first-child,
@@ -1044,12 +1049,9 @@ body::before {
 /* 确认弹窗位置：靠上一点（不要完全居中） */
 #confirm-modal,
 #notice-modal {
-    align-items: flex-start;
-    padding-top: 15vh;
-}
-
-#notice-modal {
-    z-index: 1100;
+    height: fit-content;
+    margin-top: 15vh;
+    margin-bottom: auto;
 }
 
 .notice-icon {
@@ -1062,11 +1064,6 @@ body::before {
     text-align: left;
     max-height: min(40vh, 240px);
     overflow: auto;
-}
-
-#confirm-modal .modal,
-#notice-modal .modal {
-    margin-top: 0;
 }
 
 /* ==================== 布局设置 ==================== */
@@ -1248,6 +1245,7 @@ body::before {
 }
 
 .layout-btn {
+    position: relative;
     min-width: 44px;
     height: 44px;
     padding: 0 16px;
@@ -1264,6 +1262,14 @@ body::before {
     justify-content: center;
 }
 
+.layout-choice {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
 .layout-btn:hover {
     background: rgba(255, 255, 255, 0.1);
     border-color: rgba(255, 255, 255, 0.25);
@@ -1271,11 +1277,26 @@ body::before {
     transform: translateY(-1px);
 }
 
-.layout-btn.active {
+.layout-btn.active,
+.layout-btn:has(:checked) {
     background: rgba(255, 255, 255, 0.15);
     border-color: rgba(255, 255, 255, 0.3);
     color: var(--text-primary);
     box-shadow: var(--shadow-sm);
+}
+
+.layout-btn:has(:focus-visible) {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
+}
+
+fieldset.layout-options {
+    margin: 0;
+    min-inline-size: 0;
+}
+
+legend.layout-option-label {
+    padding: 0;
 }
 
 /* 设置弹窗二级菜单 */
@@ -1570,6 +1591,32 @@ body::before {
     width: 100%;
     max-width: min(680px, 92vw);
     margin-bottom: 0;
+}
+
+.search-form {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.search-label {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
 }
 
 .search-box {
@@ -1869,7 +1916,8 @@ body.link-dragging .email-link {
     transform: translateY(0) scale(1);
 }
 
-.nav-card-delete {
+.nav-card-delete,
+.nav-card-actions .link-move {
     width: 28px;
     height: 28px;
     display: flex;
@@ -1885,7 +1933,8 @@ body.link-dragging .email-link {
     transition: all var(--transition-fast);
 }
 
-.nav-card-delete svg {
+.nav-card-delete svg,
+.nav-card-actions .link-move svg {
     width: 16px;
     height: 16px;
     flex-shrink: 0;
@@ -1895,6 +1944,26 @@ body.link-dragging .email-link {
     background: rgba(255, 80, 80, 0.6);
     border-color: rgba(255, 80, 80, 0.8);
     transform: scale(1.05);
+}
+
+.link-move:hover {
+    background: rgba(255, 255, 255, 0.22);
+    border-color: rgba(255, 255, 255, 0.4);
+    transform: scale(1.05);
+}
+
+.link-move:disabled,
+.link-move:disabled:hover {
+    opacity: 0.35;
+    transform: none;
+    background: rgba(0, 0, 0, 0.35);
+}
+
+.link-move:focus-visible,
+.nav-card-delete:focus-visible,
+.email-link-delete:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
 }
 
 /* 编辑模式激活时的样式 */
@@ -2192,7 +2261,8 @@ body.link-dragging .email-link {
         right: -2px;
     }
 
-    .email-link-delete {
+    .email-link-delete,
+    .email-link-actions .link-move {
         width: 32px;
         height: 32px;
         border-radius: 50%;
@@ -2341,7 +2411,8 @@ body.link-dragging .email-link {
         font-size: clamp(13px, 3.8vw, 16px);
     }
 
-    .nav-card-delete {
+    .nav-card-delete,
+    .nav-card-actions .link-move {
         width: 36px;
         height: 36px;
     }
@@ -2365,33 +2436,27 @@ body.link-dragging .email-link {
         font-size: 12px;
     }
 
-    .modal-overlay {
-        align-items: flex-end;
-        padding: 0;
-    }
-
-    .modal,
-    .modal.modal-sm,
-    #manage-modal .modal {
+    dialog.modal,
+    dialog.modal.modal-sm,
+    #manage-modal,
+    #confirm-modal,
+    #notice-modal {
+        inset: auto 0 0 0;
         width: 100%;
         max-width: none;
+        height: auto;
         max-height: min(92vh, 760px);
         max-height: min(92dvh, 760px);
+        margin: 0;
         border-right: 0;
         border-bottom: 0;
         border-left: 0;
         border-radius: 22px 22px 0 0;
-        transform: translateY(24px);
-        transition: transform var(--transition-normal);
     }
 
-    #manage-modal .modal {
+    #manage-modal {
         height: min(92vh, 760px);
         height: min(92dvh, 760px);
-    }
-
-    .modal-overlay.modal-open .modal {
-        transform: translateY(0);
     }
 
     .modal-header {
@@ -2450,11 +2515,6 @@ body.link-dragging .email-link {
     .engine-list-delete {
         width: 40px;
         height: 40px;
-    }
-
-    #confirm-modal {
-        align-items: flex-end;
-        padding-top: 0;
     }
 
     .confirm-actions .btn {

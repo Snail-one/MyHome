@@ -42,27 +42,36 @@
         </div>
 
         <!-- 搜索框区域 -->
-        <div class="search-container">
-            <div class="search-box">
-                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <path d="m21 21-4.35-4.35"></path>
-                </svg>
-                <input 
-                    type="text" 
-                    class="search-input" 
-                    placeholder="__SEARCH_PLACEHOLDER__" 
-                    autocomplete="off"
-                >
-                <button class="search-engine-indicator" title="点击搜索">
-                    <span class="current-engine">__CURRENT_ENGINE__</span>
-                    <svg class="search-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <search class="search-container">
+            <form id="search-form" class="search-form" method="get" action="/">
+                <label for="search-query" class="search-label">搜索</label>
+                <div class="search-box">
+                    <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <circle cx="11" cy="11" r="8"></circle>
                         <path d="m21 21-4.35-4.35"></path>
                     </svg>
-                </button>
-            </div>
-        </div>
+                    <input
+                        type="text"
+                        id="search-query"
+                        name="q"
+                        class="search-input"
+                        placeholder="__SEARCH_PLACEHOLDER__"
+                        autocomplete="off"
+                        autocorrect="off"
+                        autocapitalize="none"
+                        spellcheck="false"
+                        enterkeyhint="search"
+                    >
+                    <button type="submit" class="search-engine-indicator">
+                        <span class="current-engine">__CURRENT_ENGINE__</span><span class="visually-hidden">搜索</span>
+                        <svg class="search-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                    </button>
+                </div>
+            </form>
+        </search>
 
         <section class="project-links-section" id="project-links-section"__PROJECT_SECTION_HIDDEN__>
             <div __PROJECT_CONTAINER_ATTRS__ id="project-links-container">
@@ -88,16 +97,15 @@
     </div>
 
     <!-- 自定义背景弹窗 -->
-    <div class="modal-overlay" id="background-modal" aria-hidden="true">
-        <div class="modal modal-sm">
+    <dialog class="modal modal-sm" id="background-modal" aria-labelledby="background-modal-title">
             <div class="modal-header">
-                <h2 class="modal-title">自定义背景</h2>
-                <button type="button" class="modal-close" data-close="background-modal" title="关闭">&times;</button>
+                <h2 class="modal-title" id="background-modal-title">自定义背景</h2>
+                <button type="button" class="modal-close" data-close="background-modal" aria-label="关闭">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="background-section">
                     <div class="file-upload-wrapper">
-                        <input type="file" id="background-upload" accept="image/*" class="file-input">
+                        <input type="file" id="background-upload" accept="image/*" class="file-input" autofocus>
                         <label for="background-upload" class="file-upload-label">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -122,21 +130,19 @@
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
+    </dialog>
 
     <!-- 添加/编辑网址弹窗 -->
-    <div class="modal-overlay" id="link-modal" aria-hidden="true">
-        <div class="modal modal-sm">
+    <dialog class="modal modal-sm" id="link-modal" aria-labelledby="link-modal-title">
             <div class="modal-header">
                 <h2 class="modal-title" id="link-modal-title">添加网址</h2>
-                <button type="button" class="modal-close" data-close="link-modal" title="关闭">&times;</button>
+                <button type="button" class="modal-close" data-close="link-modal" aria-label="关闭">&times;</button>
             </div>
             <div class="modal-body">
                 <form class="link-form" id="link-form">
                     <div class="form-group">
                         <label for="link-title">显示名称</label>
-                        <input type="text" id="link-title" name="title" placeholder="例如：GitHub" required>
+                        <input type="text" id="link-title" name="title" placeholder="例如：GitHub" required autofocus>
                     </div>
                     <div class="form-group">
                         <label for="link-url" id="link-url-label">链接地址</label>
@@ -149,15 +155,13 @@
                     </div>
                 </form>
             </div>
-        </div>
-    </div>
+    </dialog>
 
     <!-- 账户弹窗 -->
-    <div class="modal-overlay" id="account-modal" aria-hidden="true">
-        <div class="modal modal-sm">
+    <dialog class="modal modal-sm" id="account-modal" aria-labelledby="account-modal-title">
             <div class="modal-header">
-                <h2 class="modal-title">账户</h2>
-                <button type="button" class="modal-close" data-close="account-modal" title="关闭">&times;</button>
+                <h2 class="modal-title" id="account-modal-title">账户</h2>
+                <button type="button" class="modal-close" data-close="account-modal" aria-label="关闭">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="account-settings-section">
@@ -166,7 +170,7 @@
                     <form class="account-form" id="account-form">
                         <div class="form-group">
                             <label for="account-username">账号</label>
-                            <input type="text" id="account-username" name="username" autocomplete="username" required>
+                            <input type="text" id="account-username" name="username" autocomplete="username" required autofocus>
                         </div>
                         <div class="form-group">
                             <label for="account-current-password">当前密码</label>
@@ -193,19 +197,17 @@
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
+    </dialog>
 
     <!-- 页面设置弹窗 -->
-    <div class="modal-overlay" id="manage-modal" aria-hidden="true">
-        <div class="modal">
+    <dialog class="modal" id="manage-modal" aria-labelledby="manage-modal-title">
             <div class="modal-header">
-                <h2 class="modal-title">设置</h2>
-                <button type="button" class="modal-close" data-close="manage-modal" title="关闭">&times;</button>
+                <h2 class="modal-title" id="manage-modal-title">设置</h2>
+                <button type="button" class="modal-close" data-close="manage-modal" aria-label="关闭">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="settings-tabs" role="tablist" aria-label="设置分类">
-                    <button type="button" class="settings-tab active" id="settings-tab-layout" role="tab" aria-selected="true" aria-controls="settings-panel-layout" data-settings-panel="settings-panel-layout">
+                    <button type="button" class="settings-tab active" id="settings-tab-layout" role="tab" aria-selected="true" aria-controls="settings-panel-layout" data-settings-panel="settings-panel-layout" autofocus>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
                         <span>布局</span>
                     </button>
@@ -231,26 +233,26 @@
                         <div class="layout-buttons" id="layout-buttons"></div>
                         <p class="form-hint" id="layout-options-hint">根据当前窗口显示可用列数</p>
                     </div>
-                    <div class="layout-options">
-                        <label class="layout-option-label">个人项目显示</label>
+                    <fieldset class="layout-options">
+                        <legend class="layout-option-label">个人项目显示</legend>
                         <div class="layout-buttons" id="project-display-mode-buttons"></div>
-                    </div>
-                    <div class="layout-options">
-                        <label class="layout-option-label">个人书签显示</label>
+                    </fieldset>
+                    <fieldset class="layout-options">
+                        <legend class="layout-option-label">个人书签显示</legend>
                         <div class="layout-buttons" id="bookmark-display-mode-buttons"></div>
-                    </div>
-                    <div class="layout-options">
-                        <label class="layout-option-label">个人项目大小</label>
+                    </fieldset>
+                    <fieldset class="layout-options">
+                        <legend class="layout-option-label">个人项目大小</legend>
                         <div class="layout-buttons" id="project-link-size-buttons"></div>
-                    </div>
-                    <div class="layout-options">
-                        <label class="layout-option-label">个人书签大小</label>
+                    </fieldset>
+                    <fieldset class="layout-options">
+                        <legend class="layout-option-label">个人书签大小</legend>
                         <div class="layout-buttons" id="bookmark-link-size-buttons"></div>
-                    </div>
-                    <div class="layout-options">
-                        <label class="layout-option-label">项目与书签毛玻璃效果</label>
+                    </fieldset>
+                    <fieldset class="layout-options">
+                        <legend class="layout-option-label">项目与书签毛玻璃效果</legend>
                         <div class="layout-buttons" id="bookmark-glass-toggle"></div>
-                    </div>
+                    </fieldset>
                 </section>
 
                 <section class="icon-cache-section settings-panel" id="settings-panel-icons" role="tabpanel" aria-labelledby="settings-tab-icons" hidden>
@@ -284,12 +286,9 @@
                     <div class="engine-list" id="search-engine-list"></div>
                 </section>
             </div>
-        </div>
-    </div>
+    </dialog>
 
-    <!-- 删除确认弹窗（自定义，非浏览器原生 confirm） -->
-    <div class="modal-overlay" id="confirm-modal" aria-hidden="true">
-        <div class="modal modal-sm confirm-modal">
+    <dialog class="modal modal-sm confirm-modal" id="confirm-modal" aria-labelledby="confirm-title" aria-describedby="confirm-message" closedby="any">
             <div class="modal-body">
                 <div class="confirm-content">
                     <div class="confirm-icon" aria-hidden="true">
@@ -299,19 +298,17 @@
                             <line x1="12" y1="17" x2="12.01" y2="17"></line>
                         </svg>
                     </div>
-                    <h3 class="confirm-title" id="confirm-title">确认删除</h3>
+                    <h2 class="confirm-title" id="confirm-title">确认删除</h2>
                     <p class="confirm-message" id="confirm-message"></p>
                 </div>
-                <div class="form-actions confirm-actions">
-                    <button type="button" class="btn btn-secondary" id="confirm-cancel">取消</button>
-                    <button type="button" class="btn btn-danger" id="confirm-ok">删除</button>
-                </div>
+                <form method="dialog" class="form-actions confirm-actions">
+                    <button type="submit" class="btn btn-secondary" id="confirm-cancel" value="cancel" autofocus>取消</button>
+                    <button type="submit" class="btn btn-danger" id="confirm-ok" value="confirm">删除</button>
+                </form>
             </div>
-        </div>
-    </div>
+    </dialog>
 
-    <div class="modal-overlay" id="notice-modal" aria-hidden="true">
-        <div class="modal modal-sm confirm-modal notice-modal" role="alertdialog" aria-modal="true" aria-labelledby="notice-title" aria-describedby="notice-message">
+    <dialog class="modal modal-sm confirm-modal notice-modal" id="notice-modal" aria-labelledby="notice-title" aria-describedby="notice-message" closedby="any">
             <div class="modal-body">
                 <div class="confirm-content">
                     <div class="confirm-icon notice-icon" aria-hidden="true">
@@ -321,15 +318,16 @@
                             <line x1="12" y1="16" x2="12.01" y2="16"></line>
                         </svg>
                     </div>
-                    <h3 class="confirm-title" id="notice-title">提示</h3>
+                    <h2 class="confirm-title" id="notice-title">提示</h2>
                     <p class="confirm-message notice-message" id="notice-message"></p>
                 </div>
-                <div class="form-actions confirm-actions">
-                    <button type="button" class="btn btn-primary" id="notice-ok">知道了</button>
-                </div>
+                <form method="dialog" class="form-actions confirm-actions">
+                    <button type="submit" class="btn btn-primary" id="notice-ok" value="ok" autofocus>知道了</button>
+                </form>
             </div>
-        </div>
-    </div>
+    </dialog>
+
+    <p id="reorder-status" class="visually-hidden" role="status"></p>
 
     <script type="application/json" id="app-bootstrap">__BOOTSTRAP_JSON__</script>
     <script type="module" src="__ASSET_MAIN__" data-admin="__ASSET_ADMIN__"></script>

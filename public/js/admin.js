@@ -13,7 +13,9 @@ let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let iconCacheRefreshRunning = false;
 let layoutResizeTimer = null;
-let currentConfirmResolver = null;
+let linkMovePending = false;
+let searchEngineMovePending = false;
+let reorderAnnounceTimer = null;
 
 function bindDragDelegation() {
     document.addEventListener('dragstart', (event) => {
@@ -38,7 +40,6 @@ export function install() {
     page.renderSearchEngineList = renderSearchEngineList;
     page.renderLayoutButtons = renderLayoutButtons;
     page.handleEscape = () => {
-        if (closeActiveModal()) return true;
         if (page.editMode) {
             toggleEditMode();
             return true;
@@ -49,6 +50,7 @@ export function install() {
     bindBackgroundModal();
     bindLayoutResize();
     bindDragDelegation();
+    bindDialogLightDismiss();
     document.getElementById('account-btn')?.addEventListener('click', openAccountModal);
 }
 
@@ -99,12 +101,92 @@ function getDomOrderedLinks(linkType = 'website') {
 }
 
 function updateSortableIndices(linkType = 'website') {
-    getSortableWrappers(linkType).forEach((wrapper, index) => {
+    const wrappers = getSortableWrappers(linkType);
+    const last = wrappers.length - 1;
+    wrappers.forEach((wrapper, index) => {
         wrapper.dataset.index = index;
         wrapper.querySelectorAll('[data-index]').forEach(element => {
             element.dataset.index = index;
         });
+        wrapper.querySelectorAll('.link-move').forEach(button => {
+            button.disabled = button.dataset.direction === 'up' ? index === 0 : index === last;
+        });
     });
+}
+
+function moveElementBefore(parent, node, reference) {
+    if (typeof parent.moveBefore === 'function') {
+        parent.moveBefore(node, reference);
+        return;
+    }
+    if (reference) reference.before(node);
+    else parent.append(node);
+}
+
+function announceReorder(message) {
+    const status = document.getElementById('reorder-status');
+    if (!status) return;
+    status.textContent = '';
+    clearTimeout(reorderAnnounceTimer);
+    reorderAnnounceTimer = setTimeout(() => {
+        status.textContent = message;
+    }, 500);
+}
+
+function focusMovedControl(wrapper, direction, selector) {
+    if (!wrapper) return;
+    const button = wrapper.querySelector(`${selector}[data-direction="${direction}"]`);
+    const alternate = direction === 'up' ? 'down' : 'up';
+    const target = button && !button.disabled
+        ? button
+        : wrapper.querySelector(`${selector}[data-direction="${alternate}"]`) || button;
+    wrapper.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    target?.focus({ preventScroll: true });
+}
+
+async function moveLink(linkType, index, direction) {
+    if (linkMovePending) return;
+    const links = page.getLinkCollection(linkType);
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= links.length) return;
+
+    const container = page.getLinkContainer(linkType);
+    const wrappers = getSortableWrappers(linkType);
+    const moving = wrappers[index];
+    const target = wrappers[targetIndex];
+    if (!container || !moving || !target) return;
+
+    linkMovePending = true;
+    const previousLinks = [...links];
+    const nextLinks = [...links];
+    [nextLinks[index], nextLinks[targetIndex]] = [nextLinks[targetIndex], nextLinks[index]];
+    const reference = direction === 'up' ? target : target.nextElementSibling;
+    moveElementBefore(container, moving, reference);
+    page.setLinkCollection(linkType, nextLinks);
+    updateSortableIndices(linkType);
+    focusMovedControl(moving, direction, '.link-move');
+    const label = nextLinks[targetIndex]?.title || '链接';
+    announceReorder(`已将「${label}」移到第 ${targetIndex + 1} 位，共 ${nextLinks.length} 项`);
+
+    try {
+        await persistLinkOrder(linkType, nextLinks, previousLinks, {
+            renderOnSuccess: false,
+            onRollback: () => {
+                focusMovedControl(getSortableWrappers(linkType)[index], direction, '.link-move');
+            }
+        });
+    } finally {
+        linkMovePending = false;
+    }
+}
+
+function handleLinkMoveClick(event) {
+    const moveBtn = event.target.closest('.link-move');
+    if (!moveBtn || moveBtn.disabled) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    moveLink(moveBtn.dataset.linkType || 'website', parseInt(moveBtn.dataset.index, 10), moveBtn.dataset.direction);
+    return true;
 }
 
 function setLinksStateFromResponse(data) {
@@ -141,6 +223,7 @@ async function persistLinkOrder(linkType, links, previousLinks, options = {}) {
     } catch (error) {
         page.setLinkCollection(linkType, previousLinks);
         page.renderLinkCollection(linkType);
+        options.onRollback?.();
         showNotice(error.message);
         return false;
     }
@@ -447,7 +530,6 @@ function openLinkModal(editIndex, linkType = 'website') {
     const hint = document.getElementById('link-form-hint');
     const links = page.getLinkCollection(linkType);
     const editingLink = typeof editIndex === 'number' && links[editIndex] ? links[editIndex] : null;
-    openModal('link-modal');
     form.reset();
     form.dataset.linkType = linkType;
 
@@ -488,110 +570,64 @@ function openLinkModal(editIndex, linkType = 'website') {
             : linkType === 'project' ? '添加项目' : '添加链接';
     }
 
-    setTimeout(() => document.getElementById('link-title')?.focus(), 0);
+    openModal('link-modal');
 }
 
 function closeLinkModal() {
-    const form = document.getElementById('link-form');
     closeModal('link-modal');
-    form?.reset();
-    if (form) {
-        delete form.dataset.editIndex;
-        delete form.dataset.linkType;
-    }
 }
 
 function closeModal(modalId) {
     const modal = document.getElementById(modalId);
-    if (!modal) return;
-    modal.setAttribute('aria-hidden', 'true');
-    modal.classList.remove('modal-open');
-    document.body.classList.toggle(
-        'has-modal-open',
-        Boolean(document.querySelector('.modal-overlay.modal-open'))
-    );
-}
-
-function closeActiveModal() {
-    const activeModals = Array.from(document.querySelectorAll('.modal-overlay.modal-open'));
-    const activeModal = activeModals.at(-1);
-    if (!activeModal) return false;
-
-    if (activeModal.id === 'link-modal') {
-        closeLinkModal();
-    } else if (activeModal.id === 'notice-modal') {
-        page.dismissNotice?.();
-    } else if (activeModal.id === 'confirm-modal') {
-        const overlay = activeModal;
-        const cancelBtn = document.getElementById('confirm-cancel');
-        const okBtn = document.getElementById('confirm-ok');
-
-        if (typeof currentConfirmResolver === 'function') {
-            currentConfirmResolver(false);
-            currentConfirmResolver = null;
-        }
-
-        closeModal('confirm-modal');
-    } else {
-        closeModal(activeModal.id);
-    }
-
-    return true;
+    if (!modal?.open) return;
+    modal.close();
 }
 
 function openModal(modalId) {
     const modal = document.getElementById(modalId);
-    if (!modal) return;
-    modal.setAttribute('aria-hidden', 'false');
-    modal.classList.add('modal-open');
-    document.body.classList.add('has-modal-open');
+    if (!modal || typeof modal.showModal !== 'function' || modal.open) return;
+    modal.showModal();
+}
+
+function bindDialogLightDismiss() {
+    if ('closedBy' in HTMLDialogElement.prototype) return;
+
+    document.querySelectorAll('dialog[closedby="any"]').forEach((dialog) => {
+        let pressedOutside = false;
+        const outside = (event) => {
+            const rect = dialog.getBoundingClientRect();
+            return event.clientX < rect.left || event.clientX > rect.right
+                || event.clientY < rect.top || event.clientY > rect.bottom;
+        };
+        dialog.addEventListener('pointerdown', (event) => {
+            pressedOutside = outside(event);
+        });
+        dialog.addEventListener('pointerup', (event) => {
+            if (pressedOutside && outside(event) && dialog.open) dialog.close();
+        });
+    });
 }
 
 function showConfirm(message, title = '确认删除') {
     return new Promise((resolve) => {
-        const overlay = document.getElementById('confirm-modal');
+        const dialog = document.getElementById('confirm-modal');
         const titleEl = document.getElementById('confirm-title');
         const messageEl = document.getElementById('confirm-message');
-        const cancelBtn = document.getElementById('confirm-cancel');
-        const okBtn = document.getElementById('confirm-ok');
 
-        if (!overlay || !titleEl || !messageEl || !cancelBtn || !okBtn) {
-            // 兜底：如果 modal 没准备好，使用原生（理论上不应发生）
+        if (!dialog || typeof dialog.showModal !== 'function' || !titleEl || !messageEl || dialog.open) {
             resolve(window.confirm(message));
             return;
         }
 
         titleEl.textContent = title;
         messageEl.textContent = message;
-        currentConfirmResolver = resolve;
-
-        let finished = false;
-        const finish = (result) => {
-            if (finished) return;
-            finished = true;
-            currentConfirmResolver = null;
-            cancelBtn.removeEventListener('click', onCancel);
-            okBtn.removeEventListener('click', onOk);
-            overlay.removeEventListener('click', onBackdrop);
-            closeModal('confirm-modal');
-            resolve(result);
-        };
-
-        const onCancel = () => finish(false);
-        const onOk = () => finish(true);
-        const onBackdrop = (e) => {
-            if (e.target === overlay) {
-                finish(false);
-            }
-        };
-
-        cancelBtn.addEventListener('click', onCancel, { once: true });
-        okBtn.addEventListener('click', onOk, { once: true });
-        overlay.addEventListener('click', onBackdrop);
-
-        openModal('confirm-modal');
-        // 默认聚焦“取消”，防止误操作
-        setTimeout(() => cancelBtn.focus(), 0);
+        dialog.returnValue = '';
+        dialog.addEventListener('close', () => {
+            const confirmed = dialog.returnValue === 'confirm';
+            dialog.returnValue = '';
+            resolve(confirmed);
+        }, { once: true });
+        dialog.showModal();
     });
 }
 
@@ -634,7 +670,7 @@ function renderSearchEngineList() {
         const iconDescriptor = page.getSearchEngineIconDescriptor(engine);
         const isRequired = engine.engineKey === 'google';
         return `
-            <div class="engine-list-item">
+            <div class="engine-list-item" data-id="${page.escapeAttribute(String(engine.id))}">
                 ${iconDescriptor
                     ? `<img alt="" class="engine-list-icon" data-engine-icon-id="${page.escapeAttribute(String(engine.id))}" data-icon-entity="search-engines" data-icon-id="${page.escapeAttribute(String(engine.id))}">`
                     : '<span class="engine-list-icon" aria-hidden="true"></span>'
@@ -644,10 +680,10 @@ function renderSearchEngineList() {
                     <div class="engine-list-url">${page.escapeHtml(engine.urlTemplate)}</div>
                 </div>
                 <div class="engine-list-actions">
-                    <button type="button" class="engine-list-move" data-id="${engine.id}" data-direction="up" title="上移" aria-label="上移" ${index === 0 ? 'disabled' : ''}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m18 15-6-6-6 6"/></svg>
+                    <button type="button" class="engine-list-move" data-id="${engine.id}" data-direction="up" title="上移" aria-label="上移 ${page.escapeAttribute(engine.name)}" ${index === 0 ? 'disabled' : ''}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
                     </button>
-                    <button type="button" class="engine-list-move" data-id="${engine.id}" data-direction="down" title="下移" aria-label="下移" ${index >= records.length - 1 ? 'disabled' : ''}>
+                    <button type="button" class="engine-list-move" data-id="${engine.id}" data-direction="down" title="下移" aria-label="下移 ${page.escapeAttribute(engine.name)}" ${index >= records.length - 1 ? 'disabled' : ''}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
                     </button>
                     <button type="button" class="engine-list-edit" data-id="${engine.id}" title="编辑搜索引擎">
@@ -670,31 +706,85 @@ function renderSearchEngineList() {
     });
 }
 
-async function moveSearchEngine(engineId, direction) {
-    const currentIndex = page.appState.searchEngineRecords.findIndex(engine => String(engine.id) === String(engineId));
-    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= page.appState.searchEngineRecords.length) return;
+function searchEngineListMatches(engines) {
+    if (!Array.isArray(engines)) return false;
+    const ids = [...document.querySelectorAll('#search-engine-list > .engine-list-item')].map(item => item.dataset.id || '');
+    return engines.length === ids.length && engines.every((engine, index) => String(engine.id) === ids[index]);
+}
 
-    const previousEngines = [...page.appState.searchEngineRecords];
-    const nextEngines = [...page.appState.searchEngineRecords];
+function syncSearchEngineMoveButtons() {
+    const items = [...document.querySelectorAll('#search-engine-list > .engine-list-item')];
+    items.forEach((item, index) => {
+        const up = item.querySelector('.engine-list-move[data-direction="up"]');
+        const down = item.querySelector('.engine-list-move[data-direction="down"]');
+        if (up) up.disabled = index === 0;
+        if (down) down.disabled = index === items.length - 1;
+    });
+}
+
+function focusSearchEngineMoveButton(engineId, direction) {
+    const button = document.querySelector(
+        `#search-engine-list .engine-list-move[data-id="${CSS.escape(String(engineId))}"][data-direction="${direction}"]`
+    );
+    focusMovedControl(button?.closest('.engine-list-item'), direction, '.engine-list-move');
+}
+
+function reorderSearchEngineDom(currentIndex, targetIndex) {
+    const list = document.getElementById('search-engine-list');
+    if (!list) return false;
+    const items = [...list.querySelectorAll(':scope > .engine-list-item')];
+    const moving = items[currentIndex];
+    const target = items[targetIndex];
+    if (!moving || !target) return false;
+    const reference = targetIndex < currentIndex ? target : target.nextElementSibling;
+    moveElementBefore(list, moving, reference);
+    return true;
+}
+
+async function moveSearchEngine(engineId, direction) {
+    if (searchEngineMovePending) return;
+    const records = page.appState.searchEngineRecords;
+    const currentIndex = records.findIndex(engine => String(engine.id) === String(engineId));
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= records.length) return;
+
+    searchEngineMovePending = true;
+    const previousEngines = [...records];
+    const nextEngines = [...records];
     [nextEngines[currentIndex], nextEngines[targetIndex]] = [nextEngines[targetIndex], nextEngines[currentIndex]];
+    if (!reorderSearchEngineDom(currentIndex, targetIndex)) renderSearchEngineList();
     page.appState.searchEngineRecords = nextEngines;
     page.rebuildSearchEngines();
     page.renderSearchEngineButtons();
-    renderSearchEngineList();
+    syncSearchEngineMoveButtons();
+    focusSearchEngineMoveButton(engineId, direction);
+    const label = nextEngines[targetIndex]?.name || '搜索引擎';
+    announceReorder(`已将「${label}」移到第 ${targetIndex + 1} 位，共 ${nextEngines.length} 个`);
 
     try {
         const data = await page.apiRequest('/api/search-engines/reorder', {
             method: 'PUT',
             body: { ids: nextEngines.map(engine => engine.id) }
         });
-        page.applySearchEnginesResponse(data.engines || nextEngines);
+        const engines = data.engines || nextEngines;
+        page.appState.searchEngineRecords = engines;
+        page.rebuildSearchEngines();
+        page.renderSearchEngineButtons();
+        if (!searchEngineListMatches(engines)) {
+            renderSearchEngineList();
+            focusSearchEngineMoveButton(engineId, direction);
+        } else {
+            syncSearchEngineMoveButtons();
+        }
     } catch (error) {
         page.appState.searchEngineRecords = previousEngines;
         page.rebuildSearchEngines();
         page.renderSearchEngineButtons();
         renderSearchEngineList();
+        focusSearchEngineMoveButton(engineId, direction);
         showNotice(error.message);
+    } finally {
+        searchEngineMovePending = false;
     }
 }
 
@@ -748,9 +838,10 @@ function renderDisplayModeButtons() {
         const container = document.getElementById(group.id);
         if (!container) return;
         container.innerHTML = buttons.map(button => `
-            <button type="button" class="layout-btn display-mode-btn" data-link-type="${group.linkType}" data-mode="${button.mode}">
-                ${button.label}
-            </button>
+            <label class="layout-btn">
+                <input type="radio" class="layout-choice display-mode-btn" name="${group.linkType}-display-mode" value="${button.mode}" data-link-type="${group.linkType}">
+                <span>${button.label}</span>
+            </label>
         `).join('');
     });
 
@@ -767,9 +858,10 @@ function renderLinkSizeButtons() {
         const container = document.getElementById(group.id);
         if (!container) return;
         container.innerHTML = LINK_SIZE_OPTIONS.map(option => `
-            <button type="button" class="layout-btn link-size-btn" data-link-type="${group.linkType}" data-size="${option.size}">
-                ${option.label}
-            </button>
+            <label class="layout-btn">
+                <input type="radio" class="layout-choice link-size-btn" name="${group.linkType}-link-size" value="${option.size}" data-link-type="${group.linkType}">
+                <span>${option.label}</span>
+            </label>
         `).join('');
     });
 
@@ -780,8 +872,14 @@ function renderBookmarkGlassToggle() {
     const container = document.getElementById('bookmark-glass-toggle');
     if (!container) return;
     container.innerHTML = `
-        <button type="button" class="layout-btn glass-btn" data-enabled="true">开启</button>
-        <button type="button" class="layout-btn glass-btn" data-enabled="false">关闭</button>
+        <label class="layout-btn">
+            <input type="radio" class="layout-choice glass-btn" name="bookmark-glass" value="true">
+            <span>开启</span>
+        </label>
+        <label class="layout-btn">
+            <input type="radio" class="layout-choice glass-btn" name="bookmark-glass" value="false">
+            <span>关闭</span>
+        </label>
     `;
     page.updateGlassToggleState();
 }
@@ -930,6 +1028,7 @@ function bindMenuManagement() {
 
     if (emailLinksContainer) {
         emailLinksContainer.addEventListener('click', (event) => {
+            if (handleLinkMoveClick(event)) return;
             const addBtn = event.target.closest('.email-add-link');
             const deleteBtn = event.target.closest('.email-link-delete');
             const emailLink = event.target.closest('.email-link:not(.email-add-link)');
@@ -952,6 +1051,7 @@ function bindMenuManagement() {
 
     if (projectLinksContainer) {
         projectLinksContainer.addEventListener('click', (event) => {
+            if (handleLinkMoveClick(event)) return;
             const addBtn = event.target.closest('.nav-add-card');
             const deleteBtn = event.target.closest('.nav-card-delete');
             const navCard = event.target.closest('.nav-card:not(.nav-add-card)');
@@ -1009,32 +1109,30 @@ function bindMenuManagement() {
     });
 
     if (layoutSettingsSection) {
+        layoutSettingsSection.addEventListener('change', (event) => {
+            const input = event.target;
+            if (!(input instanceof HTMLInputElement)) return;
+
+            if (input.classList.contains('link-size-btn')) {
+                page.setLinkSize(input.dataset.linkType || 'website', input.value || 'medium');
+                return;
+            }
+
+            if (input.classList.contains('display-mode-btn')) {
+                page.setDisplayMode(input.dataset.linkType || 'website', input.value || 'default');
+                return;
+            }
+
+            if (input.classList.contains('glass-btn')) {
+                page.setBookmarkGlass(input.value === 'true');
+            }
+        });
+
         layoutSettingsSection.addEventListener('click', (event) => {
-            const linkSizeBtn = event.target.closest('.link-size-btn');
-            if (linkSizeBtn) {
-                page.setLinkSize(linkSizeBtn.dataset.linkType || 'website', linkSizeBtn.dataset.size || 'medium');
-                return;
-            }
-
-            const displayModeBtn = event.target.closest('.display-mode-btn');
-            if (displayModeBtn) {
-                page.setDisplayMode(displayModeBtn.dataset.linkType || 'website', displayModeBtn.dataset.mode || 'default');
-                return;
-            }
-
-            const layoutBtn = event.target.closest('.layout-btn[data-columns]');
-            if (layoutBtn) {
-                const columns = parseInt(layoutBtn.dataset.columns, 10);
-                page.setLinkLayoutColumns(layoutBtn.dataset.linkType || 'website', columns);
-                return;
-            }
-
-            const glassBtn = event.target.closest('.glass-btn');
-            if (glassBtn) {
-                const enabled = glassBtn.dataset.enabled === 'true';
-                page.setBookmarkGlass(enabled);
-                return;
-            }
+            const layoutBtn = event.target.closest('button.layout-btn[data-columns]');
+            if (!layoutBtn) return;
+            const columns = parseInt(layoutBtn.dataset.columns, 10);
+            page.setLinkLayoutColumns(layoutBtn.dataset.linkType || 'website', columns);
         });
     }
 
@@ -1108,6 +1206,7 @@ function bindMenuManagement() {
     });
 
     navLinksContainer?.addEventListener('click', (event) => {
+        if (handleLinkMoveClick(event)) return;
         const addBtn = event.target.closest('.nav-add-card');
         const deleteBtn = event.target.closest('.nav-card-delete');
         const navCard = event.target.closest('.nav-card:not(.nav-add-card)');
@@ -1129,6 +1228,15 @@ function bindMenuManagement() {
 
     document.querySelectorAll('.modal-close[data-close]').forEach(btn => {
         btn.addEventListener('click', () => closeModal(btn.getAttribute('data-close')));
+    });
+
+    document.getElementById('link-modal')?.addEventListener('close', () => {
+        const linkForm = document.getElementById('link-form');
+        linkForm?.reset();
+        if (linkForm) {
+            delete linkForm.dataset.editIndex;
+            delete linkForm.dataset.linkType;
+        }
     });
 
 }
