@@ -44,6 +44,28 @@ function createLinksRouter(deps) {
     });
   });
 
+  router.put('/links/transfer', auth.requireAuth, async (req, res) => {
+    const id = Number.parseInt(req.body?.id, 10);
+    const targetType = req.body?.type || req.body?.linkType;
+    const index = Number(req.body?.index);
+    if (!Number.isInteger(id) || (targetType !== 'project' && targetType !== 'website') || !Number.isInteger(index)) {
+      res.status(400).json({ error: '移动数据无效' });
+      return;
+    }
+
+    const result = stores.links.transfer(id, targetType, index);
+    if (result.notFound) {
+      res.status(404).json({ error: '链接不存在' });
+      return;
+    }
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+
+    await sendLinksResponse(res, iconService, result.value);
+  });
+
   router.put('/links/reorder', auth.requireAuth, async (req, res) => {
     const ids = parseIdList(req.body.ids);
     const linkType = normalizeLinkType(req.body.type || req.body.linkType);

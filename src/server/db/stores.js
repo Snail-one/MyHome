@@ -244,6 +244,11 @@ function createLinksStore(db, config) {
       UPDATE nav_links
       SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND id = ?
+    `),
+    updateType: db.prepare(`
+      UPDATE nav_links
+      SET link_type = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND id = ?
     `)
   };
 
@@ -381,6 +386,41 @@ function createLinksStore(db, config) {
       try {
         db.exec('BEGIN');
         ids.forEach((id, index) => statements.updateSort.run(index, config.userId, id));
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+
+      return { value: this.getResponse() };
+    },
+    transfer(id, targetType, targetIndex) {
+      const existing = statements.findById.get(config.userId, id);
+      if (!existing) return { notFound: true };
+      if (config.requiredLinkKeys.has(existing.linkKey)) {
+        return { error: 'Google 邮箱需要留在邮箱登录里' };
+      }
+
+      const sourceType = existing.linkType;
+      const movable = sourceType === 'project' || sourceType === 'website';
+      const targetIsMovable = targetType === 'project' || targetType === 'website';
+      if (!movable || !targetIsMovable) {
+        return { error: '只能在个人项目和个人书签之间移动' };
+      }
+      if (sourceType === targetType) {
+        return { error: '同一分组请使用排序' };
+      }
+
+      const source = get(sourceType).filter((link) => link.id !== existing.id);
+      const target = get(targetType).slice();
+      const index = Math.max(0, Math.min(targetIndex, target.length));
+      target.splice(index, 0, existing);
+
+      try {
+        db.exec('BEGIN');
+        statements.updateType.run(targetType, config.userId, existing.id);
+        source.forEach((link, position) => statements.updateSort.run(position, config.userId, link.id));
+        target.forEach((link, position) => statements.updateSort.run(position, config.userId, link.id));
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');

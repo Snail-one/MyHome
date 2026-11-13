@@ -9,6 +9,8 @@ let draggedPreviousLinks = null;
 let dragReorderFrame = null;
 let dragPointerX = 0;
 let dragPointerY = 0;
+let dragTargetType = null;
+let dragListSnapshots = null;
 let selectedBackgroundFile = null;
 let previewObjectUrl = null;
 let iconCacheRefreshRunning = false;
@@ -102,14 +104,21 @@ function getDomOrderedLinks(linkType = 'website') {
 
 function updateSortableIndices(linkType = 'website') {
     const wrappers = getSortableWrappers(linkType);
-    const last = wrappers.length - 1;
     wrappers.forEach((wrapper, index) => {
         wrapper.dataset.index = index;
         wrapper.querySelectorAll('[data-index]').forEach(element => {
             element.dataset.index = index;
         });
+        wrapper.dataset.linkType = linkType;
         wrapper.querySelectorAll('.link-move').forEach(button => {
-            button.disabled = button.dataset.direction === 'up' ? index === 0 : index === last;
+            const direction = button.dataset.direction === 'up' ? 'up' : 'down';
+            const move = page.describeLinkMove(linkType, direction, index, wrappers.length);
+            button.disabled = move.disabled;
+            button.title = move.title;
+            button.dataset.linkType = linkType;
+            button.dataset.index = index;
+            const label = button.dataset.label || '';
+            button.setAttribute('aria-label', label ? `${move.action} ${label}` : move.action);
         });
     });
 }
@@ -144,11 +153,67 @@ function focusMovedControl(wrapper, direction, selector) {
     target?.focus({ preventScroll: true });
 }
 
+function sectionLabel(linkType) {
+    return linkType === 'project' ? '个人项目' : '个人书签';
+}
+
+function crossListTarget(linkType, direction) {
+    if (linkType === 'project' && direction === 'down') {
+        return { type: 'website', index: 0 };
+    }
+    if (linkType === 'website' && direction === 'up') {
+        return { type: 'project', index: page.getLinkCollection('project').length };
+    }
+    return null;
+}
+
+function assignWrapperLinkType(wrapper, linkType) {
+    wrapper.dataset.linkType = linkType;
+    wrapper.querySelectorAll('[data-link-type]').forEach((element) => {
+        element.dataset.linkType = linkType;
+    });
+}
+
+function domLinkIds(linkType) {
+    const ids = [];
+    for (const wrapper of getSortableWrappers(linkType)) {
+        const id = Number.parseInt(wrapper.dataset.id, 10);
+        if (!Number.isInteger(id) || ids.includes(id)) return null;
+        ids.push(id);
+    }
+    return ids;
+}
+
+function sameLinkIds(links, ids) {
+    return Array.isArray(links)
+        && Array.isArray(ids)
+        && links.length === ids.length
+        && links.every((link, index) => link.id === ids[index]);
+}
+
+function linkTypeOfContainer(container) {
+    if (!container) return null;
+    if (container.id === 'project-links-container') return 'project';
+    if (container.id === 'nav-links-container') return 'website';
+    if (container.id === 'email-links-container') return 'email';
+    return null;
+}
+
+function canDropOnLinkList(targetType) {
+    if (!draggedWrapper) return false;
+    if (targetType === draggedLinkType) return true;
+    const movable = draggedLinkType === 'project' || draggedLinkType === 'website';
+    return movable && (targetType === 'project' || targetType === 'website');
+}
+
 async function moveLink(linkType, index, direction) {
     if (linkMovePending) return;
     const links = page.getLinkCollection(linkType);
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= links.length) return;
+    if (targetIndex < 0 || targetIndex >= links.length) {
+        await transferLink(linkType, index, direction);
+        return;
+    }
 
     const container = page.getLinkContainer(linkType);
     const wrappers = getSortableWrappers(linkType);
@@ -229,6 +294,91 @@ async function persistLinkOrder(linkType, links, previousLinks, options = {}) {
     }
 }
 
+async function persistLinkTransfer(sourceType, targetType, movedId, targetIndex, previousSource, previousTarget, options = {}) {
+    try {
+        const data = await page.apiRequest('/api/links/transfer', {
+            method: 'PUT',
+            body: { id: movedId, type: targetType, index: targetIndex }
+        });
+
+        if (!setLinksStateFromResponse(data)) {
+            throw new Error('移动结果无效');
+        }
+
+        const sourceMatches = sameLinkIds(page.getLinkCollection(sourceType), domLinkIds(sourceType));
+        const targetMatches = sameLinkIds(page.getLinkCollection(targetType), domLinkIds(targetType));
+        if (!sourceMatches || !targetMatches) {
+            page.renderLinkCollection(sourceType);
+            page.renderLinkCollection(targetType);
+            if (options.direction) {
+                const wrapper = getSortableWrappers(targetType).find((item) => Number(item.dataset.id) === movedId);
+                focusMovedControl(wrapper, options.direction, '.link-move');
+            }
+        }
+        return true;
+    } catch (error) {
+        page.setLinkCollection(sourceType, previousSource);
+        page.setLinkCollection(targetType, previousTarget);
+        page.renderLinkCollection(sourceType);
+        page.renderLinkCollection(targetType);
+        options.onRollback?.();
+        showNotice(error.message);
+        return false;
+    }
+}
+
+async function transferLink(linkType, index, direction) {
+    const destination = crossListTarget(linkType, direction);
+    if (!destination || linkMovePending) return;
+
+    const sourceLinks = page.getLinkCollection(linkType);
+    const targetLinks = page.getLinkCollection(destination.type);
+    const movingLink = sourceLinks[index];
+    const sourceContainer = page.getLinkContainer(linkType);
+    const targetContainer = page.getLinkContainer(destination.type);
+    const moving = getSortableWrappers(linkType)[index];
+    if (!movingLink || !sourceContainer || !targetContainer || !moving) return;
+
+    linkMovePending = true;
+    const previousSource = sourceLinks.slice();
+    const previousTarget = targetLinks.slice();
+    const nextSource = sourceLinks.filter((_, itemIndex) => itemIndex !== index);
+    const nextTarget = targetLinks.slice();
+    nextTarget.splice(destination.index, 0, { ...movingLink, linkType: destination.type });
+
+    assignWrapperLinkType(moving, destination.type);
+    const reference = destination.index === 0
+        ? (getSortableWrappers(destination.type)[0] || getDragAppendReference(destination.type))
+        : getDragAppendReference(destination.type);
+    moveElementBefore(targetContainer, moving, reference);
+    page.setLinkCollection(linkType, nextSource);
+    page.setLinkCollection(destination.type, nextTarget);
+    updateSortableIndices(linkType);
+    updateSortableIndices(destination.type);
+    focusMovedControl(moving, direction, '.link-move');
+    const label = movingLink.title || '链接';
+    announceReorder(`已将「${label}」移到${sectionLabel(destination.type)}，第 ${destination.index + 1} 位，共 ${nextTarget.length} 项`);
+
+    try {
+        await persistLinkTransfer(
+            linkType,
+            destination.type,
+            movingLink.id,
+            destination.index,
+            previousSource,
+            previousTarget,
+            {
+                direction,
+                onRollback: () => {
+                    focusMovedControl(getSortableWrappers(linkType)[index], direction, '.link-move');
+                }
+            }
+        );
+    } finally {
+        linkMovePending = false;
+    }
+}
+
 async function commitDraggedOrder(linkType, previousLinks) {
     const nextLinks = getDomOrderedLinks(linkType);
     if (!nextLinks || !previousLinks || areLinkOrdersEqual(nextLinks, previousLinks)) {
@@ -306,15 +456,20 @@ function reorderDraggedWrapperAtPointer() {
     dragReorderFrame = null;
 
     if (!draggedWrapper || !draggedCard) return;
-    const container = page.getLinkContainer(draggedLinkType);
-    if (!container) return;
+    const linkType = dragTargetType || draggedLinkType;
+    const container = page.getLinkContainer(linkType);
+    if (!container || !canDropOnLinkList(linkType)) return;
 
-    const reference = getDragInsertionReference(draggedLinkType, dragPointerX, dragPointerY);
+    const previousType = linkTypeOfContainer(draggedWrapper.parentElement);
+    if (previousType !== linkType) assignWrapperLinkType(draggedWrapper, linkType);
+
+    const reference = getDragInsertionReference(linkType, dragPointerX, dragPointerY);
     if (reference === draggedWrapper) return;
     if (reference && reference.previousElementSibling === draggedWrapper) return;
 
-    container.insertBefore(draggedWrapper, reference || getDragAppendReference(draggedLinkType));
-    updateSortableIndices(draggedLinkType);
+    moveElementBefore(container, draggedWrapper, reference || getDragAppendReference(linkType));
+    updateSortableIndices(linkType);
+    if (previousType && previousType !== linkType) updateSortableIndices(previousType);
 }
 
 function scheduleDraggedWrapperReorder(event) {
@@ -362,11 +517,22 @@ function handleDragStart(event) {
 
     draggedLinkType = this.dataset.linkType || 'website';
     draggedPreviousLinks = [...page.getLinkCollection(draggedLinkType)];
+    dragTargetType = draggedLinkType;
+    dragListSnapshots = draggedLinkType === 'project' || draggedLinkType === 'website'
+        ? {
+            project: [...page.getLinkCollection('project')],
+            website: [...page.getLinkCollection('website')]
+        }
+        : null;
     isDragging = true;
     document.body.classList.add('link-dragging');
     draggedCard?.classList.add('dragging');
     draggedWrapper?.classList.add('dragging');
     page.getLinkContainer(draggedLinkType)?.classList.add('drag-sorting');
+    if (dragListSnapshots) {
+        page.getLinkContainer('project')?.classList.add('drag-sorting');
+        page.getLinkContainer('website')?.classList.add('drag-sorting');
+    }
 
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', String(this.dataset.index || ''));
@@ -389,32 +555,100 @@ function handleDragStart(event) {
     }
 }
 
+function collectionFromIds(ids, pools) {
+    const linksById = new Map();
+    pools.forEach((link) => linksById.set(link.id, link));
+    const next = [];
+    for (const id of ids) {
+        const link = linksById.get(id);
+        if (!link) return null;
+        next.push(link);
+    }
+    return next;
+}
+
+function restoreLinkSnapshots(snapshots) {
+    if (!snapshots) return;
+    page.setLinkCollection('project', snapshots.project);
+    page.setLinkCollection('website', snapshots.website);
+    page.renderLinkCollection('project');
+    page.renderLinkCollection('website');
+}
+
+async function commitDraggedTransfer(originType, destType, movedId, snapshots) {
+    const originIds = domLinkIds(originType);
+    const destIds = domLinkIds(destType);
+    const targetIndex = destIds ? destIds.indexOf(movedId) : -1;
+    const pool = [...snapshots.project, ...snapshots.website];
+    if (!originIds || !destIds || targetIndex < 0 || originIds.includes(movedId)) {
+        restoreLinkSnapshots(snapshots);
+        return false;
+    }
+
+    const nextOrigin = collectionFromIds(originIds, pool);
+    const nextDest = collectionFromIds(destIds, pool)?.map((link, index) => (
+        index === targetIndex ? { ...link, linkType: destType } : link
+    ));
+    if (!nextOrigin || !nextDest) {
+        restoreLinkSnapshots(snapshots);
+        return false;
+    }
+
+    page.setLinkCollection(originType, nextOrigin);
+    page.setLinkCollection(destType, nextDest);
+    updateSortableIndices(originType);
+    updateSortableIndices(destType);
+    const label = nextDest[targetIndex]?.title || '链接';
+    announceReorder(`已将「${label}」移到${sectionLabel(destType)}，第 ${targetIndex + 1} 位，共 ${nextDest.length} 项`);
+    return persistLinkTransfer(
+        originType,
+        destType,
+        movedId,
+        targetIndex,
+        snapshots[originType],
+        snapshots[destType]
+    );
+}
+
 async function handleDragEnd() {
     const linkType = draggedLinkType;
     const previousLinks = draggedPreviousLinks;
+    const snapshots = dragListSnapshots;
+    const wrapper = draggedWrapper;
+    const movedId = Number.parseInt(wrapper?.dataset.id || '', 10);
 
     clearDragUi();
+    const destType = linkTypeOfContainer(wrapper?.parentElement);
     draggedCard = null;
     draggedLinkType = 'website';
     draggedWrapper = null;
     draggedPreviousLinks = null;
+    dragListSnapshots = null;
+    dragTargetType = null;
     setTimeout(() => { isDragging = false; }, 100);
+
+    if (destType && destType !== linkType && Number.isInteger(movedId) && snapshots) {
+        await commitDraggedTransfer(linkType, destType, movedId, snapshots);
+        return;
+    }
 
     await commitDraggedOrder(linkType, previousLinks);
 }
 
 function handleLinkContainerDragOver(event, linkType) {
-    if (!draggedWrapper || linkType !== draggedLinkType) return;
+    if (!canDropOnLinkList(linkType)) return;
 
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+    dragTargetType = linkType;
     scheduleDraggedWrapperReorder(event);
 }
 
 function handleLinkContainerDrop(event, linkType) {
-    if (!draggedWrapper || linkType !== draggedLinkType) return;
+    if (!canDropOnLinkList(linkType)) return;
 
     event.preventDefault();
+    dragTargetType = linkType;
     dragPointerX = event.clientX;
     dragPointerY = event.clientY;
     if (dragReorderFrame) {

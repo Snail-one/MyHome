@@ -1084,3 +1084,65 @@ test('link icon upload route is not exposed', async (t) => {
   const response = await app.request(`/api/icons/links/${link.id}/upload`, { method: 'POST' });
   assert.equal(response.status, 404);
 });
+
+test('project and bookmark links can move between the two groups', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  await app.login();
+
+  async function createLink(title, type) {
+    const created = await app.requestJson('/api/links', {
+      method: 'POST',
+      body: { title, url: `https://${title.toLowerCase()}.example.com`, type }
+    });
+    assert.equal(created.response.status, 201);
+    const collection = type === 'project' ? created.data.projectLinks : created.data.links;
+    return collection.find((link) => link.title === title);
+  }
+
+  const projectA = await createLink('Alpha', 'project');
+  const projectB = await createLink('Beta', 'project');
+  const bookmark = await createLink('Gamma', 'website');
+  assert.equal(projectA.iconVersion, 1);
+
+  let result = await app.requestJson('/api/links/transfer', {
+    method: 'PUT',
+    body: { id: projectA.id, type: 'website', index: 0 }
+  });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.data.projectLinks.map((link) => link.title), ['Beta']);
+  assert.deepEqual(result.data.links.map((link) => link.title), ['Alpha', 'Gamma']);
+  assert.equal(result.data.links[0].linkType, 'website');
+  assert.equal(result.data.links[0].iconVersion, 1);
+  assert.equal(result.data.links[0].url, projectA.url);
+
+  result = await app.requestJson('/api/links/transfer', {
+    method: 'PUT',
+    body: { id: projectA.id, type: 'project', index: 99 }
+  });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.data.projectLinks.map((link) => link.title), ['Beta', 'Alpha']);
+  assert.deepEqual(result.data.links.map((link) => link.title), ['Gamma']);
+
+  result = await app.requestJson('/api/links/transfer', {
+    method: 'PUT',
+    body: { id: bookmark.id, type: 'website', index: 0 }
+  });
+  assert.equal(result.response.status, 400);
+
+  const email = result.data?.emailLinks?.[0]
+    || (await app.requestJson('/api/links')).data.emailLinks[0];
+  result = await app.requestJson('/api/links/transfer', {
+    method: 'PUT',
+    body: { id: email.id, type: 'website', index: 0 }
+  });
+  assert.equal(result.response.status, 400);
+
+  result = await app.requestJson('/api/links/transfer', {
+    method: 'PUT',
+    body: { id: 999999, type: 'project', index: 0 }
+  });
+  assert.equal(result.response.status, 404);
+
+  assert.ok(projectB.id);
+});

@@ -794,16 +794,31 @@ function getMailIconSvg(className = 'email-link-icon') {
     `;
 }
 
+function describeLinkMove(linkType, direction, index, total) {
+    const last = Math.max(0, total - 1);
+    if (direction === 'down' && index >= last && linkType === 'project') {
+        return { disabled: false, title: '移到个人书签', action: '移到个人书签' };
+    }
+    if (direction === 'up' && index <= 0 && linkType === 'website') {
+        return { disabled: false, title: '移到个人项目', action: '移到个人项目' };
+    }
+    const disabled = direction === 'up' ? index <= 0 : index >= last;
+    const action = direction === 'up' ? '上移' : '下移';
+    return { disabled, title: action, action };
+}
+
 function moveButtonsHtml(label, index, total, linkType) {
-    const safeLabel = escapeAttribute(label);
     const type = escapeAttribute(linkType);
-    const upDisabled = index <= 0 ? ' disabled' : '';
-    const downDisabled = index >= total - 1 ? ' disabled' : '';
+    const labelAttr = escapeAttribute(label);
+    const up = describeLinkMove(linkType, 'up', index, total);
+    const down = describeLinkMove(linkType, 'down', index, total);
+    const upDisabled = up.disabled ? ' disabled' : '';
+    const downDisabled = down.disabled ? ' disabled' : '';
     return `
-        <button type="button" class="link-move" data-direction="up" data-index="${index}" data-link-type="${type}" title="上移" aria-label="上移 ${safeLabel}"${upDisabled}>
+        <button type="button" class="link-move" data-direction="up" data-index="${index}" data-link-type="${type}" data-label="${labelAttr}" title="${escapeAttribute(up.title)}" aria-label="${escapeAttribute(`${up.action} ${label}`)}"${upDisabled}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
         </button>
-        <button type="button" class="link-move" data-direction="down" data-index="${index}" data-link-type="${type}" title="下移" aria-label="下移 ${safeLabel}"${downDisabled}>
+        <button type="button" class="link-move" data-direction="down" data-index="${index}" data-link-type="${type}" data-label="${labelAttr}" title="${escapeAttribute(down.title)}" aria-label="${escapeAttribute(`${down.action} ${label}`)}"${downDisabled}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         </button>
     `;
@@ -1441,6 +1456,7 @@ Object.assign(page, {
     renderNavCards,
     renderProjectCards,
     renderLinkCollection,
+    describeLinkMove,
     escapeHtml,
     escapeAttribute,
     applyLayoutColumns,

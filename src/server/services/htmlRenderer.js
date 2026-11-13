@@ -139,12 +139,27 @@ function renderSearchEngineButton(engine, currentKey) {
   return `<button type="button" class="engine-btn${active}" data-engine="${escapeHtmlAttribute(key)}">${icon || '<span class="engine-favicon" aria-hidden="true"></span>'}<span>${escapeHtml(engine.name)}</span></button>`;
 }
 
+function describeMove(linkType, direction, index, total) {
+  const last = Math.max(0, total - 1);
+  if (direction === 'down' && index >= last && linkType === 'project') {
+    return { disabled: false, title: '移到个人书签', action: '移到个人书签' };
+  }
+  if (direction === 'up' && index <= 0 && linkType === 'website') {
+    return { disabled: false, title: '移到个人项目', action: '移到个人项目' };
+  }
+  const disabled = direction === 'up' ? index <= 0 : index >= last;
+  const action = direction === 'up' ? '上移' : '下移';
+  return { disabled, title: action, action };
+}
+
 function renderMoveButtons(label, index, total, linkType) {
+  const up = describeMove(linkType, 'up', index, total);
+  const down = describeMove(linkType, 'down', index, total);
   const name = escapeHtmlAttribute(label);
   const type = escapeHtmlAttribute(linkType);
-  const upDisabled = index <= 0 ? ' disabled' : '';
-  const downDisabled = index >= total - 1 ? ' disabled' : '';
-  return `<button type="button" class="link-move" data-direction="up" data-index="${index}" data-link-type="${type}" title="上移" aria-label="上移 ${name}"${upDisabled}>${MOVE_UP_ICON}</button><button type="button" class="link-move" data-direction="down" data-index="${index}" data-link-type="${type}" title="下移" aria-label="下移 ${name}"${downDisabled}>${MOVE_DOWN_ICON}</button>`;
+  const upDisabled = up.disabled ? ' disabled' : '';
+  const downDisabled = down.disabled ? ' disabled' : '';
+  return `<button type="button" class="link-move" data-direction="up" data-index="${index}" data-link-type="${type}" data-label="${name}" title="${escapeHtmlAttribute(up.title)}" aria-label="${escapeHtmlAttribute(`${up.action} ${label}`)}"${upDisabled}>${MOVE_UP_ICON}</button><button type="button" class="link-move" data-direction="down" data-index="${index}" data-link-type="${type}" data-label="${name}" title="${escapeHtmlAttribute(down.title)}" aria-label="${escapeHtmlAttribute(`${down.action} ${label}`)}"${downDisabled}>${MOVE_DOWN_ICON}</button>`;
 }
 
 function renderEmailLink(link, index, total, requiredKeys, editMode) {
