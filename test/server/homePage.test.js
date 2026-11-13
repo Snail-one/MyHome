@@ -142,7 +142,8 @@ test('homepage is rendered with stored data before client fetches', async (t) =>
   assert.match(html, /style\.css\?v=[a-f0-9]{12}/);
   assert.match(html, /\/js\/main\.js\?v=[a-f0-9]{12}/);
   assert.match(html, /data-admin="\/js\/admin\.js\?v=[a-f0-9]{12}"/);
-  assert.doesNotMatch(html, /__ASSET_|__BOOTSTRAP_|__BODY_/);
+  assert.doesNotMatch(html, /__ASSET_|__BOOTSTRAP_|__BODY_|__LCP_/);
+  assert.doesNotMatch(html, /fetchpriority="high"/);
 
   const bootstrap = JSON.parse(html.match(/<script type="application\/json" id="app-bootstrap">([\s\S]*?)<\/script>/)[1]);
   assert.equal(bootstrap.user.username, 'admin');
@@ -156,6 +157,36 @@ test('homepage is rendered with stored data before client fetches', async (t) =>
   assert.match(pending.headers.get('cache-control') || '', /private, no-store/);
   assert.ok(pendingData.icons.some((icon) => icon.entityType === 'links' && icon.status !== 'none'));
   assert.equal(pendingData.icons.some((icon) => icon.entityType === 'links' && icon.id === bootstrap.emailLinks[0].id), false);
+});
+
+test('custom background is the only high-priority image', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  await app.login();
+
+  const created = await app.request('/api/links', {
+    method: 'POST',
+    body: { title: 'Ready Icon', url: 'https://example.com/icon' }
+  });
+  const createdData = await created.json();
+  const link = createdData.links.find((item) => item.title === 'Ready Icon');
+  app.stores.links.updateIconState(link.id, {
+    iconStatus: 'ready',
+    iconFileName: `links-${link.id}.svg`
+  });
+  const settings = await app.request('/api/settings', {
+    method: 'PUT',
+    body: { backgroundUrl: '/uploads/backgrounds/home.png' }
+  });
+  assert.equal(settings.status, 200);
+
+  const response = await app.request('/');
+  const html = await response.text();
+  assert.match(html, /<link rel="preload" as="image" href="\/uploads\/backgrounds\/home\.png" fetchpriority="high">/);
+  assert.match(html, /background-image: url\(&quot;\/uploads\/backgrounds\/home\.png&quot;\)/);
+  assert.equal(html.match(/fetchpriority="high"/g).length, 1);
+  assert.match(html, /class="nav-favicon" width="40" height="40"/);
+  assert.doesNotMatch(html, /<img[^>]*fetchpriority="high"/);
 });
 
 test('pending icon lookup returns the latest status for browser ids', async (t) => {

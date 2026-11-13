@@ -58,10 +58,20 @@ function getEffectiveUrl(link) {
   }
 }
 
-function getInitialBackgroundStyle(backgroundUrl) {
+function getBackgroundHref(backgroundUrl) {
   if (!backgroundUrl || !isBackgroundUrl(backgroundUrl)) return '';
+  if (backgroundUrl.startsWith('/')) return backgroundUrl;
+  try {
+    return new URL(backgroundUrl).href;
+  } catch {
+    return '';
+  }
+}
 
-  const safeUrl = backgroundUrl.startsWith('/') ? backgroundUrl : new URL(backgroundUrl).href;
+function getInitialBackgroundStyle(backgroundUrl) {
+  const safeUrl = getBackgroundHref(backgroundUrl);
+  if (!safeUrl) return '';
+
   const cssUrl = escapeHtmlAttribute(escapeCssUrl(safeUrl));
   return [
     `background-image: url(&quot;${cssUrl}&quot;)`,
@@ -70,6 +80,12 @@ function getInitialBackgroundStyle(backgroundUrl) {
     'background-repeat: no-repeat',
     'background-attachment: fixed'
   ].join('; ');
+}
+
+function renderBackgroundPreload(backgroundUrl) {
+  const href = getBackgroundHref(backgroundUrl);
+  if (!href) return '';
+  return `<link rel="preload" as="image" href="${escapeHtmlAttribute(href)}" fetchpriority="high">`;
 }
 
 function loadLayoutModule(publicDir) {
@@ -123,11 +139,11 @@ function iconMarkup(entity, entityType, options = {}) {
 
   const ready = entity.iconStatus === 'ready' && entity.iconFileUrl;
   const loading = options.eager ? 'eager' : 'lazy';
-  const priority = options.priority && ready ? ' fetchpriority="high"' : '';
   const src = ready ? ` src="${escapeHtmlAttribute(entity.iconFileUrl)}"` : '';
   const hidden = ready ? '' : ' style="display:none"';
   const className = options.className || 'nav-favicon';
-  return `<img alt="" class="${className}" loading="${loading}" decoding="async"${priority}${hidden}${src} data-icon-entity="${escapeHtmlAttribute(entityType)}" data-icon-id="${escapeHtmlAttribute(entity.id)}">`;
+  const size = className === 'engine-favicon' ? 14 : 40;
+  return `<img alt="" class="${className}" width="${size}" height="${size}" loading="${loading}" decoding="async"${hidden}${src} data-icon-entity="${escapeHtmlAttribute(entityType)}" data-icon-id="${escapeHtmlAttribute(entity.id)}">`;
 }
 
 function renderSearchEngineButton(engine, currentKey) {
@@ -172,18 +188,13 @@ function renderAddEmailLink() {
   return `<button type="button" class="email-link email-add-link" title="添加邮箱登录" aria-label="添加邮箱登录">${ADD_ICON}<span class="email-add-label">添加邮箱</span></button>`;
 }
 
-function renderNavCard(link, index, total, linkType, editMode, eagerCount, prioritySlot) {
+function renderNavCard(link, index, total, linkType, editMode, eagerCount) {
   const href = getEffectiveUrl(link);
   const iconMode = link.iconMode || 'server';
   const eager = index < eagerCount;
   const icon = iconMode === 'none'
     ? ''
-    : `${iconMarkup(link, 'links', {
-      eager,
-      priority: eager && prioritySlot.used === false && link.iconStatus === 'ready' && link.iconFileUrl
-        ? (prioritySlot.used = true)
-        : false
-    })}${FALLBACK_FAVICON.replace('class="nav-favicon-fallback"', `class="nav-favicon-fallback" style="display:${link.iconStatus === 'ready' && link.iconFileUrl ? 'none' : 'block'}"`)}`;
+    : `${iconMarkup(link, 'links', { eager })}${FALLBACK_FAVICON.replace('class="nav-favicon-fallback"', `class="nav-favicon-fallback" style="display:${link.iconStatus === 'ready' && link.iconFileUrl ? 'none' : 'block'}"`)}`;
   return `<div class="nav-card-wrapper" data-index="${index}" data-link-type="${escapeHtmlAttribute(linkType)}" data-id="${escapeHtmlAttribute(link.id)}"><a href="${escapeHtmlAttribute(href)}" target="_blank" rel="noopener noreferrer" class="nav-card" data-index="${index}" data-link-type="${escapeHtmlAttribute(linkType)}" draggable="${editMode ? 'true' : 'false'}"><div class="nav-icon${iconMode === 'none' ? ' nav-icon-empty' : ''}">${icon}</div><div class="nav-info"><div class="nav-title">${escapeHtml(link.title || '未命名')}</div></div></a><div class="nav-card-actions">${renderMoveButtons(link.title || '未命名', index, total, linkType)}<button type="button" class="nav-card-delete" data-index="${index}" title="删除">${DELETE_ICON}</button></div></div>`;
 }
 
@@ -274,7 +285,6 @@ function createHtmlRenderer(config, deps) {
     const currentName = currentRecord?.name || 'Google';
     const projectPresentation = containerPresentation(settings, 'project', LINK_SIZE_CONFIG);
     const websitePresentation = containerPresentation(settings, 'website', LINK_SIZE_CONFIG);
-    const prioritySlot = { used: false };
     const projectEager = firstRowCount(projectPresentation.columns);
     const websiteEager = firstRowCount(websitePresentation.columns);
     const backgroundStyle = getInitialBackgroundStyle(settings.backgroundUrl);
@@ -301,6 +311,7 @@ function createHtmlRenderer(config, deps) {
       __ASSET_MAIN__: escapeHtmlAttribute(assetUrl('js/main.js')),
       __ASSET_ADMIN__: escapeHtmlAttribute(assetUrl('js/admin.js')),
       __BODY_CLASS__: bodyClass,
+      __LCP_PRELOAD__: renderBackgroundPreload(settings.backgroundUrl),
       __BODY_EXTRA__: backgroundStyle ? ` style="${backgroundStyle}"` : '',
       __EMAIL_HIDDEN__: emailLinks.length || editMode ? '' : ' hidden',
       __EMAIL_LINKS__: `${emailLinks.map((link, index) => renderEmailLink(link, index, emailLinks.length, requiredLinkKeys, editMode)).join('')}${editMode ? renderAddEmailLink() : ''}`,
@@ -314,10 +325,10 @@ function createHtmlRenderer(config, deps) {
       __CURRENT_ENGINE__: escapeHtml(currentName),
       __PROJECT_SECTION_HIDDEN__: projectLinks.length || editMode ? '' : ' hidden',
       __PROJECT_CONTAINER_ATTRS__: `class="${projectPresentation.className}" style="${escapeHtmlAttribute(projectPresentation.style)}"`,
-      __PROJECT_LINKS__: `${projectLinks.map((link, index) => renderNavCard(link, index, projectLinks.length, 'project', editMode, projectEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('project') : ''}`,
+      __PROJECT_LINKS__: `${projectLinks.map((link, index) => renderNavCard(link, index, projectLinks.length, 'project', editMode, projectEager)).join('')}${editMode ? renderAddLinkCard('project') : ''}`,
       __PROJECT_EMPTY_STYLE__: projectLinks.length || editMode ? ' style="display:none"' : '',
       __WEBSITE_CONTAINER_ATTRS__: `class="${websitePresentation.className}" style="${escapeHtmlAttribute(websitePresentation.style)}"`,
-      __WEBSITE_LINKS__: `${links.map((link, index) => renderNavCard(link, index, links.length, 'website', editMode, websiteEager, prioritySlot)).join('')}${editMode ? renderAddLinkCard('website') : ''}`,
+      __WEBSITE_LINKS__: `${links.map((link, index) => renderNavCard(link, index, links.length, 'website', editMode, websiteEager)).join('')}${editMode ? renderAddLinkCard('website') : ''}`,
       __WEBSITE_EMPTY_STYLE__: links.length || editMode ? ' style="display:none"' : '',
       __BOOTSTRAP_JSON__: safeJson(bootstrap)
     });

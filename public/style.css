@@ -1862,12 +1862,12 @@ body.link-dragging .email-link {
 
 .navigation-links.drag-sorting .nav-card-wrapper,
 .email-links-panel.drag-sorting .email-link-wrapper {
-    will-change: transform;
     transition: transform 120ms ease, opacity 120ms ease;
 }
 
 .nav-card-wrapper.dragging,
 .email-link-wrapper.dragging {
+    will-change: transform;
     opacity: 0.48;
     transform: scale(0.98);
     z-index: 20;

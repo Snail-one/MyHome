@@ -400,7 +400,7 @@ function renderSearchEngineButtons() {
         btn.dataset.engine = key;
         btn.innerHTML = `
             ${iconDescriptor
-                ? `<img alt="" class="engine-favicon" loading="eager" decoding="async" data-icon-entity="search-engines" data-icon-id="${escapeAttribute(String(engine.id))}">`
+                ? `<img alt="" class="engine-favicon" width="14" height="14" loading="eager" decoding="async" data-icon-entity="search-engines" data-icon-id="${escapeAttribute(String(engine.id))}">`
                 : '<span class="engine-favicon" aria-hidden="true"></span>'
             }
             <span>${escapeHtml(engine.name)}</span>
@@ -902,7 +902,7 @@ function createNavCardElement(link, index, options = {}) {
             <div class="nav-icon${iconDescriptor?.mode === 'none' ? ' nav-icon-empty' : ''}">
                 ${iconDescriptor?.mode === 'none'
                     ? ''
-                    : `<img alt="" class="nav-favicon" loading="${options.eager ? 'eager' : 'lazy'}"${options.priority ? ' fetchpriority="high"' : ''} decoding="async" data-icon-entity="links" data-icon-id="${escapeAttribute(String(link.id))}">${fallbackFavicon}`
+                    : `<img alt="" class="nav-favicon" width="40" height="40" loading="${options.eager ? 'eager' : 'lazy'}" decoding="async" data-icon-entity="links" data-icon-id="${escapeAttribute(String(link.id))}">${fallbackFavicon}`
                 }
             </div>
             <div class="nav-info">
@@ -997,8 +997,7 @@ function renderLinkCards(linkType = 'website', options = {}) {
             linkType,
             total: links.length,
             refreshIcon,
-            eager: index < eagerCount,
-            priority: index === 0
+            eager: index < eagerCount
         });
         container.insertBefore(card, emptyState);
     });
